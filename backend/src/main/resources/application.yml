@@ -1,0 +1,220 @@
+server:
+  port: 8080
+  tomcat:
+    uri-encoding: UTF-8
+    use-relative-redirects: true
+
+app:
+  cors:
+    allowed-origin-patterns: ${APP_CORS_ALLOWED_ORIGIN_PATTERNS:http://localhost:*,http://127.0.0.1:*}
+
+download:
+  ticket:
+    # 浏览器原生下载只使用一次；过期后用户重新点击即可。
+    ttl-seconds: ${DOWNLOAD_TICKET_TTL_SECONDS:60}
+
+# MinIO（本地数据持久化到仓库上一级目录 D:\work\minio-data）
+minio:
+  endpoint: ${MINIO_ENDPOINT:http://127.0.0.1:9010}
+  access-key: ${MINIO_ACCESS_KEY}
+  secret-key: ${MINIO_SECRET_KEY}
+  bucket: ${MINIO_BUCKET:models}
+
+point-cloud:
+  preview:
+    max-size: ${POINT_CLOUD_PREVIEW_MAX_SIZE:209715200}
+
+dataset:
+  preview:
+    max-zip-entries: ${DATASET_PREVIEW_MAX_ZIP_ENTRIES:10000}
+    max-text-bytes: ${DATASET_PREVIEW_MAX_TEXT_BYTES:1048576}
+    max-image-bytes: ${DATASET_PREVIEW_MAX_IMAGE_BYTES:20971520}
+    max-page-size: ${DATASET_PREVIEW_MAX_PAGE_SIZE:200}
+  lerobot:
+    cache-directory: ${LEROBOT_PREVIEW_CACHE_DIRECTORY:${java.io.tmpdir}/tss-lerobot-preview}
+    media-ticket-seconds: ${LEROBOT_MEDIA_TICKET_SECONDS:300}
+
+code-assets:
+  risk:
+    # STANDARD_REVIEW delegates to this deployment safety mode. ENFORCE automatically
+    # approves complete LOW evidence, sends reviewable findings to administrators,
+    # and rejects blocking findings. DIRECT_PASS and MANUAL_ONLY are persisted in
+    # platform_system_config and override automatic decisions at request time.
+    mode: ${CODE_ASSET_RISK_MODE:ENFORCE}
+    batch-size: ${CODE_ASSET_RISK_BATCH_SIZE:20}
+    stale-after-seconds: ${CODE_ASSET_RISK_STALE_AFTER_SECONDS:600}
+
+spring:
+  application:
+    name: tss-backend
+  task:
+    scheduling:
+      pool:
+        size: ${SPRING_TASK_SCHEDULING_POOL_SIZE:4}
+  profiles:
+    # 默认走 PostgreSQL；本地若想用 H2 可启动时加：--spring.profiles.active=dev
+    active: ${SPRING_PROFILES_ACTIVE:default}
+  servlet:
+    encoding:
+      charset: UTF-8
+      enabled: true
+      force: true
+    multipart:
+      # 这里只限制单个 HTTP multipart 请求大小，不限制数据集总文件大小。
+      # 数据集上传走 /api/dataset/upload/* 分片链路，当前单分片为 5MB；
+      # 因此 10GB 数据集会被拆成约 2048 个小请求，不受传统 100MB 单次直传上限影响。
+      max-file-size: 64MB
+      max-request-size: 64MB
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://127.0.0.1:5432/tss}
+    username: ${SPRING_DATASOURCE_USERNAME}
+    password: ${SPRING_DATASOURCE_PASSWORD}
+    driver-class-name: org.postgresql.Driver
+  data:
+    redis:
+      host: ${SPRING_DATA_REDIS_HOST:127.0.0.1}
+      port: ${SPRING_DATA_REDIS_PORT:6379}
+      connect-timeout: ${SPRING_DATA_REDIS_CONNECT_TIMEOUT:3s}
+      timeout: ${SPRING_DATA_REDIS_TIMEOUT:3s}
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+    baseline-version: 0
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+    properties:
+      hibernate:
+        format_sql: true
+
+mybatis-plus:
+  mapper-locations: classpath:mapper/*.xml
+  type-aliases-package: com.tss.platform.module1.entity
+  configuration:
+    map-underscore-to-camel-case: true
+
+# 短信验证码。正式环境默认关闭；阿里云号码认证参数只从环境变量注入，不写入仓库。
+sms:
+  provider: ${SMS_PROVIDER:disabled}
+  expose-code: ${SMS_EXPOSE_CODE:false}
+  max-daily-sends: ${SMS_MAX_DAILY_SENDS:50}
+  aliyun:
+    credential-type: ${ALIYUN_CREDENTIAL_TYPE:ecs_ram_role}
+    access-key-id: ${ALIBABA_CLOUD_ACCESS_KEY_ID:}
+    access-key-secret: ${ALIBABA_CLOUD_ACCESS_KEY_SECRET:}
+    role-name: ${ALIBABA_CLOUD_ECS_METADATA:}
+    sign-name: ${ALIYUN_PNVS_SIGN_NAME:}
+    login-register-template-code: ${ALIYUN_PNVS_LOGIN_REGISTER_TEMPLATE_CODE:100001}
+    reset-password-template-code: ${ALIYUN_PNVS_RESET_PASSWORD_TEMPLATE_CODE:100003}
+    scheme-name: ${ALIYUN_PNVS_SCHEME_NAME:}
+    endpoint: ${ALIYUN_PNVS_ENDPOINT:dypnsapi.aliyuncs.com}
+
+sa-token:
+  token-name: Authorization
+  timeout: 86400
+  active-timeout: -1
+  is-concurrent: true
+  is-share: false
+  token-style: uuid
+  is-log: false
+
+security:
+  user-api-policy:
+    # Redis并发租约异常退出后的兜底过期时间；正常请求在完成时立即释放自己的租约。
+    counter-ttl-seconds: ${USER_API_POLICY_COUNTER_TTL_SECONDS:300}
+
+auth:
+  session:
+    # Main sets this to redis during the controlled infrastructure bootstrap.
+    # Other environments keep the current single-process memory behavior unless
+    # they provision and explicitly enable their own Redis service.
+    store: ${AUTH_SESSION_STORE:memory}
+
+training:
+  mlflow:
+    enabled: ${TRAINING_MLFLOW_ENABLED:true}
+    tracking-uri: ${TRAINING_MLFLOW_TRACKING_URI:http://127.0.0.1:5000}
+    experiment-name: ${TRAINING_MLFLOW_EXPERIMENT_NAME:tss-training}
+  kubernetes:
+    enabled: ${TRAINING_K8S_ENABLED:true}
+    # 训练 Job 控制通道。默认 kubectl 以保持现有集群升级兼容；内网 GPU 集群显式设为 fabric8。
+    client-mode: ${TRAINING_K8S_CLIENT_MODE:kubectl}
+    auto-create: ${TRAINING_K8S_AUTO_CREATE:true}
+    verify-on-startup: ${TRAINING_K8S_VERIFY_ON_STARTUP:true}
+    fallback-to-local: ${TRAINING_K8S_FALLBACK_TO_LOCAL:true}
+    cluster-name: ${TRAINING_K8S_CLUSTER_NAME:tss-training}
+    namespace: ${TRAINING_K8S_NAMESPACE:tss-training}
+    service-account: ${TRAINING_K8S_SERVICE_ACCOUNT:tss-training-worker}
+    gpu-runtime-class-name: ${TRAINING_K8S_GPU_RUNTIME_CLASS_NAME:nvidia}
+    # 只有集群已安装 NVIDIA DRA 且后端使用 kubectl 客户端时才开启。
+    exact-gpu-selection-enabled: ${TRAINING_K8S_EXACT_GPU_SELECTION_ENABLED:false}
+    gpu-device-class-name: ${TRAINING_K8S_GPU_DEVICE_CLASS_NAME:gpu.nvidia.com}
+    project-root: ${TRAINING_K8S_PROJECT_ROOT:..}
+    kubeconfig: ${TRAINING_K8S_KUBECONFIG:k8s/.kube/config}
+    kind-path: ${TRAINING_K8S_KIND_PATH:.tools/bin/kind}
+    kubectl-path: ${TRAINING_K8S_KUBECTL_PATH:.tools/bin/kubectl}
+    bootstrap-script: ${TRAINING_K8S_BOOTSTRAP_SCRIPT:backend/scripts/k8s/bootstrap-local-kind.sh}
+    verify-script: ${TRAINING_K8S_VERIFY_SCRIPT:backend/scripts/k8s/verify-local-kind.sh}
+    worker-image: ${TRAINING_K8S_WORKER_IMAGE:tss-training-worker:local}
+    worker-image-pull-policy: ${TRAINING_K8S_WORKER_IMAGE_PULL_POLICY:IfNotPresent}
+    runtime-image-build-enabled: ${TRAINING_K8S_RUNTIME_IMAGE_BUILD_ENABLED:false}
+    runtime-image-repository: ${TRAINING_K8S_RUNTIME_IMAGE_REPOSITORY:}
+    runtime-image-docker-path: ${TRAINING_K8S_RUNTIME_IMAGE_DOCKER_PATH:docker}
+    runtime-image-build-directory: ${TRAINING_K8S_RUNTIME_IMAGE_BUILD_DIRECTORY:/tmp/tss-runtime-image-builds}
+    runtime-image-build-timeout-seconds: ${TRAINING_K8S_RUNTIME_IMAGE_BUILD_TIMEOUT_SECONDS:1800}
+    runtime-image-pip-index-url: ${TRAINING_K8S_RUNTIME_IMAGE_PIP_INDEX_URL:}
+    runtime-image-pip-timeout-seconds: ${TRAINING_K8S_RUNTIME_IMAGE_PIP_TIMEOUT_SECONDS:120}
+    runtime-image-pip-retries: ${TRAINING_K8S_RUNTIME_IMAGE_PIP_RETRIES:5}
+    backend-service-url: ${TRAINING_K8S_BACKEND_SERVICE_URL:http://tss-backend:8080}
+    minio-service-url: ${TRAINING_K8S_MINIO_SERVICE_URL:http://tss-minio:9000}
+    mlflow-service-url: ${TRAINING_K8S_MLFLOW_SERVICE_URL:http://tss-mlflow:5000}
+    mlflow-experiment-name: ${TRAINING_K8S_MLFLOW_EXPERIMENT_NAME:TSSAI-K8s-Training}
+    cpu-request: ${TRAINING_K8S_CPU_REQUEST:500m}
+    cpu-limit: ${TRAINING_K8S_CPU_LIMIT:2}
+    memory-request: ${TRAINING_K8S_MEMORY_REQUEST:512Mi}
+    memory-limit: ${TRAINING_K8S_MEMORY_LIMIT:4Gi}
+    job-active-deadline-seconds: ${TRAINING_K8S_JOB_ACTIVE_DEADLINE_SECONDS:3600}
+    job-ttl-seconds-after-finished: ${TRAINING_K8S_JOB_TTL_SECONDS:3600}
+    internal-callback-token: ${TRAINING_K8S_INTERNAL_CALLBACK_TOKEN:}
+    monitor-interval-ms: ${TRAINING_K8S_MONITOR_INTERVAL_MS:30000}
+    pod-startup-failure-grace-seconds: ${TRAINING_K8S_POD_STARTUP_FAILURE_GRACE_SECONDS:120}
+    client-request-timeout-seconds: ${TRAINING_K8S_CLIENT_REQUEST_TIMEOUT_SECONDS:120}
+    failure-diagnostics-enabled: ${TRAINING_K8S_FAILURE_DIAGNOSTICS_ENABLED:true}
+    failure-diagnostics-retry-window-seconds: ${TRAINING_K8S_FAILURE_DIAGNOSTICS_RETRY_WINDOW_SECONDS:900}
+    failure-diagnostics-retention-days: ${TRAINING_K8S_FAILURE_DIAGNOSTICS_RETENTION_DAYS:30}
+    failure-diagnostics-max-bytes: ${TRAINING_K8S_FAILURE_DIAGNOSTICS_MAX_BYTES:1048576}
+    bootstrap-timeout-seconds: ${TRAINING_K8S_BOOTSTRAP_TIMEOUT_SECONDS:600}
+
+inference:
+  kubernetes:
+    worker-image: ${INFERENCE_KUBERNETES_WORKER_IMAGE:tss-inference-worker-cpu:local}
+    gpu-worker-image: ${INFERENCE_KUBERNETES_GPU_WORKER_IMAGE:crpi-s1uie3z8n3mbqf6y.cn-shanghai.personal.cr.aliyuncs.com/tss-platform/tss-inference-worker-gpu@sha256:7354987c572dfca03f027442cbd034483f4c915eecf1e4df139e01b35b33c114}
+    worker-image-pull-policy: ${INFERENCE_KUBERNETES_WORKER_IMAGE_PULL_POLICY:IfNotPresent}
+    cpu-request: ${INFERENCE_KUBERNETES_CPU_REQUEST:500m}
+    cpu-limit: ${INFERENCE_KUBERNETES_CPU_LIMIT:2}
+    memory-request: ${INFERENCE_KUBERNETES_MEMORY_REQUEST:512Mi}
+    memory-limit: ${INFERENCE_KUBERNETES_MEMORY_LIMIT:4Gi}
+    ephemeral-storage-request: ${INFERENCE_KUBERNETES_EPHEMERAL_STORAGE_REQUEST:2Gi}
+    ephemeral-storage-limit: ${INFERENCE_KUBERNETES_EPHEMERAL_STORAGE_LIMIT:12Gi}
+    gpu-cpu-request: ${INFERENCE_KUBERNETES_GPU_CPU_REQUEST:1}
+    gpu-cpu-limit: ${INFERENCE_KUBERNETES_GPU_CPU_LIMIT:4}
+    gpu-memory-request: ${INFERENCE_KUBERNETES_GPU_MEMORY_REQUEST:2Gi}
+    gpu-memory-limit: ${INFERENCE_KUBERNETES_GPU_MEMORY_LIMIT:8Gi}
+    gpu-ephemeral-storage-request: ${INFERENCE_KUBERNETES_GPU_EPHEMERAL_STORAGE_REQUEST:2Gi}
+    gpu-ephemeral-storage-limit: ${INFERENCE_KUBERNETES_GPU_EPHEMERAL_STORAGE_LIMIT:12Gi}
+    model-cache:
+      enabled: ${INFERENCE_KUBERNETES_MODEL_CACHE_ENABLED:false}
+      node-path: ${INFERENCE_KUBERNETES_MODEL_CACHE_NODE_PATH:/opt/tss-platform/model-cache}
+      mount-path: ${INFERENCE_KUBERNETES_MODEL_CACHE_MOUNT_PATH:/var/cache/tss/models}
+      max-bytes: ${INFERENCE_KUBERNETES_MODEL_CACHE_MAX_BYTES:1073741824}
+      min-free-bytes: ${INFERENCE_KUBERNETES_MODEL_CACHE_MIN_FREE_BYTES:3221225472}
+      runtime-reserve-bytes: ${INFERENCE_KUBERNETES_MODEL_CACHE_RUNTIME_RESERVE_BYTES:10737418240}
+
+resource-monitor:
+  metrics:
+    collect-interval-ms: ${RESOURCE_MONITOR_COLLECT_INTERVAL_MS:30000}
+    dcgm-exporter-port: ${RESOURCE_MONITOR_DCGM_EXPORTER_PORT:9400}
+    gpu-node-label: ${RESOURCE_MONITOR_GPU_NODE_LABEL:tss.ai/node-pool=gpu}
+    metrics-retention-days: ${RESOURCE_MONITOR_METRICS_RETENTION_DAYS:7}

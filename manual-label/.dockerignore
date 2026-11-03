@@ -1,0 +1,5 @@
+data
+full-dataset-check
+__pycache__
+*.sqlite*
+*.log

@@ -1,0 +1,69 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: tss-training-connectivity
+  namespace: tss-training
+  labels:
+    app.kubernetes.io/name: tss-training-connectivity
+    app.kubernetes.io/part-of: tss-platform
+spec:
+  backoffLimit: 1
+  activeDeadlineSeconds: 180
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: tss-training-connectivity
+    spec:
+      serviceAccountName: tss-training-worker
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      nodeSelector:
+        tss.ai/node-pool: cpu
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: connectivity
+          image: __CONNECTIVITY_TEST_IMAGE__
+          imagePullPolicy: IfNotPresent
+          command:
+            - python
+            - -c
+          args:
+            - |
+              from urllib.error import HTTPError
+              from urllib.request import urlopen
+
+              def status(url):
+                  try:
+                      with urlopen(url, timeout=15) as response:
+                          return response.status
+                  except HTTPError as error:
+                      return error.code
+
+              checks = {
+                  "http://tss-backend:8080/health/ready": 200,
+                  "http://tss-minio:9000/minio/health/live": 200,
+                  "http://tss-mlflow:5000/": 200,
+              }
+              for url, expected in checks.items():
+                  actual = status(url)
+                  if actual != expected:
+                      raise SystemExit(f"{url}: expected {expected}, got {actual}")
+                  print(f"{url}: {actual}")
+              print("TSS training dependencies are reachable")
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true

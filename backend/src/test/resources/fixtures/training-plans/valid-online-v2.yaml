@@ -1,0 +1,75 @@
+# Valid online plan fixture; kept outside the built-in registry scan path.
+schemaVersion: tss.training.plan/v2
+id: custom_image_plan
+version: v1
+displayName: Custom CPU image classification
+description: Valid online v2 test fixture.
+category: CV
+enabled: true
+trainingModes: [FULL_FINETUNE]
+
+execution:
+  interpreter: python
+  entrypoint: train.py
+  arguments: [--model-dir, "${MODEL_DIR}", --data-dir, "${DATA_DIR}", --output-dir, "${OUTPUT_DIR}"]
+
+inputs:
+  model:
+    required: true
+    consumed: true
+    acceptedSpecIds: [model.cv.hf-image/v1]
+  dataset:
+    required: true
+    acceptedSpecIds: [dataset.cv.imagefolder/v1]
+  code:
+    required: true
+    approvalRequired: true
+    runtime: PYTHON3
+
+parameters: []
+
+runtimes:
+  - id: cpu-small
+    deviceType: CPU
+    image: crpi-s1uie3z8n3mbqf6y.cn-shanghai.personal.cr.aliyuncs.com/tss-platform/tss-cv-worker@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+    imagePullPolicy: IfNotPresent
+    productionDigestRequired: true
+    resourceProfiles:
+      - id: cpu-small
+        cpuRequest: "1"
+        cpuLimit: "4"
+        memoryRequest: 4Gi
+        memoryLimit: 8Gi
+        ephemeralStorageLimit: 12Gi
+        gpuCount: 0
+        nodeSelector:
+          tss.ai/node-pool: cpu
+
+outputs:
+  progressProtocol: TSS_EVENT_JSONL_V1
+  metricsPath: metrics.json
+  logPath: train.log
+  artifacts:
+    - path: model.zip
+      role: PRIMARY_MODEL
+      required: true
+      format: HF_MODEL_ARCHIVE
+      publishAsModel: true
+      publishedModelSpecId: model.cv.hf-image/v1
+    - path: metrics.json
+      role: METRICS
+      required: true
+      format: JSON
+      publishAsModel: false
+    - path: train.log
+      role: LOG
+      required: true
+      format: TEXT
+      publishAsModel: false
+
+security:
+  networkPolicy: PLATFORM_SERVICES_ONLY
+  runAsNonRoot: true
+  allowPrivilegeEscalation: false
+  automountServiceAccountToken: false
+  maxRuntimeSeconds: 28800

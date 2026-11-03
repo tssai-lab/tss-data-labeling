@@ -1,0 +1,124 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tss.ai/schemas/training-run-spec-v1.schema.json",
+  "title": "TSS TrainingRunSpec v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "trainingId", "createdAt", "plan", "trainingMode", "inputs", "execution", "parameters", "runtime", "resources", "workspace", "outputs", "security"],
+  "properties": {
+    "schemaVersion": { "const": "tss.training.run-spec/v1" },
+    "trainingId": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "plan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "version"],
+      "properties": {
+        "id": { "type": "string" },
+        "version": { "type": "string" }
+      }
+    },
+    "trainingMode": { "enum": ["FROM_SCRATCH", "FULL_FINETUNE", "PEFT", "PREFERENCE_OPTIMIZATION"] },
+    "inputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["model", "dataset", "code"],
+      "properties": {
+        "model": { "$ref": "#/$defs/inputArtifact" },
+        "dataset": { "$ref": "#/$defs/inputArtifact" },
+        "code": { "$ref": "#/$defs/codeArtifact" }
+      }
+    },
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["argv", "workingDirectory"],
+      "properties": {
+        "argv": { "type": "array", "items": { "type": "string", "maxLength": 1024 }, "minItems": 2, "maxItems": 128 },
+        "workingDirectory": { "const": "/workspace/job/code" }
+      }
+    },
+    "parameters": { "type": "object", "additionalProperties": true, "maxProperties": 128 },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["variantId", "deviceType", "image", "imagePullPolicy"],
+      "properties": {
+        "variantId": { "type": "string" },
+        "deviceType": { "enum": ["CPU", "NVIDIA_GPU"] },
+        "image": { "type": "string", "minLength": 1 },
+        "imageDigest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+        "imagePullPolicy": { "enum": ["Always", "IfNotPresent", "Never"] },
+        "environmentFingerprint": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+      }
+    },
+    "resources": { "$ref": "#/$defs/resources" },
+    "workspace": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["modelDir", "dataDir", "codeDir", "configDir", "outputDir", "paramsFile"],
+      "properties": {
+        "modelDir": { "const": "/workspace/job/model" },
+        "dataDir": { "const": "/workspace/job/data" },
+        "codeDir": { "const": "/workspace/job/code" },
+        "configDir": { "const": "/workspace/job/config" },
+        "outputDir": { "const": "/workspace/job/output" },
+        "paramsFile": { "const": "/workspace/job/config/params.json" }
+      }
+    },
+    "outputs": { "type": "object", "additionalProperties": true },
+    "security": { "type": "object", "additionalProperties": true }
+  },
+  "$defs": {
+    "inputArtifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["versionId", "objectName", "sha256", "sizeBytes", "format", "fileName", "archive", "requiredEntries"],
+      "properties": {
+        "versionId": { "type": "string", "minLength": 1 },
+        "objectName": { "type": "string", "minLength": 1 },
+        "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "sizeBytes": { "type": "integer", "minimum": 1 },
+        "format": { "type": "string", "minLength": 1 },
+        "fileName": { "type": "string", "minLength": 1, "maxLength": 255 },
+        "archive": { "type": "boolean" },
+        "requiredEntries": { "type": "array", "items": { "type": "string", "minLength": 1 }, "maxItems": 128 }
+      }
+    },
+    "codeArtifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["versionId", "objectName", "sha256", "sizeBytes", "format", "fileName", "archive", "requiredEntries", "entrypoint", "approvalEvidenceId"],
+      "properties": {
+        "versionId": { "type": "string", "minLength": 1 },
+        "objectName": { "type": "string", "minLength": 1 },
+        "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "sizeBytes": { "type": "integer", "minimum": 1 },
+        "format": { "type": "string", "minLength": 1 },
+        "fileName": { "type": "string", "minLength": 1, "maxLength": 255 },
+        "archive": { "const": true },
+        "requiredEntries": { "type": "array", "items": { "type": "string", "minLength": 1 }, "minItems": 1, "maxItems": 128 },
+        "entrypoint": { "type": "string", "minLength": 1 },
+        "approvalEvidenceId": { "type": "string", "minLength": 1 },
+        "requirements": { "type": "array", "items": { "type": "string", "minLength": 1, "maxLength": 512 }, "maxItems": 256 },
+        "requirementsSha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+      }
+    },
+    "resources": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["profileId", "cpuRequest", "cpuLimit", "memoryRequest", "memoryLimit", "ephemeralStorageLimit", "gpuCount"],
+      "properties": {
+        "profileId": { "type": "string" },
+        "cpuRequest": { "type": "string" },
+        "cpuLimit": { "type": "string" },
+        "memoryRequest": { "type": "string" },
+        "memoryLimit": { "type": "string" },
+        "ephemeralStorageLimit": { "type": "string" },
+        "gpuCount": { "type": "integer", "minimum": 0 },
+        "gpuMemoryLimitMiB": { "type": "integer", "minimum": 1 },
+        "nodeSelector": { "type": "object", "additionalProperties": { "type": "string" } }
+      }
+    }
+  }
+}

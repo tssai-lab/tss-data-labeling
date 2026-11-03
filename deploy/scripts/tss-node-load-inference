@@ -1,0 +1,382 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+runtime_file="${TSS_NODE_RUNTIME_ENV:-/etc/tss-platform/node-runtime.env}"
+if [[ ! -r $runtime_file ]]; then
+  echo "Node runtime configuration is not readable." >&2
+  exit 1
+fi
+# shellcheck disable=SC1090
+source "$runtime_file"
+
+import_mode="stream"
+if [[ ${1:-} == "--registry" ]]; then
+  import_mode="registry"
+  shift
+fi
+if [[ $# -ne 2 && $# -ne 4 ]]; then
+  echo "Usage: $0 [--registry] <repository>:<commit-sha> sha256:<image-id> [cv-image nlp-image]" >&2
+  exit 1
+fi
+
+image="$1"
+expected_image_id="$2"
+cv_image="${3:-}"
+nlp_image="${4:-}"
+repository="${TSS_INFERENCE_IMAGE_REPOSITORY:-ghcr.io/tssai-lab/tss-inference-worker-cpu}"
+fallback_repository="${TSS_INFERENCE_FALLBACK_IMAGE_REPOSITORY:-crpi-s1uie3z8n3mbqf6y.cn-shanghai.personal.cr.aliyuncs.com/tss-platform/tss-inference-worker-cpu}"
+cv_repository="${TSS_CV_IMAGE_REPOSITORY:-crpi-s1uie3z8n3mbqf6y.cn-shanghai.personal.cr.aliyuncs.com/tss-platform/tss-cv-worker}"
+nlp_repository="${TSS_NLP_IMAGE_REPOSITORY:-crpi-s1uie3z8n3mbqf6y.cn-shanghai.personal.cr.aliyuncs.com/tss-platform/tss-nlp-worker}"
+runtime_env="${TSS_PLATFORM_DIR}/backend/.env.runtime"
+runtime_images_env="${TSS_PLATFORM_DIR}/runtime-images.env"
+
+matched_repository=""
+for candidate_repository in "$repository" "$fallback_repository"; do
+  if [[ $image == "${candidate_repository}:"* \
+    && ${image#${candidate_repository}:} =~ ^[0-9a-f]{40}$ ]]; then
+    matched_repository="$candidate_repository"
+    break
+  fi
+done
+if [[ -z $matched_repository ]]; then
+  echo "Refusing an image outside the configured inference repository." >&2
+  exit 1
+fi
+if [[ ! $expected_image_id =~ ^sha256:[0-9a-f]{64}$ ]]; then
+  echo "Refusing an invalid image identifier." >&2
+  exit 1
+fi
+if [[ -n $cv_image ]]; then
+  if [[ $cv_image != "${cv_repository}:"* || ! ${cv_image#${cv_repository}:} =~ ^[0-9a-f]{40}$ ]]; then
+    echo "Refusing an invalid CV image reference." >&2
+    exit 1
+  fi
+  if [[ $nlp_image != "${nlp_repository}:"* || ! ${nlp_image#${nlp_repository}:} =~ ^[0-9a-f]{40}$ ]]; then
+    echo "Refusing an invalid NLP image reference." >&2
+    exit 1
+  fi
+fi
+if [[ ! -f $runtime_env ]]; then
+  echo "Backend runtime environment does not exist." >&2
+  exit 1
+fi
+
+for command_name in awk ctr curl df docker flock python3; do
+  command -v "$command_name" >/dev/null
+done
+if [[ $import_mode == "stream" ]]; then
+  command -v gzip >/dev/null
+fi
+docker compose version >/dev/null
+if [[ ! -x /usr/local/sbin/tss-node-validate-deployment ]]; then
+  echo "Deployment validation helper is not installed." >&2
+  exit 1
+fi
+
+install -d -m 755 /run/lock
+exec 9>/run/lock/tss-node-deploy.lock
+flock 9
+
+runtime_env_backup="$(mktemp /var/tmp/tss-runtime-env.XXXXXX)"
+runtime_images_backup=""
+runtime_env_candidate=""
+runtime_images_candidate=""
+active_preload_pods=()
+
+cleanup() {
+  local pod_name
+  if [[ ${#active_preload_pods[@]} -gt 0 ]]; then
+    for pod_name in "${active_preload_pods[@]}"; do
+      "$kubectl_bin" --kubeconfig "$kubeconfig" \
+        delete pod "$pod_name" --namespace "$namespace" --wait=false >/dev/null 2>&1 || true
+    done
+  fi
+  rm -f \
+    "$runtime_env_backup" \
+    "$runtime_images_backup" \
+    "$runtime_env_candidate" \
+    "$runtime_images_candidate"
+}
+trap cleanup EXIT
+
+required_images=("$image")
+if [[ -n $cv_image ]]; then
+  required_images+=("$cv_image" "$nlp_image")
+fi
+
+if [[ $import_mode == "registry" ]]; then
+  namespace="${TSS_TRAINING_NAMESPACE:-tss-training}"
+  service_account="${TSS_TRAINING_SERVICE_ACCOUNT:-tss-training-worker}"
+  smoke_node="${TSS_DEPLOYMENT_SMOKE_NODE:-$(hostname)}"
+  runtime_reserve_bytes="${TSS_MODEL_CACHE_RUNTIME_RESERVE_BYTES:-10737418240}"
+  kubectl_bin="$(
+    docker inspect "$TSS_BACKEND_CONTAINER" --format '{{range .Config.Env}}{{println .}}{{end}}' \
+      | awk -F= '$1 == "TRAINING_K8S_KUBECTL_PATH" { sub(/^[^=]*=/, ""); print }'
+  )"
+  if [[ -z $kubectl_bin ]]; then
+    kubectl_bin="$(command -v kubectl || true)"
+  fi
+  kubeconfig="$(
+    docker inspect "$TSS_BACKEND_CONTAINER" --format '{{range .Config.Env}}{{println .}}{{end}}' \
+      | awk -F= '$1 == "TRAINING_K8S_KUBECONFIG" { sub(/^[^=]*=/, ""); print }'
+  )"
+  if [[ ! $runtime_reserve_bytes =~ ^[1-9][0-9]*$ ]]; then
+    echo "Runtime image disk reserve must be a positive integer." >&2
+    exit 1
+  fi
+  if [[ ! -x $kubectl_bin || ! -r $kubeconfig || $kubeconfig != /* || $kubeconfig == *".."* ]]; then
+    echo "Kubernetes registry preload configuration is unavailable or unsafe." >&2
+    exit 1
+  fi
+
+  preload_image() {
+    local preload_image="$1"
+    local ordinal="$2"
+    local pod_name phase deadline marker available_bytes
+    available_bytes="$(df --output=avail -B1 "$TSS_PLATFORM_DIR" | awk 'NR == 2 { print $1 }')"
+    if [[ ! $available_bytes =~ ^[0-9]+$ || $available_bytes -lt $runtime_reserve_bytes ]]; then
+      echo "Refusing runtime preload because the node disk reserve is not available." >&2
+      return 1
+    fi
+    pod_name="tss-runtime-preload-${ordinal}-${preload_image##*:}"
+    pod_name="${pod_name:0:63}"
+    active_preload_pods+=("$pod_name")
+
+    cat <<YAML | "$kubectl_bin" --kubeconfig "$kubeconfig" apply -f - >/dev/null
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ${pod_name}
+  namespace: ${namespace}
+  labels:
+    app.kubernetes.io/name: tss-runtime-preload
+    app.kubernetes.io/part-of: tss-platform
+spec:
+  nodeName: ${smoke_node}
+  serviceAccountName: ${service_account}
+  automountServiceAccountToken: false
+  restartPolicy: Never
+  activeDeadlineSeconds: 600
+  securityContext:
+    runAsNonRoot: true
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: preload
+      image: ${preload_image}
+      imagePullPolicy: Always
+      command: ["python", "-c", "print('TSS_RUNTIME_PRELOAD_OK')"]
+      env:
+        - name: HOME
+          value: /tmp/home
+      resources:
+        requests:
+          cpu: 100m
+          memory: 128Mi
+        limits:
+          cpu: 500m
+          memory: 1Gi
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: ["ALL"]
+        readOnlyRootFilesystem: true
+      volumeMounts:
+        - name: temporary
+          mountPath: /tmp
+  volumes:
+    - name: temporary
+      emptyDir:
+        sizeLimit: 256Mi
+YAML
+
+    deadline=$((SECONDS + 600))
+    phase=""
+    while (( SECONDS < deadline )); do
+      phase="$(
+        "$kubectl_bin" --kubeconfig "$kubeconfig" \
+          get pod "$pod_name" --namespace "$namespace" -o jsonpath='{.status.phase}' 2>/dev/null || true
+      )"
+      if [[ $phase == "Succeeded" || $phase == "Failed" ]]; then
+        break
+      fi
+      echo "Waiting for private-registry runtime preload: image=$preload_image phase=${phase:-Pending}"
+      sleep 10
+    done
+    if [[ $phase != "Succeeded" ]]; then
+      echo "Private-registry runtime preload failed: image=$preload_image phase=${phase:-Unknown}." >&2
+      "$kubectl_bin" --kubeconfig "$kubeconfig" describe pod "$pod_name" --namespace "$namespace" >&2 || true
+      "$kubectl_bin" --kubeconfig "$kubeconfig" logs "$pod_name" --namespace "$namespace" >&2 || true
+      return 1
+    fi
+    marker="$("$kubectl_bin" --kubeconfig "$kubeconfig" logs "$pod_name" --namespace "$namespace")"
+    if [[ $marker != *"TSS_RUNTIME_PRELOAD_OK"* ]]; then
+      echo "Private-registry runtime preload did not emit its success marker: $preload_image" >&2
+      return 1
+    fi
+    "$kubectl_bin" --kubeconfig "$kubeconfig" \
+      delete pod "$pod_name" --namespace "$namespace" --wait=true --timeout=30s >/dev/null
+    active_preload_pods=()
+    available_bytes="$(df --output=avail -B1 "$TSS_PLATFORM_DIR" | awk 'NR == 2 { print $1 }')"
+    if [[ ! $available_bytes =~ ^[0-9]+$ || $available_bytes -lt $runtime_reserve_bytes ]]; then
+      echo "Runtime preload left less than the required node disk reserve." >&2
+      return 1
+    fi
+    echo "Private-registry runtime preload passed: image=$preload_image"
+  }
+
+  ordinal=0
+  for required_image in "${required_images[@]}"; do
+    ordinal=$((ordinal + 1))
+    preload_image "$required_image" "$ordinal"
+  done
+else
+  set +e
+  gzip -dc | ctr --namespace k8s.io images import - >/dev/null
+  import_status=("${PIPESTATUS[@]}")
+  set -e
+  if (( import_status[1] != 0 )); then
+    echo "Kubernetes containerd failed to import the runtime image archive (exit ${import_status[1]})." >&2
+    exit "${import_status[1]}"
+  fi
+  if (( import_status[0] != 0 && import_status[0] != 141 )); then
+    echo "Runtime image archive decompression failed (exit ${import_status[0]})." >&2
+    exit "${import_status[0]}"
+  fi
+  if (( import_status[0] == 141 )); then
+    echo "Runtime image archive importer closed after a successful import; continuing with digest and readiness checks."
+  fi
+fi
+image_target_digest="$(
+  ctr --namespace k8s.io images list \
+    | awk -v expected="$image" '$1 == expected { print $3 }'
+)"
+actual_image_id="$(
+  ctr --namespace k8s.io content get "$image_target_digest" \
+    | python3 -c 'import json, sys; print(json.load(sys.stdin)["config"]["digest"])'
+)"
+if [[ $actual_image_id != "$expected_image_id" ]]; then
+  echo "Imported image identifier does not match the runner image." >&2
+  exit 1
+fi
+for required_image in "${required_images[@]}"; do
+  if [[ $import_mode == "registry" ]]; then
+    ready_image="$(ctr --namespace k8s.io images list --quiet | grep -F -x "$required_image" || true)"
+  else
+    ready_image="$(
+      ctr --namespace k8s.io images check --quiet "name==${required_image}" \
+        | grep -F -x "$required_image" \
+        || true
+    )"
+  fi
+  if [[ $ready_image != "$required_image" ]]; then
+    echo "Runtime image is not available in Kubernetes containerd: $required_image" >&2
+    exit 1
+  fi
+done
+
+cp -a "$runtime_env" "$runtime_env_backup"
+runtime_env_candidate="$(mktemp "${TSS_PLATFORM_DIR}/backend/.env.runtime.XXXXXX")"
+awk -v value="$image" '
+  BEGIN { updated = 0 }
+  /^INFERENCE_KUBERNETES_WORKER_IMAGE=/ {
+    print "INFERENCE_KUBERNETES_WORKER_IMAGE=" value
+    updated = 1
+    next
+  }
+  { print }
+  END {
+    if (!updated) {
+      print "INFERENCE_KUBERNETES_WORKER_IMAGE=" value
+    }
+  }
+' "$runtime_env" > "$runtime_env_candidate"
+chmod 600 "$runtime_env_candidate"
+
+if [[ -f $runtime_images_env ]]; then
+  runtime_images_backup="$(mktemp /var/tmp/tss-runtime-images-env.XXXXXX)"
+  cp -a "$runtime_images_env" "$runtime_images_backup"
+  runtime_images_candidate="$(mktemp "${TSS_PLATFORM_DIR}/runtime-images.env.XXXXXX")"
+  awk -v value="$image" '
+    BEGIN { updated = 0 }
+    /^TSS_INFERENCE_WORKER_IMAGE=/ {
+      print "TSS_INFERENCE_WORKER_IMAGE=" value
+      updated = 1
+      next
+    }
+    { print }
+    END {
+      if (!updated) {
+        print "TSS_INFERENCE_WORKER_IMAGE=" value
+      }
+    }
+  ' "$runtime_images_env" > "$runtime_images_candidate"
+  chmod 600 "$runtime_images_candidate"
+fi
+
+mv -f "$runtime_env_candidate" "$runtime_env"
+runtime_env_candidate=""
+if [[ -n $runtime_images_candidate ]]; then
+  mv -f "$runtime_images_candidate" "$runtime_images_env"
+  runtime_images_candidate=""
+fi
+
+current_backend_image="$(
+  docker inspect "$TSS_BACKEND_CONTAINER" --format '{{.Config.Image}}' 2>/dev/null || true
+)"
+if [[ -z $current_backend_image ]]; then
+  echo "The backend container is not running; refusing to update runtime configuration." >&2
+  cp -a "$runtime_env_backup" "$runtime_env"
+  if [[ -n $runtime_images_backup ]]; then
+    cp -a "$runtime_images_backup" "$runtime_images_env"
+  fi
+  exit 1
+fi
+current_backend_image_id="$(docker inspect "$TSS_BACKEND_CONTAINER" --format '{{.Image}}')"
+
+export TSS_BACKEND_IMAGE="$current_backend_image"
+export TSS_MLFLOW_IMAGE
+
+rollback_runtime() {
+  cp -a "$runtime_env_backup" "$runtime_env"
+  if [[ -n $runtime_images_backup ]]; then
+    cp -a "$runtime_images_backup" "$runtime_images_env"
+  fi
+  docker compose \
+    -f "$TSS_COMPOSE_BASE" \
+    -f "$TSS_COMPOSE_OVERLAY" \
+    up -d --no-deps backend >/dev/null || true
+}
+
+if ! docker compose \
+  -f "$TSS_COMPOSE_BASE" \
+  -f "$TSS_COMPOSE_OVERLAY" \
+  up -d --no-deps backend; then
+  echo "Backend restart failed after inference image update; restoring configuration." >&2
+  rollback_runtime
+  exit 1
+fi
+
+for _ in $(seq 1 60); do
+  if curl --fail --silent --show-error --max-time 5 "$TSS_BACKEND_HEALTH_URL" >/dev/null; then
+    validation_args=("$current_backend_image" "$current_backend_image_id")
+    if [[ -n $cv_image ]]; then
+      validation_args+=("$cv_image" "$nlp_image")
+    fi
+    if TSS_EXPECTED_INFERENCE_IMAGE="$image" \
+      TSS_MODEL_CACHE_RUNTIME_RESERVE_BYTES="${TSS_MODEL_CACHE_RUNTIME_RESERVE_BYTES:-10737418240}" \
+      /usr/local/sbin/tss-node-validate-deployment "${validation_args[@]}"; then
+      echo "Inference runtime deployment is healthy and functionally validated: node=$TSS_NODE_ID image=$image"
+      exit 0
+    fi
+    echo "Runtime images failed functional validation; restoring configuration." >&2
+    rollback_runtime
+    exit 1
+  fi
+  sleep 2
+done
+
+echo "Backend did not become ready after inference image update; restoring configuration." >&2
+docker logs --tail 200 "$TSS_BACKEND_CONTAINER" >&2 || true
+rollback_runtime
+exit 1

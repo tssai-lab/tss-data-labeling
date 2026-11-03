@@ -1,0 +1,78 @@
+schemaVersion: tss.training.plan/v1
+id: hf_image_classification
+version: v2
+displayName: HuggingFace image classification
+description: 该旧内置方案已由严格校验、固定镜像的图像分类方案替代。
+enabled: false
+unavailableReason: 已由“图像分类”在线方案替代；旧版本仅用于历史任务追溯。
+trainingModes: [FULL_FINETUNE]
+
+execution:
+  interpreter: python
+  entrypoint: train.py
+  arguments: [--model-dir, "${MODEL_DIR}", --data-dir, "${DATA_DIR}/data", --out-dir, "${OUTPUT_DIR}", --params-file, "${PARAMS_FILE}", --device, "${DEVICE}"]
+
+inputs:
+  model:
+    required: true
+    consumed: true
+    formats: [HF_MODEL_ARCHIVE]
+    taskTypes: [CV]
+    requiredEntries: [model.yaml]
+  dataset:
+    required: true
+    taskTypes: [CV]
+    cvTaskTypes: [IMAGE_CLASSIFICATION, UNLABELED]
+    annotationFormats: [FOLDER_CLASSIFICATION, OTHER]
+    requiredEntries: [data/train, data/validation, data/test]
+  code:
+    required: true
+    approvalRequired: true
+    runtime: PYTHON3
+
+parameters: []
+
+runtimes:
+  - id: cv-cpu
+    deviceType: CPU
+    image: crpi-s1uie3z8n3mbqf6y.cn-shanghai.personal.cr.aliyuncs.com/tss-platform/tss-cv-worker:latest
+    imagePullPolicy: IfNotPresent
+    productionDigestRequired: false
+    resourceProfiles:
+      - id: cpu-hf-small
+        cpuRequest: "1"
+        cpuLimit: "4"
+        memoryRequest: 4Gi
+        memoryLimit: 8Gi
+        ephemeralStorageLimit: 12Gi
+        gpuCount: 0
+        nodeSelector:
+          tss.ai/node-pool: cpu
+
+outputs:
+  progressProtocol: TSS_EVENT_JSONL_V1
+  metricsPath: metrics.json
+  logPath: train.log
+  artifacts:
+    - path: mobilenet_beans_model.zip
+      role: PRIMARY_MODEL
+      required: true
+      format: HF_MODEL_ARCHIVE
+      publishAsModel: true
+    - path: metrics.json
+      role: METRICS
+      required: true
+      format: JSON
+      publishAsModel: false
+    - path: train.log
+      role: LOG
+      required: true
+      format: TEXT
+      publishAsModel: false
+
+security:
+  networkPolicy: PLATFORM_SERVICES_ONLY
+  runAsNonRoot: true
+  allowPrivilegeEscalation: false
+  automountServiceAccountToken: false
+  maxRuntimeSeconds: 28800

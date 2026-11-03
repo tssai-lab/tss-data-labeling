@@ -1,0 +1,10 @@
+ARG BASE_IMAGE=python:3.13-slim
+FROM ${BASE_IMAGE}
+USER 0
+WORKDIR /app
+RUN mkdir -p /data && chown 10001:10001 /data
+COPY app.py /app/app.py
+USER 10001
+ENV PYTHONUNBUFFERED=1 LABEL_HOST=0.0.0.0 LABEL_PORT=8013 LABEL_DATA_DIR=/data
+EXPOSE 8013
+ENTRYPOINT ["python", "/app/app.py"]

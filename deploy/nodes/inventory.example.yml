@@ -1,0 +1,41 @@
+schemaVersion: v1
+
+# This file documents the inventory shape only. Do not store real credentials,
+# private keys, tokens, or production-only addresses in Git.
+nodes:
+  - id: primary-01
+    environment: production
+    deploymentGroup: primary
+    roles:
+      - app
+      - worker
+    connection:
+      hostVariable: TSS_PRIMARY_01_HOST
+      userVariable: TSS_PRIMARY_01_USER
+      knownHostsVariable: TSS_PRIMARY_01_KNOWN_HOSTS
+    runtime:
+      platformDir: /opt/tss-platform
+      clusterName: tss-training-primary-01
+    traffic:
+      enabled: true
+      weight: 100
+    dataResponsibilities:
+      - application-local-poc
+
+  - id: candidate-01
+    environment: production
+    deploymentGroup: candidate
+    roles:
+      - app
+      - worker
+    connection:
+      hostVariable: TSS_CANDIDATE_01_HOST
+      userVariable: TSS_CANDIDATE_01_USER
+      knownHostsVariable: TSS_CANDIDATE_01_KNOWN_HOSTS
+    runtime:
+      platformDir: /opt/tss-platform
+      clusterName: tss-training-candidate-01
+    traffic:
+      enabled: false
+      weight: 0
+    dataResponsibilities: []

@@ -1,0 +1,9 @@
+# Common CPU inference dependencies. Heavy packages are baked into the worker
+# image so user jobs do not spend pod-local storage installing them at runtime.
+transformers>=4.36,<5
+pillow>=10,<12
+# Keep the CPU scientific stack compatible with the existing worker and pin
+# the temporary non-headless package that ultralytics declares as a dependency.
+numpy>=1.23,<2.0
+opencv-python==4.11.0.86
+ultralytics==8.3.18

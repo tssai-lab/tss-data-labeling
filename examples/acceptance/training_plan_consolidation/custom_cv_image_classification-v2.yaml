@@ -1,0 +1,95 @@
+schemaVersion: tss.training.plan/v2
+id: custom_cv_image_classification
+version: v2
+displayName: 图像分类
+description: 使用已上传的 HuggingFace 图像分类模型、ImageFolder 数据集和已审核训练代码进行训练。
+category: CV
+enabled: true
+trainingModes: [FULL_FINETUNE]
+
+execution:
+  interpreter: python
+  entrypoint: train.py
+  arguments: [--model-dir, "${MODEL_DIR}", --data-dir, "${DATA_DIR}/data", --out-dir, "${OUTPUT_DIR}", --params-file, "${PARAMS_FILE}", --device, "${DEVICE}"]
+
+inputs:
+  model:
+    required: true
+    consumed: true
+    acceptedSpecIds: [model.cv.hf-image/v1]
+  dataset:
+    required: true
+    acceptedSpecIds: [dataset.cv.imagefolder/v1]
+  code:
+    required: true
+    approvalRequired: true
+    runtime: PYTHON3
+
+parameters:
+  - name: epochs
+    displayName: 训练轮数
+    type: INTEGER
+    required: false
+    defaultValue: 2
+    minimum: 1
+    maximum: 1000
+  - name: batchSize
+    displayName: 批大小
+    type: INTEGER
+    required: false
+    defaultValue: 16
+    minimum: 1
+    maximum: 512
+  - name: lr
+    displayName: 学习率
+    type: NUMBER
+    required: false
+    defaultValue: 0.00003
+    minimum: 0.00000001
+    maximum: 1
+
+runtimes:
+  - id: cv-cpu
+    deviceType: CPU
+    image: crpi-s1uie3z8n3mbqf6y.cn-shanghai.personal.cr.aliyuncs.com/tss-platform/tss-cv-worker@sha256:c319dc2ffc58119d0fa130b46eb90b8ab9b45e0e8e06683329dbbf75e69cb310
+    imagePullPolicy: IfNotPresent
+    productionDigestRequired: true
+    resourceProfiles:
+      - id: cpu-small
+        cpuRequest: "1"
+        cpuLimit: "4"
+        memoryRequest: 4Gi
+        memoryLimit: 8Gi
+        ephemeralStorageLimit: 12Gi
+        gpuCount: 0
+        nodeSelector:
+          tss.ai/node-pool: cpu
+
+outputs:
+  progressProtocol: TSS_EVENT_JSONL_V1
+  metricsPath: metrics.json
+  logPath: train.log
+  artifacts:
+    - path: mobilenet_beans_model.zip
+      role: PRIMARY_MODEL
+      required: true
+      format: HF_MODEL_ARCHIVE
+      publishAsModel: true
+      publishedModelSpecId: model.cv.hf-image/v1
+    - path: metrics.json
+      role: METRICS
+      required: true
+      format: JSON
+      publishAsModel: false
+    - path: train.log
+      role: LOG
+      required: true
+      format: TEXT
+      publishAsModel: false
+
+security:
+  networkPolicy: PLATFORM_SERVICES_ONLY
+  runAsNonRoot: true
+  allowPrivilegeEscalation: false
+  automountServiceAccountToken: false
+  maxRuntimeSeconds: 28800

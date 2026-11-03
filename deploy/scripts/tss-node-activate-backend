@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+source /etc/tss-platform/node-runtime.env
+
+install -d -m 755 /run/lock
+exec 9>/run/lock/tss-node-deploy.lock
+flock 9
+
+if [[ $# -ne 2 ]]; then
+  echo "Usage: $0 <repository>:<40-character-commit-sha> sha256:<image-id>" >&2
+  exit 1
+fi
+
+image="$1"
+expected_image_id="$2"
+prefix="${TSS_BACKEND_IMAGE_REPOSITORY}:"
+if [[ $image != "${prefix}"* ]]; then
+  echo "Refusing an image outside the configured repository." >&2
+  exit 1
+fi
+tag="${image#${prefix}}"
+if [[ ! $tag =~ ^[0-9a-f]{40}$ ]]; then
+  echo "Refusing a backend image without an immutable Git SHA tag." >&2
+  exit 1
+fi
+if [[ ! $expected_image_id =~ ^sha256:[0-9a-f]{64}$ ]]; then
+  echo "Refusing an invalid backend image identifier." >&2
+  exit 1
+fi
+if [[ ! -x /usr/local/sbin/tss-node-validate-deployment ]]; then
+  echo "Deployment validation helper is not installed." >&2
+  exit 1
+fi
+
+previous_image="$(docker inspect "$TSS_BACKEND_CONTAINER" --format '{{.Config.Image}}' 2>/dev/null || true)"
+export TSS_BACKEND_IMAGE="$image"
+export TSS_MLFLOW_IMAGE
+export TSS_REDIS_IMAGE
+
+redis_container="${TSS_REDIS_CONTAINER:-tss-redis}"
+
+rollback_backend() {
+  if [[ -n $previous_image ]]; then
+    export TSS_BACKEND_IMAGE="$previous_image"
+    docker compose -f "$TSS_COMPOSE_BASE" -f "$TSS_COMPOSE_OVERLAY" up -d --no-deps backend
+  else
+    docker compose -f "$TSS_COMPOSE_BASE" -f "$TSS_COMPOSE_OVERLAY" rm -sf backend || true
+  fi
+}
+
+actual_redis_image_id="$(docker image inspect "$TSS_REDIS_IMAGE" --format '{{.Id}}')"
+if [[ $actual_redis_image_id != "$TSS_REDIS_IMAGE_ID" ]]; then
+  echo "Redis image identifier differs from the reviewed offline image; keeping the current backend." >&2
+  exit 1
+fi
+docker compose -f "$TSS_COMPOSE_BASE" -f "$TSS_COMPOSE_OVERLAY" up -d --no-deps redis mlflow
+redis_healthy=false
+for _ in $(seq 1 24); do
+  if [[ $(docker inspect "$redis_container" --format '{{.State.Health.Status}}' 2>/dev/null || true) == healthy ]]; then
+    redis_healthy=true
+    break
+  fi
+  sleep 2
+done
+if [[ $redis_healthy != true ]]; then
+  echo "Redis session store is unavailable; keeping the current backend." >&2
+  docker logs --tail 100 "$redis_container" >&2 || true
+  exit 1
+fi
+if ! docker compose -f "$TSS_COMPOSE_BASE" -f "$TSS_COMPOSE_OVERLAY" up -d --no-deps backend; then
+  echo "New backend failed to start; restoring the previous image." >&2
+  docker logs --tail 200 "$TSS_BACKEND_CONTAINER" >&2 || true
+  rollback_backend
+  exit 1
+fi
+
+backend_ready=false
+for _ in $(seq 1 60); do
+  if curl --fail --silent --show-error --max-time 5 "$TSS_BACKEND_HEALTH_URL" >/dev/null; then
+    backend_ready=true
+    break
+  fi
+  sleep 2
+done
+
+if [[ $backend_ready != true ]]; then
+  echo "New backend did not become ready; restoring the previous image." >&2
+  echo "[backend logs before rollback]" >&2
+  docker logs --tail 200 "$TSS_BACKEND_CONTAINER" >&2 || true
+  rollback_backend
+  exit 1
+fi
+
+if /usr/local/sbin/tss-node-validate-deployment "$image" "$expected_image_id"; then
+  echo "Backend deployment is healthy and functionally validated: node=$TSS_NODE_ID image=$image"
+  exit 0
+fi
+
+echo "New backend failed functional validation; restoring the previous image." >&2
+rollback_backend
+exit 1

@@ -1,0 +1,73 @@
+services:
+  redis:
+    image: ${TSS_REDIS_IMAGE:?TSS_REDIS_IMAGE must be set}
+    container_name: tss-redis
+    pull_policy: never
+    restart: unless-stopped
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --appendfsync
+      - everysec
+      - --maxmemory
+      - 192mb
+      - --maxmemory-policy
+      - noeviction
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - ./redis-data:/data
+    user: "999:1000"
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+    cpus: 0.25
+    mem_limit: 256m
+    pids_limit: 64
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges=true
+
+  mlflow:
+    image: ${TSS_MLFLOW_IMAGE:-tss-platform-mlflow:local}
+    container_name: tss-mlflow
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5000:5000"
+    volumes:
+      - ./mlflow-data:/mlflow
+    cpus: 0.5
+    mem_limit: 512m
+    pids_limit: 128
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges=true
+
+  backend:
+    image: ${TSS_BACKEND_IMAGE:?TSS_BACKEND_IMAGE must be set}
+    container_name: tss-backend
+    network_mode: host
+    env_file:
+      - ./backend/.env.runtime
+    volumes:
+      - ./backend/logs:/app/logs
+      - ./k8s:/opt/tss-platform/k8s:ro
+      - ./.tools/bin/kubectl:/opt/tss-platform/.tools/bin/kubectl:ro
+      - ./backend/scripts/k8s:/opt/tss-platform/backend/scripts/k8s:ro
+    restart: unless-stopped
+    cpus: 1.0
+    mem_limit: 1536m
+    pids_limit: 256
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges=true

@@ -1,0 +1,471 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+if [[ $# -ne 3 || ($3 != "--probe-only" && $3 != "--label-ready") ]]; then
+  echo "Usage: $0 <kubernetes-node> <immutable-worker-image> <--probe-only|--label-ready>" >&2
+  exit 2
+fi
+
+node_name="$1"
+worker_image="$2"
+mode="$3"
+kubectl_bin="${TSS_KUBECTL_BIN:-/opt/tss-platform/.tools/bin/kubectl}"
+kubeconfig="${TSS_KUBECONFIG:-/opt/tss-platform/k8s/.kube/admin.conf}"
+namespace="${TSS_TRAINING_NAMESPACE:-tss-training}"
+service_account="${TSS_TRAINING_SERVICE_ACCOUNT:-tss-training-worker}"
+cache_path="${TSS_MODEL_CACHE_HOST_PATH:-/opt/tss-platform/model-cache}"
+cache_mount_path="${TSS_MODEL_CACHE_MOUNT_PATH:-/var/cache/tss/models}"
+max_bytes="${TSS_MODEL_CACHE_MAX_BYTES:-1073741824}"
+min_free_bytes="${TSS_MODEL_CACHE_MIN_FREE_BYTES:-3221225472}"
+runtime_reserve_bytes="${TSS_MODEL_CACHE_RUNTIME_RESERVE_BYTES:-10737418240}"
+policy_config_map="${TSS_MODEL_CACHE_POLICY_CONFIG_MAP:-tss-model-cache-policy}"
+policy_from_config_map=false
+pod_name="tss-model-cache-probe-$(date +%s)-$$"
+pod_name="${pod_name:0:63}"
+pod_created=false
+claim_name=""
+
+require_safe_path() {
+  local label="$1" path="$2" segment
+  local -a segments=()
+  if [[ ! $path =~ ^/[A-Za-z0-9._/-]+$ || $path == / || $path == *"//"* ]]; then
+    echo "$label must be a safe non-root absolute path." >&2
+    return 1
+  fi
+  IFS='/' read -r -a segments <<<"${path#/}"
+  for segment in "${segments[@]}"; do
+    if [[ $segment == "." || $segment == ".." ]]; then
+      echo "$label must not contain dot segments." >&2
+      return 1
+    fi
+  done
+}
+
+cleanup() {
+  if [[ $pod_created == true ]]; then
+    "$kubectl_bin" --kubeconfig "$kubeconfig" delete pod "$pod_name" \
+      --namespace "$namespace" --ignore-not-found --wait=false >/dev/null 2>&1 || true
+  fi
+}
+trap cleanup EXIT
+
+if [[ ! $node_name =~ ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$ ]]; then
+  echo "Kubernetes node name is invalid." >&2
+  exit 1
+fi
+if [[ ! $worker_image =~ ^[-A-Za-z0-9._/:]+:[0-9a-f]{40}$ ]]; then
+  echo "Model cache probe requires an immutable 40-character Git SHA worker image." >&2
+  exit 1
+fi
+for resource_name in "$namespace" "$service_account"; do
+  if [[ ! $resource_name =~ ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$ ]]; then
+    echo "Kubernetes namespace or ServiceAccount name is invalid." >&2
+    exit 1
+  fi
+done
+require_safe_path "Model cache host path" "$cache_path"
+require_safe_path "Model cache mount path" "$cache_mount_path"
+if [[ ! -x $kubectl_bin || ! -r $kubeconfig ]]; then
+  echo "Cluster-admin kubectl or kubeconfig is unavailable." >&2
+  exit 1
+fi
+for command_name in python3 sed; do
+  command -v "$command_name" >/dev/null
+done
+
+set +e
+cluster_policy="$($kubectl_bin --kubeconfig "$kubeconfig" get configmap "$policy_config_map" \
+  --namespace "$namespace" \
+  -o 'jsonpath={.data.maxBytes}{" "}{.data.minFreeBytes}{" "}{.data.runtimeReserveBytes}' \
+  2>&1)"
+policy_read_status=$?
+set -e
+if (( policy_read_status != 0 )); then
+  if grep -qiE 'not[[:space:]]*found|notfound' <<<"$cluster_policy"; then
+    cluster_policy=""
+  else
+    echo "Unable to read model cache policy ConfigMap; refusing to validate with stale defaults." >&2
+    printf '%s\n' "$cluster_policy" >&2
+    exit 1
+  fi
+fi
+if [[ -n $cluster_policy ]]; then
+  policy_from_config_map=true
+  read -r max_bytes min_free_bytes runtime_reserve_bytes extra <<<"$cluster_policy"
+  if [[ -n ${extra:-} ]]; then
+    echo "Model cache policy ConfigMap contains an invalid capacity tuple." >&2
+    exit 1
+  fi
+fi
+for value in "$max_bytes" "$min_free_bytes" "$runtime_reserve_bytes"; do
+  if [[ ! $value =~ ^[0-9]+$ ]]; then
+    echo "Model cache capacity values must be non-negative integers." >&2
+    exit 1
+  fi
+done
+if [[ $policy_from_config_map == true ]]; then
+  for value in "$max_bytes" "$min_free_bytes" "$runtime_reserve_bytes"; do
+    if (( value < 1073741824 || value > 1099511627776 || value % 1073741824 != 0 )); then
+      echo "Model cache policy ConfigMap values must be integer GiB between 1 and 1024." >&2
+      exit 1
+    fi
+  done
+fi
+if (( max_bytes == 0 )); then
+  echo "Model cache maximum must be positive." >&2
+  exit 1
+fi
+
+node_ready="$($kubectl_bin --kubeconfig "$kubeconfig" get node "$node_name" \
+  -o jsonpath='{range .status.conditions[?(@.type=="Ready")]}{.status}{end}')"
+if [[ $node_ready != "True" ]]; then
+  echo "Kubernetes node is not Ready: $node_name" >&2
+  exit 1
+fi
+
+if [[ $mode == "--label-ready" ]]; then
+  active_pods="$($kubectl_bin --kubeconfig "$kubeconfig" get pods --namespace "$namespace" \
+    --field-selector "spec.nodeName=$node_name,status.phase!=Succeeded,status.phase!=Failed" \
+    -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.status.phase}{"\n"}{end}')"
+  if [[ -n $active_pods ]]; then
+    echo "Refusing to change cache readiness while active namespace Pods exist on $node_name." >&2
+    printf '%s\n' "$active_pods" >&2
+    exit 1
+  fi
+  "$kubectl_bin" --kubeconfig "$kubeconfig" label node "$node_name" \
+    tss.ai/model-cache-ready- >/dev/null 2>&1 || true
+fi
+
+claim_name="$(NODE_NAME="$node_name" python3 - <<'PY'
+import hashlib
+import os
+import re
+
+prefix = "tss-model-cache-"
+normalized = os.environ["NODE_NAME"].strip().lower()
+suffix = re.sub(r"-+", "-", re.sub(r"[^a-z0-9-]", "-", normalized)).strip("-")
+maximum = 63 - len(prefix)
+if suffix != normalized or len(suffix) > maximum:
+    digest = hashlib.sha256(normalized.encode()).hexdigest()[:10]
+    suffix = suffix[: maximum - len(digest) - 1].strip("-") + "-" + digest
+if not suffix:
+    raise SystemExit("Kubernetes node name cannot produce a cache volume name")
+print(prefix + suffix)
+PY
+)"
+
+existing_volume="$($kubectl_bin --kubeconfig "$kubeconfig" \
+  get persistentvolume "$claim_name" -o json 2>/dev/null || true)"
+existing_claim="$($kubectl_bin --kubeconfig "$kubeconfig" \
+  get persistentvolumeclaim "$claim_name" --namespace "$namespace" -o json 2>/dev/null || true)"
+
+VOLUME_JSON="$existing_volume" CLAIM_JSON="$existing_claim" \
+CACHE_PATH="$cache_path" NODE_NAME="$node_name" CLAIM_NAME="$claim_name" NAMESPACE="$namespace" \
+python3 - <<'PY'
+import json
+import os
+
+node = os.environ["NODE_NAME"]
+name = os.environ["CLAIM_NAME"]
+namespace = os.environ["NAMESPACE"]
+required_labels = {
+    "app.kubernetes.io/name": "tss-model-cache",
+    "app.kubernetes.io/part-of": "tss-platform",
+    "tss.ai/model-cache-node": node,
+}
+volume_raw = os.environ["VOLUME_JSON"]
+claim_raw = os.environ["CLAIM_JSON"]
+if volume_raw:
+    volume = json.loads(volume_raw)
+    spec = volume.get("spec") or {}
+    labels = volume.get("metadata", {}).get("labels") or {}
+    expressions = [
+        expression
+        for term in (
+            spec.get("nodeAffinity", {})
+            .get("required", {})
+            .get("nodeSelectorTerms", [])
+        )
+        for expression in term.get("matchExpressions", [])
+    ]
+    hostname_values = [
+        value
+        for expression in expressions
+        if expression.get("key") == "kubernetes.io/hostname"
+        and expression.get("operator") == "In"
+        for value in expression.get("values", [])
+    ]
+    claim_ref = spec.get("claimRef") or {}
+    valid = (
+        all(labels.get(key) == value for key, value in required_labels.items())
+        and (spec.get("local") or {}).get("path") == os.environ["CACHE_PATH"]
+        and spec.get("storageClassName") == "tss-model-cache-local"
+        and spec.get("persistentVolumeReclaimPolicy") == "Retain"
+        and spec.get("volumeMode") == "Filesystem"
+        and "ReadWriteOnce" in (spec.get("accessModes") or [])
+        and node in hostname_values
+        and (not claim_ref or (
+            claim_ref.get("name") == name and claim_ref.get("namespace") == namespace
+        ))
+    )
+    if not valid:
+        raise SystemExit("existing model cache PersistentVolume does not match the requested physical node")
+if claim_raw:
+    claim = json.loads(claim_raw)
+    spec = claim.get("spec") or {}
+    labels = claim.get("metadata", {}).get("labels") or {}
+    valid = (
+        all(labels.get(key) == value for key, value in required_labels.items())
+        and claim.get("metadata", {}).get("namespace") == namespace
+        and spec.get("volumeName") == name
+        and spec.get("storageClassName") == "tss-model-cache-local"
+        and spec.get("volumeMode") == "Filesystem"
+        and "ReadWriteOnce" in (spec.get("accessModes") or [])
+    )
+    if not valid:
+        raise SystemExit("existing model cache PersistentVolumeClaim does not match the requested physical node")
+PY
+
+if [[ -z $existing_volume ]]; then
+  cat <<YAML | "$kubectl_bin" --kubeconfig "$kubeconfig" apply -f - >/dev/null
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: ${claim_name}
+  labels:
+    app.kubernetes.io/name: tss-model-cache
+    app.kubernetes.io/part-of: tss-platform
+    tss.ai/model-cache-node: ${node_name}
+spec:
+  capacity:
+    storage: "${max_bytes}"
+  volumeMode: Filesystem
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: tss-model-cache-local
+  local:
+    path: ${cache_path}
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: kubernetes.io/hostname
+              operator: In
+              values:
+                - ${node_name}
+YAML
+fi
+
+if [[ -z $existing_claim ]]; then
+  cat <<YAML | "$kubectl_bin" --kubeconfig "$kubeconfig" apply -f - >/dev/null
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ${claim_name}
+  namespace: ${namespace}
+  labels:
+    app.kubernetes.io/name: tss-model-cache
+    app.kubernetes.io/part-of: tss-platform
+    tss.ai/model-cache-node: ${node_name}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  volumeMode: Filesystem
+  storageClassName: tss-model-cache-local
+  volumeName: ${claim_name}
+  resources:
+    requests:
+      storage: "${max_bytes}"
+YAML
+fi
+
+if ! "$kubectl_bin" --kubeconfig "$kubeconfig" wait \
+  --for=jsonpath='{.status.phase}'=Bound \
+  "persistentvolumeclaim/${claim_name}" --namespace "$namespace" --timeout=30s >/dev/null; then
+  echo "Model cache local volume claim did not bind: $claim_name" >&2
+  exit 1
+fi
+
+VOLUME_JSON="$($kubectl_bin --kubeconfig "$kubeconfig" get persistentvolume "$claim_name" -o json)" \
+CLAIM_JSON="$($kubectl_bin --kubeconfig "$kubeconfig" get persistentvolumeclaim "$claim_name" \
+  --namespace "$namespace" -o json)" \
+CACHE_PATH="$cache_path" NODE_NAME="$node_name" CLAIM_NAME="$claim_name" NAMESPACE="$namespace" \
+python3 - <<'PY'
+import json
+import os
+
+volume = json.loads(os.environ["VOLUME_JSON"])
+claim = json.loads(os.environ["CLAIM_JSON"])
+node = os.environ["NODE_NAME"]
+name = os.environ["CLAIM_NAME"]
+namespace = os.environ["NAMESPACE"]
+spec = volume.get("spec") or {}
+claim_spec = claim.get("spec") or {}
+volume_labels = volume.get("metadata", {}).get("labels") or {}
+claim_labels = claim.get("metadata", {}).get("labels") or {}
+required_labels = {
+    "app.kubernetes.io/name": "tss-model-cache",
+    "app.kubernetes.io/part-of": "tss-platform",
+    "tss.ai/model-cache-node": node,
+}
+expressions = (
+    spec.get("nodeAffinity", {})
+    .get("required", {})
+    .get("nodeSelectorTerms", [{}])[0]
+    .get("matchExpressions", [])
+)
+hostname_values = [
+    value
+    for expression in expressions
+    if expression.get("key") == "kubernetes.io/hostname"
+    and expression.get("operator") == "In"
+    for value in expression.get("values", [])
+]
+expected = {
+    "path": os.environ["CACHE_PATH"],
+    "class": "tss-model-cache-local",
+    "policy": "Retain",
+    "claim": name,
+    "namespace": namespace,
+}
+actual = {
+    "path": (spec.get("local") or {}).get("path"),
+    "class": spec.get("storageClassName"),
+    "policy": spec.get("persistentVolumeReclaimPolicy"),
+    "claim": claim_spec.get("volumeName"),
+    "namespace": claim.get("metadata", {}).get("namespace"),
+}
+labels_valid = all(
+    volume_labels.get(key) == value and claim_labels.get(key) == value
+    for key, value in required_labels.items()
+)
+claim_ref = spec.get("claimRef") or {}
+binding_valid = (
+    claim_ref.get("name") == name
+    and claim_ref.get("namespace") == namespace
+    and "ReadWriteOnce" in (spec.get("accessModes") or [])
+    and "ReadWriteOnce" in (claim_spec.get("accessModes") or [])
+    and spec.get("volumeMode") == "Filesystem"
+    and claim_spec.get("volumeMode") == "Filesystem"
+)
+if (actual != expected or node not in hostname_values or not labels_valid
+        or not binding_valid or claim.get("status", {}).get("phase") != "Bound"):
+    raise SystemExit("model cache local PV/PVC binding does not match the requested physical node")
+PY
+
+cat <<YAML | "$kubectl_bin" --kubeconfig "$kubeconfig" apply -f - >/dev/null
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ${pod_name}
+  namespace: ${namespace}
+  labels:
+    app.kubernetes.io/name: tss-model-cache-probe
+    app.kubernetes.io/part-of: tss-platform
+    tss.ai/model-cache-probe: "true"
+spec:
+  nodeName: ${node_name}
+  serviceAccountName: ${service_account}
+  automountServiceAccountToken: false
+  restartPolicy: Never
+  activeDeadlineSeconds: 180
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 10001
+    runAsGroup: 10001
+    fsGroup: 10001
+    seccompProfile:
+      type: RuntimeDefault
+  volumes:
+    - name: model-cache
+      persistentVolumeClaim:
+        claimName: ${claim_name}
+  containers:
+    - name: probe
+      image: ${worker_image}
+      imagePullPolicy: IfNotPresent
+      env:
+        - name: INFERENCE_WORKER_MODE
+          value: manage-model-cache
+        - name: MODEL_CACHE_ROOT
+          value: ${cache_mount_path}
+        - name: MODEL_CACHE_COMMAND_JSON
+          value: '{"action":"inspect"}'
+        - name: PYTHONDONTWRITEBYTECODE
+          value: "1"
+      volumeMounts:
+        - name: model-cache
+          mountPath: ${cache_mount_path}
+      resources:
+        requests:
+          cpu: 100m
+          memory: 128Mi
+        limits:
+          cpu: 500m
+          memory: 512Mi
+          ephemeral-storage: 128Mi
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: ["ALL"]
+YAML
+pod_created=true
+
+deadline=$((SECONDS + 180))
+phase=""
+while (( SECONDS < deadline )); do
+  phase="$($kubectl_bin --kubeconfig "$kubeconfig" get pod "$pod_name" \
+    --namespace "$namespace" -o jsonpath='{.status.phase}' 2>/dev/null || true)"
+  if [[ $phase == "Succeeded" || $phase == "Failed" ]]; then
+    break
+  fi
+  sleep 2
+done
+
+logs="$($kubectl_bin --kubeconfig "$kubeconfig" logs "$pod_name" --namespace "$namespace" 2>&1 || true)"
+if [[ $phase != "Succeeded" ]]; then
+  echo "Model cache worker probe failed: node=$node_name phase=${phase:-Unknown}." >&2
+  printf '%s\n' "$logs" >&2
+  exit 1
+fi
+
+result_json="$(printf '%s\n' "$logs" | sed -n 's/^MODEL_CACHE_RESULT_JSON=//p' | tail -1)"
+if [[ -z $result_json ]]; then
+  echo "Model cache worker probe did not return its result marker." >&2
+  exit 1
+fi
+
+RESULT_JSON="$result_json" MAX_BYTES="$max_bytes" MIN_FREE_BYTES="$min_free_bytes" \
+RUNTIME_RESERVE_BYTES="$runtime_reserve_bytes" python3 - <<'PY'
+import json
+import os
+
+result = json.loads(os.environ["RESULT_JSON"])
+used = int(result["usedBytes"])
+free = int(result["diskFreeBytes"])
+maximum = int(os.environ["MAX_BYTES"])
+minimum_free = int(os.environ["MIN_FREE_BYTES"])
+runtime_reserve = int(os.environ["RUNTIME_RESERVE_BYTES"])
+if used < 0 or used > maximum:
+    raise SystemExit("model cache usage is outside the configured limit")
+required = maximum - used + minimum_free + runtime_reserve
+if free < required:
+    raise SystemExit(
+        f"model cache disk gate failed: free={free} required={required} used={used}"
+    )
+print(f"Model cache worker probe passed: used={used} free={free} required={required}")
+PY
+
+if [[ $mode == "--label-ready" ]]; then
+  "$kubectl_bin" --kubeconfig "$kubeconfig" label node "$node_name" \
+    tss.ai/model-cache-ready=true --overwrite >/dev/null
+  echo "Model cache ready label added only after the worker probe passed: node=$node_name"
+else
+  label="$($kubectl_bin --kubeconfig "$kubeconfig" get node "$node_name" \
+    -o jsonpath='{.metadata.labels.tss\.ai/model-cache-ready}')"
+  if [[ $label != "true" ]]; then
+    echo "Model cache probe passed but the node is not labelled cache-ready." >&2
+    exit 1
+  fi
+fi

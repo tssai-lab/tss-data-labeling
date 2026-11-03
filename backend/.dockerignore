@@ -1,0 +1,9 @@
+.git
+.mvn
+target
+data
+logs
+*.log
+.env
+.env.*
+doc

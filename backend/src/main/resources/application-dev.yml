@@ -1,0 +1,20 @@
+spring:
+  datasource:
+    url: jdbc:h2:file:./data/tss;MODE=PostgreSQL;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+
+minio:
+  access-key: ${MINIO_ACCESS_KEY:admin}
+  secret-key: ${MINIO_SECRET_KEY:password123}
+
+# 仅限本机开发：不调用供应商，验证码通过 HTTP 响应返回。
+sms:
+  provider: ${SMS_PROVIDER:local}
+  expose-code: ${SMS_EXPOSE_CODE:true}
+
+training:
+  kubernetes:
+    enabled: ${TRAINING_K8S_ENABLED:false}
+    internal-callback-token: ${TRAINING_K8S_INTERNAL_CALLBACK_TOKEN:}

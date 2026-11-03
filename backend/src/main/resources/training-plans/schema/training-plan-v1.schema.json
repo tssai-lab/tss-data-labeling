@@ -1,0 +1,203 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tss.ai/schemas/training-plan-v1.schema.json",
+  "title": "TSS TrainingPlan v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "id", "version", "displayName", "enabled", "trainingModes", "execution", "inputs", "parameters", "runtimes", "outputs", "security"],
+  "properties": {
+    "schemaVersion": { "const": "tss.training.plan/v1" },
+    "id": { "type": "string", "pattern": "^[a-z][a-z0-9_]{2,63}$" },
+    "version": { "type": "string", "pattern": "^v[1-9][0-9]*$" },
+    "displayName": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "description": { "type": "string", "maxLength": 2048 },
+    "enabled": { "type": "boolean" },
+    "unavailableReason": { "type": "string", "maxLength": 512 },
+    "trainingModes": {
+      "type": "array",
+      "items": { "enum": ["FROM_SCRATCH", "FULL_FINETUNE", "PEFT", "PREFERENCE_OPTIMIZATION"] },
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "execution": { "$ref": "#/$defs/execution" },
+    "inputs": { "$ref": "#/$defs/inputs" },
+    "parameters": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/parameter" },
+      "maxItems": 128
+    },
+    "runtimes": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/runtime" },
+      "minItems": 1,
+      "maxItems": 16
+    },
+    "outputs": { "$ref": "#/$defs/outputs" },
+    "security": { "$ref": "#/$defs/security" }
+  },
+  "$defs": {
+    "relativePath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "pattern": "^(?!/)(?!.*(^|/)\\.\\.(/|$))[A-Za-z0-9_.${}/-]+$"
+    },
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["interpreter", "entrypoint", "arguments"],
+      "properties": {
+        "interpreter": { "enum": ["python", "python3"] },
+        "entrypoint": { "$ref": "#/$defs/relativePath" },
+        "arguments": {
+          "type": "array",
+          "items": { "type": "string", "maxLength": 512 },
+          "maxItems": 128
+        }
+      }
+    },
+    "inputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["model", "dataset", "code"],
+      "properties": {
+        "model": { "$ref": "#/$defs/modelInput" },
+        "dataset": { "$ref": "#/$defs/datasetInput" },
+        "code": { "$ref": "#/$defs/codeInput" }
+      }
+    },
+    "modelInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["required", "consumed", "formats", "taskTypes"],
+      "properties": {
+        "required": { "type": "boolean" },
+        "consumed": { "type": "boolean" },
+        "formats": { "type": "array", "items": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]{1,63}$" }, "minItems": 1 },
+        "taskTypes": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+        "requiredEntries": { "type": "array", "items": { "$ref": "#/$defs/relativePath" }, "maxItems": 64 }
+      }
+    },
+    "datasetInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["required", "taskTypes"],
+      "properties": {
+        "required": { "type": "boolean" },
+        "taskTypes": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+        "cvTaskTypes": { "type": "array", "items": { "type": "string" } },
+        "annotationFormats": { "type": "array", "items": { "type": "string" } },
+        "requiredEntries": { "type": "array", "items": { "$ref": "#/$defs/relativePath" }, "maxItems": 64 }
+      }
+    },
+    "codeInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["required", "approvalRequired", "runtime"],
+      "properties": {
+        "required": { "type": "boolean" },
+        "approvalRequired": { "type": "boolean" },
+        "runtime": { "enum": ["PYTHON3"] }
+      }
+    },
+    "parameter": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "displayName", "type", "required"],
+      "properties": {
+        "name": { "type": "string", "pattern": "^[a-z][A-Za-z0-9_]{0,63}$" },
+        "displayName": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "description": { "type": "string", "maxLength": 512 },
+        "type": { "enum": ["INTEGER", "NUMBER", "STRING", "BOOLEAN"] },
+        "required": { "type": "boolean" },
+        "defaultValue": {},
+        "minimum": { "type": "number" },
+        "maximum": { "type": "number" },
+        "allowedValues": { "type": "array", "items": {} }
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "deviceType", "image", "imagePullPolicy", "productionDigestRequired", "resourceProfiles"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z][a-z0-9-]{1,63}$" },
+        "deviceType": { "enum": ["CPU", "NVIDIA_GPU"] },
+        "image": { "type": "string", "minLength": 1, "maxLength": 512, "pattern": "^[^\\s]+$" },
+        "imagePullPolicy": { "enum": ["Always", "IfNotPresent", "Never"] },
+        "productionDigestRequired": { "type": "boolean" },
+        "resourceProfiles": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/resourceProfile" },
+          "minItems": 1,
+          "maxItems": 16
+        }
+      }
+    },
+    "resourceProfile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "cpuRequest", "cpuLimit", "memoryRequest", "memoryLimit", "ephemeralStorageLimit", "gpuCount"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z][a-z0-9-]{1,63}$" },
+        "cpuRequest": { "type": "string", "pattern": "^[0-9]+m?$" },
+        "cpuLimit": { "type": "string", "pattern": "^[0-9]+m?$" },
+        "memoryRequest": { "type": "string", "pattern": "^[0-9]+(Mi|Gi)$" },
+        "memoryLimit": { "type": "string", "pattern": "^[0-9]+(Mi|Gi)$" },
+        "ephemeralStorageLimit": { "type": "string", "pattern": "^[0-9]+(Mi|Gi)$" },
+        "gpuCount": { "type": "integer", "minimum": 0, "maximum": 8 },
+        "nodeSelector": { "type": "object", "additionalProperties": { "type": "string" }, "maxProperties": 16 }
+      }
+    },
+    "outputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["progressProtocol", "metricsPath", "logPath", "artifacts"],
+      "properties": {
+        "progressProtocol": { "const": "TSS_EVENT_JSONL_V1" },
+        "metricsPath": { "$ref": "#/$defs/relativePath" },
+        "logPath": { "$ref": "#/$defs/relativePath" },
+        "artifacts": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/artifact" },
+          "minItems": 1,
+          "maxItems": 128
+        }
+      }
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "role", "required", "format", "publishAsModel"],
+      "properties": {
+        "path": { "$ref": "#/$defs/relativePath" },
+        "role": { "enum": ["PRIMARY_MODEL", "CHECKPOINT", "METRICS", "LOG", "PREDICTIONS", "VISUALIZATION", "OTHER"] },
+        "required": { "type": "boolean" },
+        "format": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]{1,63}$" },
+        "publishAsModel": { "type": "boolean" },
+        "packaging": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "sourcePath", "entryName"],
+          "properties": {
+            "type": { "const": "ZIP_SINGLE_FILE" },
+            "sourcePath": { "$ref": "#/$defs/relativePath" },
+            "entryName": { "$ref": "#/$defs/relativePath" }
+          }
+        }
+      }
+    },
+    "security": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["networkPolicy", "runAsNonRoot", "allowPrivilegeEscalation", "automountServiceAccountToken", "maxRuntimeSeconds"],
+      "properties": {
+        "networkPolicy": { "enum": ["DENY_EGRESS", "PLATFORM_SERVICES_ONLY"] },
+        "runAsNonRoot": { "const": true },
+        "allowPrivilegeEscalation": { "const": false },
+        "automountServiceAccountToken": { "const": false },
+        "maxRuntimeSeconds": { "type": "integer", "minimum": 60, "maximum": 604800 }
+      }
+    }
+  }
+}

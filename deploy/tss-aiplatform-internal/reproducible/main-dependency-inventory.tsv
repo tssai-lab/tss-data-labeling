@@ -1,0 +1,17 @@
+item	main_observation	portable_source	new_environment_action	classification
+backend-image	Main runs backend-ops commit a5dc1d99	platform/platform-images.lock	pull exact GHCR digest or generate platform bundle	VERSIONED
+mlflow-image	Main tag was local-only	deploy/main/mlflow-lite plus locked GHCR digest	use CI-built locked image; do not copy Main image	VERSIONED_REPLACEMENT
+postgres-image	Main local image reports PostgreSQL 16.13 on Debian trixie	locked official postgres:16.13-trixie manifest	pull/export exact registry digest; existing Main bytes are not required	VERSIONED_REPLACEMENT
+minio-image	Main used a moving latest tag	locked historical Docker Hub manifest matching Main image ID	pull/export exact registry digest	VERSIONED
+kubernetes-images	Main/Second images are environment-specific	versions.env and artifacts.lock	generate verified Kubernetes/Calico/Metrics Server bundle on GitHub-hosted Runner	VERSIONED
+training-inference-images	Main containerd contains CPU/CV/NLP runtime images	reproducible/runtime-images.lock and runtime-images.yml	pull exact GHCR digests or rebuild the recorded commit	VERSIONED
+frontend-dist	Main serves compiled files from /var/www	reproducible/frontend-source.lock and frontend-dev package lock	build from source; never copy Main dist	REBUILD
+frontend-nginx	Main route configuration existed only under /etc/nginx	reproducible/nginx/frontend.conf.template	render environment values, review and validate before install	VERSIONED_TEMPLATE
+runtime-nginx	Main contains host and cluster-address listeners	deploy scripts plus node/platform environment files	regenerate from target addresses; do not copy Main addresses	REGENERATE
+platform-secrets	Main owns database, MinIO and application passwords	platform secret generator	generate fresh mode-0600 secrets	SECRET_REGENERATE
+kubernetes-pki	Main owns CA, certificates, join tokens and kubeconfig	kubeadm and least-privilege RBAC bootstrap	generate fresh cluster identity and short-lived join data	SECRET_REGENERATE
+registry-credentials	Main and GitHub environments have deployment credentials	GitHub Environment or target secret store	provision separately; never put a token in Git	SECRET_EXTERNAL
+database-and-object-data	Main contains users, records, models and datasets	approved backup/restore procedure only	start empty unless a separately approved data migration exists	BUSINESS_DATA_EXCLUDED
+logs-cache-and-failed-jobs	Main contains operational evidence and disposable cache	logging/retention configuration	start empty; preserve only source-environment incident evidence	RUNTIME_STATE_EXCLUDED
+host-addresses-and-disk-ids	Main and internal hosts have different IPs, hostnames and UUIDs	config examples and preflight probes	measure target host and create target-owned configuration	ENVIRONMENT_SPECIFIC
+frontend-deploy-credentials	frontend-dev workflow deploys directly to Main	GitHub Environment per deployment target	create an independent target; never reuse Main password	SECRET_EXTERNAL

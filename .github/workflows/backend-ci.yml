@@ -1,0 +1,256 @@
+name: 后端服务自动部署
+
+on:
+  pull_request:
+    paths:
+      - "backend/**"
+      - "deploy/**"
+      - "k8s/**"
+      - "examples/acceptance/minirbt_text_classification/**"
+      - "examples/training/yolo_object_detection/**"
+      - "examples/inference/yolov11n/**"
+      - ".github/workflows/**"
+  push:
+    branches:
+      - backend-ops
+      - backend-gpu
+    paths:
+      - "backend/**"
+      - "deploy/**"
+      - "k8s/**"
+      - "examples/training/yolo_object_detection/**"
+      - "examples/inference/yolov11n/**"
+      - ".github/workflows/**"
+  workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: Optional exact branch SHA required by the CPU-to-GPU synchronizer
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: backend-image-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify-and-build:
+    runs-on: ubuntu-latest
+    outputs:
+      deploy_main: ${{ steps.scope.outputs.deploy_main }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Reject a stale synchronized dispatch
+        if: >-
+          github.event_name == 'workflow_dispatch' &&
+          inputs.expected_sha != ''
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: |
+          [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$GITHUB_SHA" == "$EXPECTED_SHA" ]]
+
+      - name: Classify Main deployment scope
+        id: scope
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+          CURRENT_SHA: ${{ github.sha }}
+        run: |
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            echo "deploy_main=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "deploy_main=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [[ -z "$BEFORE_SHA" || "$BEFORE_SHA" =~ ^0+$ ]]; then
+            BEFORE_SHA="${CURRENT_SHA}^"
+          fi
+          git diff --name-only "$BEFORE_SHA" "$CURRENT_SHA" \
+            | bash deploy/tss-aiplatform-internal/ci/classify-backend-deploy-scope.sh \
+            >> "$GITHUB_OUTPUT"
+
+      - name: Validate deployment shell syntax
+        run: |
+          find backend/scripts deploy/scripts k8s \
+            -type f -name '*.sh' -print0 \
+            | xargs -0 -r -n1 bash -n
+          find deploy/scripts -maxdepth 1 -type f -name 'tss-node-*' -print0 \
+            | xargs -0 -r -n1 bash -n
+
+      - name: Run deployment validation contract tests
+        run: bash deploy/scripts/tests/test-tss-node-validation.sh
+
+      - name: Run customer preflight and configuration tests
+        run: |
+          python3 -m pip install --disable-pip-version-check --no-input 'PyYAML==6.0.3'
+          python3 -m unittest discover -s deploy/customer -p 'test_*.py' -v
+
+      - name: Run isolated internal deployment contract tests
+        run: |
+          bash deploy/tss-aiplatform-internal/tests/test-cluster-copy.sh
+          bash deploy/tss-aiplatform-internal/tests/test-platform-copy.sh
+          bash deploy/tss-aiplatform-internal/tests/test-frontend-deploy.sh
+          bash deploy/tss-aiplatform-internal/tests/test-deployment-lanes.sh
+
+      - name: Run inference worker unit tests
+        run: |
+          python3 -m unittest discover -s k8s/inference-worker -p 'test_*.py' -v
+
+      - name: Run MiniRBT acceptance contract tests
+        run: |
+          python3 -m unittest discover \
+            -s examples/acceptance/minirbt_text_classification \
+            -p 'test_*.py' -v
+
+      - name: Run YOLO training metric protocol tests
+        run: |
+          python3 -m unittest discover \
+            -s examples/training/yolo_object_detection \
+            -p 'test_*.py' -v
+
+      - name: Run YOLOv11n inference preview tests
+        run: |
+          python3 -m pip install --disable-pip-version-check --no-input 'Pillow==11.0.0'
+          python3 -m unittest discover \
+            -s examples/inference/yolov11n \
+            -p 'test_*.py' -v
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+
+      - name: Run tests
+        working-directory: backend
+        run: ./mvnw --batch-mode --no-transfer-progress clean verify
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        if: >-
+          github.event_name != 'pull_request' &&
+          (steps.scope.outputs.deploy_main == 'true' ||
+           github.ref == 'refs/heads/backend-gpu')
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and publish immutable image
+        if: >-
+          github.event_name != 'pull_request' &&
+          (steps.scope.outputs.deploy_main == 'true' ||
+           github.ref == 'refs/heads/backend-gpu')
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          file: ./backend/Dockerfile
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/tssai-backend:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy-main:
+    name: Deploy successful backend-ops image to Main
+    needs: verify-and-build
+    if: >-
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/backend-ops' &&
+      needs.verify-and-build.outputs.deploy_main == 'true'
+    uses: ./.github/workflows/deploy-main-validation.yml
+    with:
+      image_tag: ${{ github.sha }}
+      target_environment: main
+      target_name: main
+    secrets: inherit
+
+  sync-tested-cpu-baseline-to-gpu:
+    name: Sync deployed backend-ops into backend-gpu
+    needs:
+      - verify-and-build
+      - deploy-main
+    if: >-
+      always() &&
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/backend-ops' &&
+      needs.verify-and-build.result == 'success' &&
+      needs.verify-and-build.outputs.deploy_main == 'true' &&
+      needs.deploy-main.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: write
+    steps:
+      - name: Check out the current backend-gpu integration branch
+        uses: actions/checkout@v4
+        with:
+          ref: backend-gpu
+          fetch-depth: 0
+
+      - name: Merge only the exact externally deployed CPU baseline
+        env:
+          DEPLOYED_CPU_SHA: ${{ github.sha }}
+        run: |
+          set -Eeuo pipefail
+          [[ "$DEPLOYED_CPU_SHA" =~ ^[0-9a-f]{40}$ ]]
+          git fetch --no-tags origin \
+            refs/heads/backend-ops:refs/remotes/origin/backend-ops \
+            refs/heads/backend-gpu:refs/remotes/origin/backend-gpu
+          [[ "$(git rev-parse refs/remotes/origin/backend-ops)" == "$DEPLOYED_CPU_SHA" ]]
+          [[ "$(git rev-parse HEAD)" == "$(git rev-parse refs/remotes/origin/backend-gpu)" ]]
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git merge --no-edit "$DEPLOYED_CPU_SHA"
+          merged_sha="$(git rev-parse HEAD)"
+          git push origin "HEAD:refs/heads/backend-gpu"
+          echo "MERGED_GPU_SHA=${merged_sha}" >> "$GITHUB_ENV"
+
+      - name: Explicitly start the integrated GPU CI and internal deployment
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          [[ "$MERGED_GPU_SHA" =~ ^[0-9a-f]{40}$ ]]
+          gh workflow run backend-ci.yml \
+            --repo "$GITHUB_REPOSITORY" \
+            --ref backend-gpu \
+            -f "expected_sha=${MERGED_GPU_SHA}"
+
+      - name: Record one-way synchronization result
+        run: |
+          {
+            echo "### CPU baseline synchronized to backend-gpu"
+            echo "- Externally deployed backend-ops: \`${GITHUB_SHA}\`"
+            echo "- Integrated backend-gpu: \`${MERGED_GPU_SHA}\`"
+            echo "- Push mode: normal push only; no force and no automatic conflict resolution"
+            echo "- Reverse GPU-to-external synchronization: disabled"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  deploy-internal-gpu-branch:
+    name: Deploy tested backend-gpu only to the internal cluster
+    needs: verify-and-build
+    if: >-
+      github.event_name != 'pull_request' &&
+      github.ref == 'refs/heads/backend-gpu' &&
+      needs.verify-and-build.result == 'success' &&
+      vars.INTERNAL_GPU_AUTO_DEPLOY_ENABLED == 'true'
+    uses: ./.github/workflows/backend-gpu-internal-deploy.yml
+    with:
+      application_sha: ${{ github.sha }}
+    permissions:
+      contents: write
+      packages: read
+      actions: read

@@ -1,0 +1,2 @@
+ALTER TABLE compute_server ADD COLUMN IF NOT EXISTS enabled BOOLEAN DEFAULT TRUE;
+ALTER TABLE compute_server ADD COLUMN IF NOT EXISTS k8s_labels_json TEXT;

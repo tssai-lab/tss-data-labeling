@@ -1,0 +1,19 @@
+# Shared GPU training runtime. Custom project dependencies are baked into a derived image,
+# never installed inside an active training Pod. Keep the same immutable RTX 4080/5090
+# base contract as the CV and NLP workers.
+FROM pytorch/pytorch:2.7.1-cuda12.8-cudnn9-runtime@sha256:c16f4c749e2d9e96878875cdf6cc45cddda1d1a36fddd371dd6f2360f1b6e2a2
+
+WORKDIR /app
+
+RUN useradd -r -u 10001 -m worker \
+    && mkdir -p /workspace/job \
+    && chown -R worker:worker /workspace
+
+COPY requirements-runtime.txt .
+RUN pip install --no-cache-dir -r requirements-runtime.txt
+
+COPY --chmod=0644 train.py .
+
+USER 10001
+
+ENTRYPOINT ["python", "/app/train.py"]

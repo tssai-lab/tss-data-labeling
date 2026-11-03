@@ -1,0 +1,27 @@
+# CV 通用训练 Worker 镜像。
+# PyTorch 2.7.1 + CUDA 12.8 是 RTX 4080（sm_89）和 RTX 5090（sm_120）
+# 在现有驱动上的共同基线。基础镜像固定 linux/amd64 manifest digest，禁止漂移。
+# 用户在 code.zip 内带 requirements.txt 时，由层2派生镜像机制 FROM 本镜像再 pip install。
+FROM pytorch/pytorch:2.7.1-cuda12.8-cudnn9-runtime@sha256:c16f4c749e2d9e96878875cdf6cc45cddda1d1a36fddd371dd6f2360f1b6e2a2
+
+WORKDIR /app
+
+RUN useradd -r -u 10001 -m worker \
+    && mkdir -p /workspace/job \
+    && chown -R worker:worker /workspace
+
+COPY requirements-cv.txt .
+RUN test -x /usr/bin/timeout \
+    && pip install --no-cache-dir -r requirements-cv.txt \
+    -i https://pypi.tuna.tsinghua.edu.cn/simple \
+    --trusted-host pypi.tuna.tsinghua.edu.cn \
+    && pip uninstall -y opencv-python opencv-contrib-python opencv-contrib-python-headless \
+    && pip install --no-cache-dir --force-reinstall --no-deps opencv-python-headless==4.10.0.84 \
+    -i https://pypi.tuna.tsinghua.edu.cn/simple \
+    --trusted-host pypi.tuna.tsinghua.edu.cn
+
+COPY --chmod=0644 train.py .
+
+USER 10001
+
+ENTRYPOINT ["python", "/app/train.py"]

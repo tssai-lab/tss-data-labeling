@@ -1,0 +1,14 @@
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: tss-training
+networking:
+  apiServerAddress: "127.0.0.1"
+  apiServerPort: 16443
+nodes:
+  - role: control-plane
+    # 与 kind v0.32.0 官方发布的 v1.34.8 digest 一致；使用镜像代理解决本机 Docker Hub 超时。
+    image: docker.m.daocloud.io/kindest/node:v1.34.8@sha256:02722c2dedddcfc00febf5d27fbeb9b7b2c14294c82109ff4a85d89ac9ba3256
+    # __TSS_MODEL_CACHE_EXTRA_MOUNT__
+    labels:
+      tss.ai/node-pool: cpu
+      tss.ai/environment: local
