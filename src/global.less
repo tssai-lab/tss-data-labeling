@@ -1,0 +1,108 @@
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+}
+
+.colorWeak {
+  filter: invert(80%);
+}
+
+.ant-layout {
+  min-height: 100vh;
+}
+.ant-pro-sider.ant-layout-sider.ant-pro-sider-fixed {
+  left: unset;
+}
+
+canvas {
+  display: block;
+}
+
+body {
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+ul,
+ol {
+  list-style: none;
+}
+
+@media (max-width: 768px) {
+  .ant-table {
+    width: 100%;
+    overflow-x: auto;
+    &-thead > tr,
+    &-tbody > tr {
+      > th,
+      > td {
+        white-space: pre;
+        > span {
+          display: block;
+        }
+      }
+    }
+  }
+}
+
+/* 深蓝科技：导航、内容卡片和操作反馈使用同一套视觉语言。 */
+.tss-brand { display: flex; align-items: center; gap: 12px; padding: 12px 4px; color: #f1f5ff !important; text-decoration: none; }
+.tss-brand-mark { display: grid; place-items: center; flex: 0 0 auto; width: 38px; height: 38px; border: 1px solid #a9e1ec80; border-radius: 10px 3px; color: #a9e1ec; font: 28px Georgia, serif; background: linear-gradient(135deg, #a9e1ec15, transparent); }
+.tss-brand-wordmark { display: flex; flex-direction: column; gap: 4px; line-height: 1; }
+.tss-brand-wordmark strong { font-size: 24px; font-weight: 600; letter-spacing: 2px; }
+.tss-brand-wordmark em { color: #8ed6e3; font-style: normal; font-weight: 300; }
+.tss-brand-wordmark small { font-size: 9px; letter-spacing: 2px; color: #b8cde7; }
+.ant-layout-sider-collapsed .tss-brand-wordmark { display: none; }
+.ant-pro-layout .ant-pro-sider { box-shadow: 8px 0 30px #10213a0a; }
+.ant-pro-layout .ant-pro-global-header { border-bottom: 1px solid #e4ebf5; backdrop-filter: blur(16px); }
+.ant-pro-layout .ant-menu-item { transition: background .2s, color .2s; }
+.ant-pro-page-container {
+  .ant-page-header-heading-title { color: #172b45; font-size: 25px; letter-spacing: -.5px; }
+  .ant-page-header-heading-sub-title { color: #718096; }
+  .ant-card, .ant-pro-card { border-color: #e3eaf3; box-shadow: 0 4px 20px #172b4505; }
+  .ant-card { transition: border-color .2s, box-shadow .2s; }
+  .ant-card:hover { border-color: #cddbeb; box-shadow: 0 8px 24px #172b4509; }
+  .ant-card-head { border-bottom-color: #edf1f7; }
+  .ant-pro-table-search { border-radius: 14px; border: 1px solid #e3eaf3; padding-top: 18px; }
+  .ant-table-wrapper { border-radius: 14px; }
+  .ant-table-thead > tr > th { font-weight: 500; }
+  .ant-statistic-title { color: #718096; font-size: 13px; }
+  .ant-statistic-content { letter-spacing: -.7px; font-variant-numeric: tabular-nums; }
+  .ant-tag { border-radius: 6px; }
+  .ant-btn-primary { transition: box-shadow .2s, transform .2s; }
+  .ant-btn-primary:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 6px 16px #3765d92b; }
+  .ant-btn-primary:active:not(:disabled) { transform: translateY(0); }
+  .ant-input-affix-wrapper:focus-within, .ant-input:focus { box-shadow: 0 0 0 3px #3765d912; }
+}
+.tss-dashboard-hero { position: relative; overflow: hidden; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 24px; margin-bottom: 24px; padding: 32px; border-radius: 18px; color: #eaf2ff; background: radial-gradient(ellipse at 90% 30%, #345b86, transparent 65%), #101e35; }
+.tss-dashboard-hero::after { content: ''; position: absolute; width: 260px; height: 260px; right: 15%; top: -100px; border: 1px solid #a9e1ec20; border-radius: 40px; transform: rotate(35deg); pointer-events: none; }
+.tss-dashboard-hero > * { position: relative; z-index: 1; }
+.tss-dashboard-hero small { font-size: 10px; letter-spacing: 3px; color: #a9c2df; }
+.tss-dashboard-hero h2 { color: #f1f5ff; font-size: clamp(22px, 2.3vw, 32px); margin: 12px 0; font-weight: 500; }
+.tss-dashboard-hero p { color: #b6c9e1; margin: 0; line-height: 1.8; }
+.tss-dashboard-hero .ant-btn-default { background: #ffffff0d; color: #eaf2ff; border-color: #b6c9e14d; }
+.tss-dashboard-actions { display: flex; gap: 12px; flex-wrap: wrap; }
+[data-tour='home-stats'] .ant-card { border-top: 3px solid #7196c6; }
+[data-tour='home-stats'] .ant-col:nth-child(2) .ant-card { border-top-color: #6da8b4; }
+[data-tour='home-stats'] .ant-col:nth-child(3) .ant-card { border-top-color: #8f9ec6; }
+[data-tour='home-stats'] .ant-col:nth-child(4) .ant-card { border-top-color: #3765d9; }
+.tss-auth-page { min-height: 100vh; min-height: 100svh; padding: 40px 20px; background: radial-gradient(ellipse at 15% 0, #294b75, transparent 65%), #101e35; }
+.tss-auth-page > div { padding: 0 !important; }
+.tss-auth-card { width: 100%; margin: 0 auto; padding: clamp(24px, 5vw, 42px) !important; border-radius: 20px !important; border: 1px solid #ffffff70; box-shadow: 0 24px 80px #00000025 !important; }
+.tss-auth-card .tss-auth-brand { display: flex; justify-content: center; align-items: center; gap: 12px; margin-bottom: 26px; font-size: 20px; color: #172b45; letter-spacing: 1px; }
+.tss-auth-brand .tss-brand-mark { color: #3765d9; border-color: #8ba9ce; }
+.tss-auth-card h2 { font-size: 27px; color: #172b45; }
+.tss-auth-card .ant-input-affix-wrapper { border-radius: 9px; }
+@media (max-width: 768px) {
+  .ant-pro-page-container .ant-page-header-heading { flex-wrap: wrap; }
+  .tss-dashboard-hero { padding: 24px; }
+  .tss-auth-page { padding: 24px 16px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ant-pro-page-container .ant-card, .ant-pro-page-container .ant-btn-primary { transition: none; transform: none !important; }
+}

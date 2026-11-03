@@ -1,0 +1,468 @@
+name: Frontend Runtime Image
+
+on:
+  pull_request:
+    paths:
+      - "Dockerfile"
+      - ".dockerignore"
+      - "deploy/nginx/**"
+      - "package.json"
+      - "package-lock.json"
+      - ".npmrc"
+      - "config/**"
+      - "public/**"
+      - "scripts/**"
+      - "src/**"
+      - ".github/workflows/frontend-runtime-image.yml"
+  push:
+    branches:
+      - frontend-main
+      - frontend-gpu
+    paths:
+      - "Dockerfile"
+      - ".dockerignore"
+      - "deploy/nginx/**"
+      - "package.json"
+      - "package-lock.json"
+      - ".npmrc"
+      - "config/**"
+      - "public/**"
+      - "scripts/**"
+      - "src/**"
+      - ".github/workflows/frontend-runtime-image.yml"
+  workflow_call:
+    inputs:
+      source_sha:
+        description: Exact frontend-gpu commit to build and deploy
+        required: true
+        type: string
+      deploy_internal:
+        description: Deploy the resolved source only to the internal cluster
+        required: true
+        type: boolean
+  workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: Optional exact frontend-gpu SHA required by the one-way synchronizer
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: tss-aiplatform-internal-deploy
+  cancel-in-progress: false
+
+jobs:
+  resolve-source:
+    name: Resolve exact frontend source and deployment scope
+    runs-on: ubuntu-latest
+    outputs:
+      source_sha: ${{ steps.resolve.outputs.source_sha }}
+      deploy_internal: ${{ steps.resolve.outputs.deploy_internal }}
+    steps:
+      - name: Resolve immutable source
+        id: resolve
+        env:
+          REQUESTED_SOURCE_SHA: ${{ inputs.source_sha }}
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          REQUESTED_INTERNAL_DEPLOY: ${{ inputs.deploy_internal }}
+        run: |
+          set -Eeuo pipefail
+          source_sha="$REQUESTED_SOURCE_SHA"
+          if [[ -z "$source_sha" ]]; then
+            source_sha="$GITHUB_SHA"
+          fi
+          [[ "$source_sha" =~ ^[0-9a-f]{40}$ ]]
+          if [[ "${{ github.event_name }}" == workflow_dispatch && -n "$EXPECTED_SHA" ]]; then
+            [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
+            [[ "$source_sha" == "$EXPECTED_SHA" ]]
+          fi
+          deploy_internal=false
+          if [[ "$REQUESTED_INTERNAL_DEPLOY" == true || \
+                ( "${{ github.event_name }}" != pull_request && \
+                  "$GITHUB_REF" == refs/heads/frontend-gpu ) ]]; then
+            deploy_internal=true
+          fi
+          echo "source_sha=${source_sha}" >> "$GITHUB_OUTPUT"
+          echo "deploy_internal=${deploy_internal}" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: resolve-source
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Check out exact source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve-source.outputs.source_sha }}
+
+      - name: Reject a stale internal source before building
+        if: needs.resolve-source.outputs.deploy_internal == 'true'
+        env:
+          SOURCE_SHA: ${{ needs.resolve-source.outputs.source_sha }}
+        run: |
+          set -Eeuo pipefail
+          git fetch --no-tags origin \
+            refs/heads/frontend-gpu:refs/remotes/origin/frontend-gpu
+          [[ "$(git rev-parse refs/remotes/origin/frontend-gpu)" == "$SOURCE_SHA" ]]
+
+      - name: Validate one-way deployment contracts
+        run: bash scripts/test-frontend-deployment-lanes.sh
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build immutable linux-amd64 frontend image
+        id: image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ghcr.io/${{ github.repository_owner }}/tssai-frontend:${{ needs.resolve-source.outputs.source_sha }}
+          build-args: |
+            VCS_REF=${{ needs.resolve-source.outputs.source_sha }}
+          provenance: false
+          sbom: false
+
+      - name: Record immutable image identity
+        if: github.event_name != 'pull_request'
+        env:
+          IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
+          SOURCE_SHA: ${{ needs.resolve-source.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          test -n "$IMAGE_DIGEST"
+          source_ref="ghcr.io/${GITHUB_REPOSITORY_OWNER}/tssai-frontend:${SOURCE_SHA}"
+          immutable_ref="${source_ref}@${IMAGE_DIGEST}"
+          runtime_ref="docker.io/library/tss-aiplatform-frontend:${SOURCE_SHA:0:12}"
+          docker pull --quiet --platform linux/amd64 "$immutable_ref" >/dev/null
+          image_id="$(docker image inspect --format '{{.Id}}' "$immutable_ref")"
+          image_size="$(docker image inspect --format '{{.Size}}' "$immutable_ref")"
+          image_platform="$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$immutable_ref")"
+          image_revision="$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$immutable_ref")"
+          fingerprint="$(docker image inspect "$immutable_ref" | python3 scripts/image-runtime-fingerprint.py)"
+          [[ "$image_id" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "$fingerprint" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$image_platform" == linux/amd64 ]]
+          [[ "$image_revision" == "$SOURCE_SHA" ]]
+          (( image_size > 0 && image_size <= 200 * 1024 * 1024 ))
+          docker tag "$immutable_ref" "$runtime_ref"
+          docker image save --output "$RUNNER_TEMP/frontend-image-size-check.tar" "$runtime_ref"
+          archive_size="$(stat -c %s "$RUNNER_TEMP/frontend-image-size-check.tar")"
+          (( archive_size > 0 && archive_size <= 250 * 1024 * 1024 ))
+          rm -f "$RUNNER_TEMP/frontend-image-size-check.tar"
+          printf '%s|%s|%s|%s|%s|%s\n' \
+            "$source_ref" "$IMAGE_DIGEST" "$runtime_ref" "$image_id" \
+            "$fingerprint" 268435456 \
+            > "$RUNNER_TEMP/frontend-image.lock-candidate"
+          {
+            printf 'source_sha=%s\n' "$SOURCE_SHA"
+            printf 'source_manifest_digest=%s\n' "$IMAGE_DIGEST"
+            printf 'image_id=%s\n' "$image_id"
+            printf 'runtime_fingerprint_sha256=%s\n' "$fingerprint"
+            printf 'docker_image_bytes=%s\n' "$image_size"
+            printf 'docker_archive_bytes=%s\n' "$archive_size"
+          } > "$RUNNER_TEMP/frontend-image.metadata"
+          {
+            echo "### Frontend runtime image"
+            printf '%s\n' "- Source SHA: \`${SOURCE_SHA}\`"
+            printf '%s\n' "- Image: \`ghcr.io/${GITHUB_REPOSITORY_OWNER}/tssai-frontend:${SOURCE_SHA}\`"
+            printf '%s\n' "- Digest: \`${IMAGE_DIGEST}\`"
+            printf '%s\n' "- Image ID: \`${image_id}\`"
+            printf '%s\n' "- Docker archive bytes: \`${archive_size}\`"
+            printf '%s\n' "- Published: \`${{ github.event_name != 'pull_request' }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload reviewed identity candidate
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: tss-aiplatform-frontend-identity-${{ needs.resolve-source.outputs.source_sha }}
+          path: |
+            ${{ runner.temp }}/frontend-image.lock-candidate
+            ${{ runner.temp }}/frontend-image.metadata
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Record pull-request validation result
+        if: github.event_name == 'pull_request'
+        env:
+          SOURCE_SHA: ${{ needs.resolve-source.outputs.source_sha }}
+        run: |
+          {
+            echo "### Frontend runtime image"
+            printf '%s\n' "- Source SHA: \`${SOURCE_SHA}\`"
+            echo "- linux/amd64 image build: passed"
+            printf '%s\n' '- Published: `false`'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  promote-and-export-internal:
+    name: Promote exact frontend lock and export internal bundle
+    needs:
+      - resolve-source
+      - build
+    if: >-
+      needs.resolve-source.outputs.deploy_internal == 'true' &&
+      needs.build.result == 'success' &&
+      vars.INTERNAL_GPU_AUTO_DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: write
+      packages: read
+      actions: read
+    outputs:
+      infrastructure_sha: ${{ steps.promote.outputs.infrastructure_sha }}
+    steps:
+      - name: Check out exact frontend source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve-source.outputs.source_sha }}
+          persist-credentials: false
+
+      - name: Check out the protected internal infrastructure branch
+        uses: actions/checkout@v4
+        with:
+          ref: backend-gpu
+          fetch-depth: 0
+          path: internal-infra
+
+      - name: Download the reviewed frontend identity
+        uses: actions/download-artifact@v4
+        with:
+          name: tss-aiplatform-frontend-identity-${{ needs.resolve-source.outputs.source_sha }}
+          path: ${{ runner.temp }}/frontend-identity
+
+      - name: Promote the exact identity by normal push only
+        id: promote
+        env:
+          FRONTEND_SHA: ${{ needs.resolve-source.outputs.source_sha }}
+        run: |
+          set -Eeuo pipefail
+          [[ "$FRONTEND_SHA" =~ ^[0-9a-f]{40}$ ]]
+          candidate="$RUNNER_TEMP/frontend-identity/frontend-image.lock-candidate"
+          test -f "$candidate"
+          test ! -L "$candidate"
+          test -z "$(git -C internal-infra status --porcelain)"
+          git -C internal-infra fetch --no-tags origin \
+            refs/heads/backend-gpu:refs/remotes/origin/backend-gpu \
+            refs/heads/frontend-gpu:refs/remotes/origin/frontend-gpu
+          [[ "$(git -C internal-infra rev-parse HEAD)" == \
+             "$(git -C internal-infra rev-parse refs/remotes/origin/backend-gpu)" ]]
+          [[ "$(git -C internal-infra rev-parse refs/remotes/origin/frontend-gpu)" == \
+             "$FRONTEND_SHA" ]]
+          bash scripts/promote-internal-frontend-lock.sh \
+            "$(realpath "$candidate")" \
+            "$(realpath internal-infra)" \
+            "$FRONTEND_SHA"
+          git -C internal-infra diff --check
+          git -C internal-infra config user.name github-actions[bot]
+          git -C internal-infra config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git -C internal-infra add -- \
+            deploy/tss-aiplatform-internal/platform/frontend-image.lock
+          if ! git -C internal-infra diff --cached --quiet; then
+            git -C internal-infra commit -m \
+              "chore(frontend): lock internal frontend ${FRONTEND_SHA:0:12} [skip ci]"
+            git -C internal-infra push origin "HEAD:refs/heads/backend-gpu"
+          fi
+          infrastructure_sha="$(git -C internal-infra rev-parse HEAD)"
+          [[ "$infrastructure_sha" =~ ^[0-9a-f]{40}$ ]]
+          echo "infrastructure_sha=${infrastructure_sha}" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to the project image registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Export the promoted immutable frontend image
+        run: |
+          set -Eeuo pipefail
+          bash internal-infra/deploy/tss-aiplatform-internal/platform/scripts/export-frontend-image.sh \
+            "$RUNNER_TEMP/tss-aiplatform-frontend-image"
+
+      - name: Upload the internal frontend bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: tss-aiplatform-internal-frontend-${{ needs.resolve-source.outputs.source_sha }}
+          path: ${{ runner.temp }}/tss-aiplatform-frontend-image
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+  deploy-internal:
+    name: Deploy frontend-gpu only to the internal cluster
+    needs:
+      - resolve-source
+      - build
+      - promote-and-export-internal
+    if: >-
+      needs.resolve-source.outputs.deploy_internal == 'true' &&
+      needs.build.result == 'success' &&
+      needs.promote-and-export-internal.result == 'success' &&
+      vars.INTERNAL_GPU_AUTO_DEPLOY_ENABLED == 'true'
+    runs-on: [self-hosted, Linux, X64, tss-aiplatform-internal, deploy]
+    environment: tss-aiplatform-internal
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Check out the exact promoted infrastructure
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.promote-and-export-internal.outputs.infrastructure_sha }}
+          clean: true
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Download the exact internal frontend bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: tss-aiplatform-internal-frontend-${{ needs.resolve-source.outputs.source_sha }}
+          path: ${{ runner.temp }}/internal-frontend-bundle
+
+      - name: Verify, stage and deploy through the restricted gateway
+        env:
+          FRONTEND_SHA: ${{ needs.resolve-source.outputs.source_sha }}
+          INFRASTRUCTURE_SHA: ${{ needs.promote-and-export-internal.outputs.infrastructure_sha }}
+          CONTROL_PLANE_HOST: ${{ vars.CONTROL_PLANE_HOST }}
+          CONTROL_PLANE_DEPLOYMENT_USER: ${{ vars.CONTROL_PLANE_DEPLOYMENT_USER }}
+          CONTROL_PLANE_SSH_KEY: ${{ vars.CONTROL_PLANE_SSH_KEY }}
+          CONTROL_PLANE_KNOWN_HOSTS: ${{ vars.CONTROL_PLANE_KNOWN_HOSTS }}
+          RUNNER_WORK_ROOT: ${{ vars.RUNNER_WORK_ROOT }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          [[ "$FRONTEND_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$INFRASTRUCTURE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$CONTROL_PLANE_HOST" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]]
+          [[ "$CONTROL_PLANE_DEPLOYMENT_USER" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]]
+          [[ "$CONTROL_PLANE_SSH_KEY" == /* && "$CONTROL_PLANE_KNOWN_HOSTS" == /* ]]
+          [[ "$RUNNER_WORK_ROOT" == /* && "$RUNNER_WORK_ROOT" != / ]]
+          test -d "$RUNNER_WORK_ROOT"
+          test ! -L "$RUNNER_WORK_ROOT"
+          runner_work_root="$(realpath -e "$RUNNER_WORK_ROOT")"
+          [[ "$GITHUB_WORKSPACE" == "${runner_work_root}/"* ]]
+          [[ "$RUNNER_TEMP" == "${runner_work_root}/"* ]]
+          test -f "$CONTROL_PLANE_SSH_KEY"
+          test ! -L "$CONTROL_PLANE_SSH_KEY"
+          test "$(stat -c %U "$CONTROL_PLANE_SSH_KEY")" = "$(id -un)"
+          test "$(stat -c %a "$CONTROL_PLANE_SSH_KEY")" = 600
+          test -f "$CONTROL_PLANE_KNOWN_HOSTS"
+          test ! -L "$CONTROL_PLANE_KNOWN_HOSTS"
+          known_hosts_mode="$(stat -c %a "$CONTROL_PLANE_KNOWN_HOSTS")"
+          (( (8#$known_hosts_mode & 0022) == 0 ))
+          remote_frontend_sha="$(curl --fail --silent --show-error \
+            --header "Authorization: Bearer ${GH_TOKEN}" \
+            --header "Accept: application/vnd.github+json" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/git/ref/heads/frontend-gpu" \
+            | python3 -c 'import json,sys; print(json.load(sys.stdin)["object"]["sha"])')"
+          [[ "$remote_frontend_sha" == "$FRONTEND_SHA" ]]
+          bundle_root="$RUNNER_TEMP/internal-frontend-bundle"
+          test -d "$bundle_root"
+          test ! -L "$bundle_root"
+          test "$(find "$bundle_root" -mindepth 1 -maxdepth 1 -type f | wc -l)" -eq 3
+          test "$(find "$bundle_root" -mindepth 1 -maxdepth 1 ! -type f | wc -l)" -eq 0
+          (
+            cd "$bundle_root"
+            test "$(awk '{print $2}' frontend-image.sha256)" = $'frontend-image-amd64.tar\nsources.lock'
+            sha256sum --check --strict frontend-image.sha256
+            cmp "$GITHUB_WORKSPACE/deploy/tss-aiplatform-internal/platform/frontend-image.lock" \
+              sources.lock
+          )
+          source_bundle="$RUNNER_TEMP/frontend-release-source.bundle"
+          source_ref=refs/tss-aiplatform/internal-release
+          git update-ref "$source_ref" "$INFRASTRUCTURE_SHA"
+          trap 'git update-ref -d refs/tss-aiplatform/internal-release >/dev/null 2>&1 || true' EXIT
+          git bundle create "$source_bundle" "$source_ref"
+          git update-ref -d "$source_ref"
+          trap - EXIT
+          git bundle verify "$source_bundle"
+          [[ "$(git bundle list-heads "$source_bundle" "$source_ref")" == \
+            "${INFRASTRUCTURE_SHA} ${source_ref}" ]]
+          source_bundle_size="$(stat -c %s "$source_bundle")"
+          (( source_bundle_size > 0 && source_bundle_size <= 128 * 1024 * 1024 ))
+          ssh_options=(
+            -i "$CONTROL_PLANE_SSH_KEY"
+            -o BatchMode=yes
+            -o IdentitiesOnly=yes
+            -o StrictHostKeyChecking=yes
+            -o "UserKnownHostsFile=${CONTROL_PLANE_KNOWN_HOSTS}"
+            -o ConnectTimeout=10
+            -o ServerAliveInterval=15
+            -o ServerAliveCountMax=2
+          )
+          ssh_with_retry() {
+            local attempt
+            for attempt in 1 2 3 4; do
+              if ssh "${ssh_options[@]}" \
+                "${CONTROL_PLANE_DEPLOYMENT_USER}@${CONTROL_PLANE_HOST}" "$@"; then
+                return 0
+              fi
+              (( attempt < 4 )) || return 1
+              sleep $((attempt * 2))
+            done
+          }
+          stage_source_with_retry() {
+            local attempt
+            for attempt in 1 2 3 4; do
+              if ssh "${ssh_options[@]}" \
+                "${CONTROL_PLANE_DEPLOYMENT_USER}@${CONTROL_PLANE_HOST}" \
+                "stage-source ${INFRASTRUCTURE_SHA}" < "$source_bundle"; then
+                return 0
+              fi
+              (( attempt < 4 )) || return 1
+              sleep $((attempt * 2))
+            done
+          }
+          ssh_with_retry probe-frontend
+          sleep 2
+          stage_source_with_retry
+          sleep 2
+          ssh_with_retry "sync ${INFRASTRUCTURE_SHA}"
+          sleep 2
+          tar --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner \
+            --mode='u+rw,go-rwx' -C "$bundle_root" -cf - \
+            frontend-image-amd64.tar frontend-image.sha256 sources.lock \
+            | ssh "${ssh_options[@]}" \
+                "${CONTROL_PLANE_DEPLOYMENT_USER}@${CONTROL_PLANE_HOST}" stage-frontend
+          # Keep the real deployment single-shot, but let sshd's transient
+          # connection throttle settle after the completed staging stream.
+          sleep 10
+          ssh "${ssh_options[@]}" \
+            "${CONTROL_PLANE_DEPLOYMENT_USER}@${CONTROL_PLANE_HOST}" deploy-frontend
+          sleep 2
+          ssh_with_retry probe-frontend \
+            | tee "$RUNNER_TEMP/internal-frontend-deployment-state.txt"
+          grep -Fx "TSS_FRONTEND_SOURCE_SHA=${FRONTEND_SHA}" \
+            "$RUNNER_TEMP/internal-frontend-deployment-state.txt"
+          grep -Fx "TSS_INFRASTRUCTURE_SHA=${INFRASTRUCTURE_SHA}" \
+            "$RUNNER_TEMP/internal-frontend-deployment-state.txt"
+
+      - name: Record isolated internal deployment result
+        env:
+          FRONTEND_SHA: ${{ needs.resolve-source.outputs.source_sha }}
+        run: |
+          {
+            echo "### frontend-gpu deployed only to the internal cluster"
+            echo "- Frontend source: \`${FRONTEND_SHA}\`"
+            echo "- Infrastructure: \`${{ needs.promote-and-export-internal.outputs.infrastructure_sha }}\`"
+            echo "- Main deployment from this branch: disabled"
+            echo "- Restricted gateway, image lock and health checks: passed"
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,173 @@
+.page {
+  --ink: #172b45;
+  --muted: #718096;
+  --accent: #3765d9;
+  display: grid;
+  grid-template-columns: minmax(0, 1.12fr) minmax(440px, 1fr);
+  min-height: 100vh;
+  min-height: 100svh;
+  color: var(--ink);
+  font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  background: #f8fafc;
+  a { color: var(--accent); }
+  a:hover { color: #244cae; }
+  a:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 3px; }
+}
+.showcase {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 800px;
+  overflow: hidden;
+  padding: 44px clamp(32px, 5vw, 86px) 28px;
+  color: #f1f5ff;
+  background: radial-gradient(ellipse at 70% 55%, #223b63 0%, transparent 57%), #101e35;
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 2px;
+}
+.story { position: relative; z-index: 1; margin-top: clamp(64px, 10vh, 116px); }
+.eyebrow { font-size: 12px; letter-spacing: 3px; color: #a4bbd6; margin-bottom: 24px; }
+.story h1 {
+  margin: 0;
+  font-size: clamp(30px, 3.2vw, 48px);
+  font-weight: 500;
+  line-height: 1.5;
+  letter-spacing: -1.5px;
+  color: #f1f5ff;
+  span { color: #9adce7; }
+}
+.story p { margin: 24px 0 0; color: #a7b9d0; font-size: 14px; line-height: 1.95; }
+.visual { position: relative; margin: 2px -28px 0; flex: 1; display: flex; align-items: center; justify-content: center; min-height: 240px; }
+.visual svg { width: 100%; max-width: 590px; max-height: 330px; overflow: visible; }
+.visualLabel { position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%); font-size: 10px; color: #a2bad5; letter-spacing: 5px; white-space: nowrap; }
+.planes { animation: breathe 8s ease-in-out infinite; }
+@keyframes breathe { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-8px); } }
+.workflow { display: flex; justify-content: space-between; gap: 12px; margin-top: 28px; padding: 22px 0; border-top: 1px solid #ffffff18; font-size: 12px; letter-spacing: 1px; color: #becce0; }
+.workflow span:nth-child(even) { color: #6e90b3; }
+.showcaseFooter { display: flex; justify-content: space-between; gap: 16px; margin-top: 28px; color: #8c9db6; font-size: 10px; letter-spacing: 1px; }
+.loginPanel { display: flex; flex-direction: column; justify-content: space-between; gap: 32px; min-width: 0; padding: 50px clamp(32px, 5vw, 80px) 28px; }
+.panelTop { display: flex; flex: 0 0 auto; flex-wrap: wrap; align-items: baseline; gap: 10px 24px; justify-content: space-between; font-size: 18px; font-weight: 600; letter-spacing: .5px; color: #40516b; span { color: #718096; font-size: 15px; font-weight: 400; } }
+.formWrap { flex: 0 0 auto; width: 100%; max-width: 390px; margin: 32px auto; }
+.formEyebrow { color: #6580a3; font: 11px 'Consolas', 'SFMono-Regular', monospace; letter-spacing: 2.2px; }
+.formHeading h2 { margin: 16px 0 12px; font-size: 31px; font-weight: 600; letter-spacing: -1px; color: var(--ink); }
+.formHeading p { color: var(--muted); margin: 0 0 32px; font-size: 13px; line-height: 1.7; }
+.formWrap {
+  :global(.ant-pro-form-login-top) { display: none; }
+  :global(.ant-pro-form-login-container) { background: transparent; }
+  :global(.ant-pro-form-login-main-other) { display: none; }
+  :global(.ant-tabs-nav) { margin-bottom: 28px; }
+  :global(.ant-tabs-tab) { padding: 12px 0; font-size: 13px; }
+  :global(.ant-tabs-tab-active .ant-tabs-tab-btn) { color: var(--accent); }
+  :global(.ant-tabs-ink-bar) { background: var(--accent); height: 3px; border-radius: 3px; }
+  :global(.ant-form-item-label > label) { font-size: 12px; font-weight: 500; color: #40516b; }
+  :global(.ant-input-affix-wrapper) { min-height: 48px; border-radius: 9px; border-color: #dce3ec; box-shadow: 0 2px 3px #18355303; background: #fff; padding-inline: 14px; }
+  :global(.ant-input-prefix) { color: #8293aa; margin-right: 11px; }
+  :global(.ant-input) { font-size: 14px; }
+  :global(.ant-input::placeholder) { color: #98a4b5; font-size: 13px; }
+  :global(.ant-input-affix-wrapper:hover) { border-color: #8fa9de; }
+  :global(.ant-input-affix-wrapper-focused) { border-color: var(--accent); box-shadow: 0 0 0 3px #3765d912; }
+  :global(.ant-btn-primary) { height: 48px; border-radius: 9px; border-color: var(--accent); background: var(--accent); font-size: 14px; font-weight: 500; box-shadow: 0 5px 12px #3765d920; transition: background .2s, box-shadow .2s; }
+  :global(.ant-btn-primary:hover) { background: #2c55bc !important; border-color: #2c55bc !important; box-shadow: 0 6px 16px #3765d930; }
+  :global(.ant-checkbox-wrapper) { font-size: 12px; color: #63738a; }
+  :global(.ant-checkbox-checked .ant-checkbox-inner) { background: var(--accent); border-color: var(--accent); }
+  :global(.ant-alert) { border-radius: 9px; }
+  a { font-size: 12px; }
+}
+.panelFooter { flex: 0 0 auto; position: static; line-height: 1.8; padding-top: 8px; text-align: center; color: #8a96a6; font-size: 11px; letter-spacing: 1px; }
+@media (min-width: 1500px) { .showcase { min-height: 100svh; } .visual svg { max-height: 410px; } }
+@media (max-width: 1000px) { .page { grid-template-columns: 1fr 1fr; } .showcase { padding-inline: 32px; } .loginPanel { padding-inline: 32px; } .story h1 { font-size: 31px; } .showcaseFooter span { display: none; } }
+@media (max-width: 760px) {
+  .page { display: block; }
+  .showcase { min-height: 0; padding: 25px 26px 32px; }
+  .brand { font-size: 11px; }
+  .story { margin-top: 30px; }
+  .story h1 { font-size: 28px; letter-spacing: -.5px; }
+  .eyebrow { margin-bottom: 14px; font-size: 10px; }
+  .story p, .visual, .workflow, .showcaseFooter { display: none; }
+  .loginPanel { padding: 30px 26px 22px; }
+  .panelTop { display: none; }
+  .formWrap { margin: 0 auto 36px; }
+  .formEyebrow { display: none; }
+  .formHeading h2 { margin-top: 0; font-size: 25px; }
+  .formHeading p { margin-bottom: 20px; }
+}
+@media (prefers-reduced-motion: reduce) { .planes { animation: none; } .formWrap :global(.ant-btn-primary) { transition: none; } }
+
+/* 动效集中在展示图和操作反馈，不改变表单的位置或输入行为。 */
+.showcase {
+  isolation: isolate;
+  &::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    background: radial-gradient(400px circle at var(--pointer-x, 60%) var(--pointer-y, 55%), #8cc6ff12, transparent 75%);
+    transition: opacity .5s;
+  }
+}
+
+.visual { perspective: 900px; }
+.visual svg {
+  transform: rotateX(var(--tilt-x, 0deg)) rotateY(var(--tilt-y, 0deg));
+  transition: transform .65s cubic-bezier(.2,.7,.2,1), filter .5s;
+}
+.visual:hover svg { filter: drop-shadow(0 12px 20px #8abaf514); }
+.dataStream { animation: data-flow 9s linear infinite; }
+@keyframes data-flow { to { stroke-dashoffset: -1676; } }
+.brand, .story, .formHeading, .formWrap :global(.ant-tabs-nav) {
+  animation: arrive .8s cubic-bezier(.2,.7,.2,1) both;
+}
+.story { animation-delay: .1s; }
+.formHeading { animation-delay: .15s; }
+.formWrap :global(.ant-tabs-nav) { animation-delay: .22s; }
+@keyframes arrive { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: translateY(0); } }
+.formWrap {
+  :global(.ant-form-item) { animation: field-arrive .35s ease-out; }
+  :global(.ant-form-item-label > label), :global(.ant-input-prefix) { transition: color .2s; }
+  :global(.ant-form-item:focus-within .ant-form-item-label > label),
+  :global(.ant-input-affix-wrapper-focused .ant-input-prefix) { color: var(--accent); }
+  :global(.ant-input-affix-wrapper) { transition: border-color .2s, box-shadow .25s, background .2s; }
+  :global(.ant-input-affix-wrapper-focused) { box-shadow: 0 0 0 4px #3765d912, 0 5px 16px #3765d908; }
+  :global(.ant-btn-primary) { position: relative; overflow: hidden; transition: transform .2s, box-shadow .2s, background .2s; }
+  :global(.ant-btn-primary)::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(110deg, transparent 30%, #ffffff20 50%, transparent 70%);
+    transform: translateX(-120%);
+    pointer-events: none;
+    transition: transform .65s ease;
+  }
+  :global(.ant-btn-primary:hover:not(:disabled)) { transform: translateY(-2px); }
+  :global(.ant-btn-primary:hover:not(:disabled))::after { transform: translateX(120%); }
+  :global(.ant-btn-primary:active:not(:disabled)) { transform: translateY(0) scale(.99); }
+  :global(.ant-btn-primary:focus-visible) { outline: 3px solid #3765d94d; outline-offset: 4px; }
+  :global(.ant-btn-primary:hover) .buttonArrow { transform: translate(2px, -2px); }
+  a { text-decoration-color: transparent; text-underline-offset: 5px; transition: color .2s, text-decoration-color .2s; }
+  a:hover { text-decoration: underline; }
+}
+.buttonArrow { display: inline-block; margin-left: 8px; transition: transform .2s; }
+@keyframes field-arrive { from { opacity: .35; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .page *, .page *::before, .page *::after { animation: none !important; transition: none !important; }
+  .visual svg { transform: none; }
+  .formWrap :global(.ant-btn-primary:hover), .formWrap :global(.ant-btn-primary:active), .buttonArrow { transform: none !important; }
+}
+
+/* 让标题、表单和页脚按实际高度排列，缩放时自然滚动。 */
+.showcaseHeader { display: flex; align-items: center; justify-content: space-between; gap: 20px; flex-wrap: wrap; }
+.brand { gap: 15px; }
+.platformMark { display: block; width: min(330px, 100%); height: auto; flex: 0 1 330px; }
+.registerPrompt { margin-top: 24px; text-align: center; line-height: 1.9; color: #718096; font-size: 13px; }
+@media (max-width: 760px) {
+  .loginPanel { gap: 26px; }
+  .formWrap { margin-bottom: 0; }
+}

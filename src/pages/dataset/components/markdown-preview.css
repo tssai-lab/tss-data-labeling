@@ -1,0 +1,112 @@
+.dataset-markdown-preview {
+  overflow: auto;
+  padding: 18px 22px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  color: #24292f;
+  background: #fff;
+  font-size: 14px;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+
+.dataset-markdown-preview > :first-child {
+  margin-top: 0;
+}
+.dataset-markdown-preview > :last-child {
+  margin-bottom: 0;
+}
+.dataset-markdown-preview h1,
+.dataset-markdown-preview h2,
+.dataset-markdown-preview h3,
+.dataset-markdown-preview h4,
+.dataset-markdown-preview h5,
+.dataset-markdown-preview h6 {
+  margin: 22px 0 12px;
+  color: #1f2328;
+  font-weight: 600;
+  line-height: 1.3;
+}
+.dataset-markdown-preview h1 {
+  padding-bottom: 8px;
+  border-bottom: 1px solid #d8dee4;
+  font-size: 26px;
+}
+.dataset-markdown-preview h2 {
+  padding-bottom: 7px;
+  border-bottom: 1px solid #d8dee4;
+  font-size: 21px;
+}
+.dataset-markdown-preview h3 {
+  font-size: 17px;
+}
+.dataset-markdown-preview p,
+.dataset-markdown-preview blockquote,
+.dataset-markdown-preview ul,
+.dataset-markdown-preview ol,
+.dataset-markdown-preview table,
+.dataset-markdown-preview pre {
+  margin: 0 0 14px;
+}
+.dataset-markdown-preview ul,
+.dataset-markdown-preview ol {
+  padding-left: 24px;
+}
+.dataset-markdown-preview li + li {
+  margin-top: 4px;
+}
+.dataset-markdown-preview blockquote {
+  padding: 2px 14px;
+  border-left: 4px solid #d0d7de;
+  color: #59636e;
+}
+.dataset-markdown-preview code {
+  padding: 2px 5px;
+  border-radius: 4px;
+  background: #eff1f3;
+  font-family: Consolas, Monaco, monospace;
+  font-size: 0.9em;
+}
+.dataset-markdown-preview pre {
+  overflow: auto;
+  padding: 14px;
+  border-radius: 6px;
+  background: #f6f8fa;
+}
+.dataset-markdown-preview pre code {
+  padding: 0;
+  background: transparent;
+  font-size: 12px;
+}
+.dataset-markdown-preview table {
+  display: block;
+  max-width: 100%;
+  overflow: auto;
+  border-collapse: collapse;
+}
+.dataset-markdown-preview th,
+.dataset-markdown-preview td {
+  padding: 7px 12px;
+  border: 1px solid #d0d7de;
+  text-align: left;
+}
+.dataset-markdown-preview th {
+  background: #f6f8fa;
+  font-weight: 600;
+}
+.dataset-markdown-preview tr:nth-child(even) td {
+  background: #fafbfc;
+}
+.dataset-markdown-preview img {
+  max-width: 100%;
+  height: auto;
+}
+.dataset-markdown-preview hr {
+  height: 1px;
+  margin: 20px 0;
+  border: 0;
+  background: #d8dee4;
+}
+.dataset-markdown-preview input[type="checkbox"] {
+  margin-right: 6px;
+}

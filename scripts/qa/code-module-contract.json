@@ -1,0 +1,963 @@
+[
+  {
+    "source": "src/services/codeV2.ts",
+    "target": "src/services/trainingCode/v2Mapping.ts",
+    "name": "normalizeV2ApprovalStatus",
+    "body": "27bab12d390bf15b717d2746b84ccb8a6171d7d3cc5da7f5b17bc9091ea16083"
+  },
+  {
+    "source": "src/services/codeV2.ts",
+    "target": "src/services/trainingCode/v2Mapping.ts",
+    "name": "isInternalGeneratedCodeAssetName",
+    "body": "2f1fa5408f5978320c5b5b1c40ced0d04d3187d7b6987daa33aa4b47ff345085"
+  },
+  {
+    "source": "src/services/codeV2.ts",
+    "target": "src/services/trainingCode/v2Mapping.ts",
+    "name": "pickUserCodeName",
+    "body": "e6bd5de9465a04c2207b5a33434a54319b19cc1e66a3981af3bf62fabed80bd5"
+  },
+  {
+    "source": "src/services/codeV2.ts",
+    "target": "src/services/trainingCode/v2Mapping.ts",
+    "name": "mapV2CodeVersionToLegacy",
+    "body": "2ea5238a7482eceb11cd12987efcb876ddcf4f8ca383069c39849b159ad31b70"
+  },
+  {
+    "source": "src/services/codeV2.ts",
+    "target": "src/services/trainingCode/v2Mapping.ts",
+    "name": "firstNonEmptyName",
+    "body": "2ee019361ff4fabdd9a455b1f7a289a7fef07d95092a07a2a9f624296493af63"
+  },
+  {
+    "source": "src/services/codeV2.ts",
+    "target": "src/services/trainingCode/v2Mapping.ts",
+    "name": "pickReviewTaskVersionId",
+    "body": "fe7c4f82e0feeb2d64cee2d3aba547a5d897eb24987658e6a6f7da71dcd08f53"
+  },
+  {
+    "source": "src/services/codeV2.ts",
+    "target": "src/services/trainingCode/v2Mapping.ts",
+    "name": "normalizeAdminReviewTaskPage",
+    "body": "603a26399f97906766007070a138c5a700fd6c5f3887446ef83ffbcad8fe05a3"
+  },
+  {
+    "source": "src/services/codeV2.ts",
+    "target": "src/services/trainingCode/v2Mapping.ts",
+    "name": "mapAdminReviewTaskToListItem",
+    "body": "d2151975b35a7a62426300e1ed9ec095ea66c1a82a0ffef3f02c002df9f9683c"
+  },
+  {
+    "source": "src/services/codeV2.ts",
+    "target": "src/services/trainingCode/v2Mapping.ts",
+    "name": "mapAdminReviewTaskDetailToCodeVersionDetail",
+    "body": "620e16d7708db4ae986779461537e649e02d8687b4c8b8c280c3a395faee76bf"
+  },
+  {
+    "source": "src/services/codeV2.ts",
+    "target": "src/services/trainingCode/v2Mapping.ts",
+    "name": "buildV2ApprovalRequest",
+    "body": "ee4593b9e2c950a0f9093f00fed3ae488b56343c12984973358aa873e2d93b57"
+  },
+  {
+    "source": "src/services/codeV2.ts",
+    "target": "src/services/trainingCode/v2Mapping.ts",
+    "name": "hasV2ApprovalEvidence",
+    "body": "22be453e4439f144f3df6785d60c40b56dc1eca48c4fd5d6c76ba7e72006df31"
+  },
+  {
+    "source": "src/services/codeV2.ts",
+    "target": "src/services/trainingCode/v2Mapping.ts",
+    "name": "normalizeAdminCodeAssetPage",
+    "body": "0c612aa779f4db669beb7d1efcd8679d43ac8e6e178952f7863f797cee409bf0"
+  },
+  {
+    "source": "src/services/codeV2.ts",
+    "target": "src/services/trainingCode/v2Tree.ts",
+    "name": "unwrapList",
+    "body": "f7096aa48ac53bed5f4caec7b6245419ae02c3d5b39056a0583cd22299cad483"
+  },
+  {
+    "source": "src/services/codeV2.ts",
+    "target": "src/services/trainingCode/v2Tree.ts",
+    "name": "isDirNode",
+    "body": "592d285ef94bf1f070f5ed8c6d1a0339df076acccb3482646b7fa0447a1a4ce0"
+  },
+  {
+    "source": "src/services/codeV2.ts",
+    "target": "src/services/trainingCode/v2Tree.ts",
+    "name": "resolveV2TreeNodePath",
+    "body": "6b084a6be397c605e1891c9ddea7e7601dd285643d359a24eb8e4051216402fc"
+  },
+  {
+    "source": "src/services/codeV2.ts",
+    "target": "src/services/trainingCode/v2Tree.ts",
+    "name": "flattenV2CodeTree",
+    "body": "3a1d3534efb5729f61eeb500e18d2d596c190cb6f028176178d46873fa4a2118"
+  },
+  {
+    "source": "src/services/codeV2.ts",
+    "target": "src/services/trainingCode/v2Tree.ts",
+    "name": "fetchAllV2CodeTreeFiles",
+    "body": "694996cfaa282103071ab4871f276c7b190d13a056a1440f5dad9be1a6067fc5"
+  },
+  {
+    "source": "src/services/codeV2.ts",
+    "target": "src/services/trainingCode/v2OwnerApi.ts",
+    "name": "listV2CodeAssets",
+    "body": "4d70a6f710917c1e651f1dadc53e88d8181be1db56d6ee60b0399bf6e5c71421"
+  },
+  {
+    "source": "src/services/codeV2.ts",
+    "target": "src/services/trainingCode/v2OwnerApi.ts",
+    "name": "createV2CodeAsset",
+    "body": "752c46dee2e2fc695b6f0f86df758c0b079c296cb79f626dfb0f888e58ef5192"
+  },
+  {
+    "source": "src/services/codeV2.ts",
+    "target": "src/services/trainingCode/v2OwnerApi.ts",
+    "name": "importV2CodeAssetZip",
+    "body": "04d48c10b42a9c6c072d643419c56b0e2696c0f68c706eac94081a119120b524"
+  },
+  {
+    "source": "src/services/codeV2.ts",
+    "target": "src/services/trainingCode/v2OwnerApi.ts",
+    "name": "getV2CodeAsset",
+    "body": "e5fa3d75f3a724dcd7d61df7fa3662690bcbbf90f4cda2fa9c5bb2160abfb462"
+  },
+  {
+    "source": "src/services/codeV2.ts",
+    "target": "src/services/trainingCode/v2OwnerApi.ts",
+    "name": "deleteV2CodeAsset",
+    "body": "5b0061dd1a7a9415f92f40fc81e412f228baf0db8234a828b67efb3a4510df38"
+  },
+  {
+    "source": "src/services/codeV2.ts",
+    "target": "src/services/trainingCode/v2OwnerApi.ts",
+    "name": "listV2CodeWorkspaces",
+    "body": "d0e4f94e20e941925fd3438b5f13ca4c393478f6ecfbad29efdd435545b65a06"
+  },
+  {
+    "source": "src/services/codeV2.ts",
+    "target": "src/services/trainingCode/v2OwnerApi.ts",
+    "name": "openV2CodeWorkspace",
+    "body": "797fde228f42dd0831ad17184e524cd4f750af22b041ea5a6ddd3fc1154e390f"
+  },
+  {
+    "source": "src/services/codeV2.ts",
+    "target": "src/services/trainingCode/v2OwnerApi.ts",
+    "name": "getV2CodeWorkspace",
+    "body": "ae3398a43e8553027b92ae4ec8ada6fd1a6e998f42d0e89a4973e76185c9bad0"
+  },
+  {
+    "source": "src/services/codeV2.ts",
+    "target": "src/services/trainingCode/v2OwnerApi.ts",
+    "name": "getV2CodeWorkspaceFileMetadata",
+    "body": "802d84b259cfd0539bb17b80d08dbf4f0c79c263dcd2c1521fb8f4940d82f1b7"
+  },
+  {
+    "source": "src/services/codeV2.ts",
+    "target": "src/services/trainingCode/v2OwnerApi.ts",
+    "name": "getV2CodeWorkspaceFileContent",
+    "body": "e3157da7606b2ced4e59a8be5a08bb06cec27088dc848b0e6b00b75cd9dba236"
+  },
+  {
+    "source": "src/services/codeV2.ts",
+    "target": "src/services/trainingCode/v2OwnerApi.ts",
+    "name": "upsertV2CodeWorkspaceFile",
+    "body": "9f8d4e25814aff9635faa0465b1018c888385b24cbd1aa82e2683ad731dd9e1d"
+  },
+  {
+    "source": "src/services/codeV2.ts",
+    "target": "src/services/trainingCode/v2OwnerApi.ts",
+    "name": "validateV2CodeWorkspace",
+    "body": "caa55af438bbdef5e9063bae9af6c216c02848282f153b9db257ff1a211a0292"
+  },
+  {
+    "source": "src/services/codeV2.ts",
+    "target": "src/services/trainingCode/v2OwnerApi.ts",
+    "name": "downloadV2CodeWorkspaceFileBlob",
+    "body": "783255f656cec7b7a06127e902ee82765e62072264f5cbd63fe291adc68b8577"
+  },
+  {
+    "source": "src/services/codeV2.ts",
+    "target": "src/services/trainingCode/v2OwnerApi.ts",
+    "name": "publishV2CodeWorkspace",
+    "body": "60e1b7e8c0728d015c7159a9044472f9b1bdf996716723db0d886b46b155e47b"
+  },
+  {
+    "source": "src/services/codeV2.ts",
+    "target": "src/services/trainingCode/v2OwnerApi.ts",
+    "name": "getV2CodeVersion",
+    "body": "db8f9076c25163d662027ff478edefe18179f9dae02b28328928f60e0434e499"
+  },
+  {
+    "source": "src/services/codeV2.ts",
+    "target": "src/services/trainingCode/v2OwnerApi.ts",
+    "name": "getV2CodeVersionTree",
+    "body": "18f99bc0cfb82cf278c828d43e3c9f916d086cefd97586cc869223f47231a8c2"
+  },
+  {
+    "source": "src/services/codeV2.ts",
+    "target": "src/services/trainingCode/v2OwnerApi.ts",
+    "name": "getV2CodeVersionFileContent",
+    "body": "74abb280f28279e509de34407b7fc64dddfcb8e26cab73fb76bb98b7c6ac5f09"
+  },
+  {
+    "source": "src/services/codeV2.ts",
+    "target": "src/services/trainingCode/v2OwnerApi.ts",
+    "name": "downloadV2CodeVersionFileBlob",
+    "body": "6fcd54d3f8e8be0988a0407957724a9b576ee3886cb7aabed4c9ef2c8746d73e"
+  },
+  {
+    "source": "src/services/codeV2.ts",
+    "target": "src/services/trainingCode/v2OwnerApi.ts",
+    "name": "downloadV2CodeVersionZip",
+    "body": "da51798266fe7f3e574b1ae52153060d1d2185cb1fcbc664e5b13f40abf28be9"
+  },
+  {
+    "source": "src/services/codeV2.ts",
+    "target": "src/services/trainingCode/v2OwnerApi.ts",
+    "name": "validateV2CodeVersion",
+    "body": "d73ad24d637f6172672a3c73d96974f17f4fe25771873efa1ca140477041de61"
+  },
+  {
+    "source": "src/services/codeV2.ts",
+    "target": "src/services/trainingCode/v2OwnerApi.ts",
+    "name": "getV2CodeConsumerManifest",
+    "body": "22d8a832dd3edad45c189f6e5b66a1707075af53bc018e3a5cbd67d01df34006"
+  },
+  {
+    "source": "src/services/codeV2.ts",
+    "target": "src/services/trainingCode/v2OwnerApi.ts",
+    "name": "getV2CodeRiskAssessment",
+    "body": "9fa883b50195c73dcbf6673539646d298adee16a88abf048b3896ed4e7c9a7db"
+  },
+  {
+    "source": "src/services/codeV2.ts",
+    "target": "src/services/trainingCode/v2OwnerApi.ts",
+    "name": "approveV2CodeVersion",
+    "body": "632b3f0935d85efce16f61fe56e55a5614868c38674f53f66a1aff404a4d7f83"
+  },
+  {
+    "source": "src/services/codeV2.ts",
+    "target": "src/services/trainingCode/v2OwnerApi.ts",
+    "name": "patchV2CodeAsset",
+    "body": "60774ce1164d6135ba057af6e7c2ad325338b12edb56594799a72c6d8bc73a77"
+  },
+  {
+    "source": "src/services/codeV2.ts",
+    "target": "src/services/trainingCode/v2OwnerApi.ts",
+    "name": "listV2CodeAssetVersions",
+    "body": "9b0916deecbbcd71c5e3c61e95c829e8d4ebee424608e284eb37544cef3ece0a"
+  },
+  {
+    "source": "src/services/codeV2.ts",
+    "target": "src/services/trainingCode/v2OwnerApi.ts",
+    "name": "deleteV2CodeWorkspaceFile",
+    "body": "ae6ecd8f29dc7c9e9e4023b93c91c4ffbae5f2e1e459b431171ea7e24fb81587"
+  },
+  {
+    "source": "src/services/codeV2.ts",
+    "target": "src/services/trainingCode/v2OwnerApi.ts",
+    "name": "moveV2CodeWorkspaceFile",
+    "body": "b8fbef0a1ca0cc58d32e84e887afa241641a09a17a852307718d3c923e982341"
+  },
+  {
+    "source": "src/services/codeV2.ts",
+    "target": "src/services/trainingCode/v2OwnerApi.ts",
+    "name": "abandonV2CodeWorkspace",
+    "body": "5bce5ccf82dfdaa623e9ae0769839e1920bdaf08c1a91a2bea98f32660d027dd"
+  },
+  {
+    "source": "src/services/codeV2.ts",
+    "target": "src/services/trainingCode/v2OwnerApi.ts",
+    "name": "getV2CodeWorkspaceTree",
+    "body": "613a5174045ed20c77a2180d6eca71476faa305bd162dd6fc6814057d0f5a855"
+  },
+  {
+    "source": "src/services/codeV2.ts",
+    "target": "src/services/trainingCode/v2OwnerApi.ts",
+    "name": "deprecateV2CodeVersion",
+    "body": "edc1fe32c3adb8d842d93350bb8e42e2a136cd908c32f15c5fe9f31a5b3decd9"
+  },
+  {
+    "source": "src/services/codeV2.ts",
+    "target": "src/services/trainingCode/v2OwnerApi.ts",
+    "name": "archiveV2CodeVersion",
+    "body": "fa4eea1d49464e489cf2260b2293e0a9758a20726d9dcc8a7480d2552530d885"
+  },
+  {
+    "source": "src/services/codeV2.ts",
+    "target": "src/services/trainingCode/v2OwnerApi.ts",
+    "name": "upgradeV2CodeArtifact",
+    "body": "aa1d6aaad5653e625baf642490354cbfb62b084174db71055214b352650fbf51"
+  },
+  {
+    "source": "src/services/codeV2.ts",
+    "target": "src/services/trainingCode/v2AdminApi.ts",
+    "name": "listAdminCodeReviewTasks",
+    "body": "3dcbffe957cb4e5f0530aa363eaeb28b0c87751ff94250aaed503c69b6e797f8"
+  },
+  {
+    "source": "src/services/codeV2.ts",
+    "target": "src/services/trainingCode/v2AdminApi.ts",
+    "name": "getAdminCodeReviewTaskDetail",
+    "body": "2ca8afb589dabbe6533cc9bb6b7e70786e1b9912fd27136081d0660b2c5a834a"
+  },
+  {
+    "source": "src/services/codeV2.ts",
+    "target": "src/services/trainingCode/v2AdminApi.ts",
+    "name": "getAdminCodeReviewTaskTree",
+    "body": "3c765d961892c2a562cc13dc4f84cff25293de10ba5ca99a67b593a9c8baa423"
+  },
+  {
+    "source": "src/services/codeV2.ts",
+    "target": "src/services/trainingCode/v2AdminApi.ts",
+    "name": "getAdminCodeReviewTaskFileContent",
+    "body": "0b4c711dafef2cc7a488fa9be4740931676f567f6a7bfe91fbcda4a400e7180b"
+  },
+  {
+    "source": "src/services/codeV2.ts",
+    "target": "src/services/trainingCode/v2AdminApi.ts",
+    "name": "listAdminCodeAssets",
+    "body": "9cebb1ed27bc7c3b6547234ab78b427651a4961a29cb00981439845560881354"
+  },
+  {
+    "source": "src/services/codeV2.ts",
+    "target": "src/services/trainingCode/v2AdminApi.ts",
+    "name": "getAdminCodeAsset",
+    "body": "11b304c5f48345b4d754c7e4d03524af0843ae934ed2174d550da7eb82812244"
+  },
+  {
+    "source": "src/services/codeV2.ts",
+    "target": "src/services/trainingCode/v2AdminApi.ts",
+    "name": "patchAdminCodeAsset",
+    "body": "b4cf59ccd006664abac74c166a33e5bdcd4aa85e40e862f7386408fd5973eb73"
+  },
+  {
+    "source": "src/services/codeV2.ts",
+    "target": "src/services/trainingCode/v2AdminApi.ts",
+    "name": "deleteAdminCodeAsset",
+    "body": "9780e0eb309b7766a1bd039388f174cdab4f1cab06ce0d0fc937ea8151b1420e"
+  },
+  {
+    "source": "src/services/codeV2.ts",
+    "target": "src/services/trainingCode/v2AdminApi.ts",
+    "name": "listAdminCodeAssetVersions",
+    "body": "354f72fc1d39fb009c47a943a6664bc61882170891dbb26e8bd5231e14408962"
+  },
+  {
+    "source": "src/services/codeV2.ts",
+    "target": "src/services/trainingCode/v2AdminApi.ts",
+    "name": "listAdminCodeAssetWorkspaces",
+    "body": "51c2c3a3ab6ddd6e048e9d48143f47bfeb90db8f74962ac3f7a787d06b05d2f6"
+  },
+  {
+    "source": "src/services/codeV2.ts",
+    "target": "src/services/trainingCode/v2AdminApi.ts",
+    "name": "openAdminCodeAssetWorkspace",
+    "body": "acb482a740565ebe6ab3a772860aaf0759f3c9027016dbb32b70e4cb33fbe197"
+  },
+  {
+    "source": "src/services/codeV2.ts",
+    "target": "src/services/trainingCode/v2AdminApi.ts",
+    "name": "getAdminCodeWorkspaceTree",
+    "body": "64376d375a93117d681e93e37e83beaf887ed1a83953a8809320723d279a0b9f"
+  },
+  {
+    "source": "src/services/codeV2.ts",
+    "target": "src/services/trainingCode/v2AdminApi.ts",
+    "name": "getAdminCodeWorkspaceFileContent",
+    "body": "e33529a999e65f8b08a9ec4609c2cadb294a18d6bf79c2b0cb0819c88bf4f96c"
+  },
+  {
+    "source": "src/services/codeV2.ts",
+    "target": "src/services/trainingCode/v2AdminApi.ts",
+    "name": "getAdminCodeWorkspace",
+    "body": "d27c2bdd14fcd16551964e1f05d0e76feedca9e2195323338e755a568adc6133"
+  },
+  {
+    "source": "src/services/codeV2.ts",
+    "target": "src/services/trainingCode/v2AdminApi.ts",
+    "name": "getAdminCodeWorkspaceFileMetadata",
+    "body": "f9e7cfc80a39377daef29dc2f478dc028d78badfc5d44f8775fb520115f0a9f4"
+  },
+  {
+    "source": "src/services/codeV2.ts",
+    "target": "src/services/trainingCode/v2AdminApi.ts",
+    "name": "upsertAdminCodeWorkspaceFile",
+    "body": "8071a8146b5b41eb31d2230fc33ec0c10249fde00591e274bbd6e2a52086eb8a"
+  },
+  {
+    "source": "src/services/codeV2.ts",
+    "target": "src/services/trainingCode/v2AdminApi.ts",
+    "name": "deleteAdminCodeWorkspaceFile",
+    "body": "a2483c54875f8ae35cc94bf152512807125906979d6713bbed6d8388b0e15a59"
+  },
+  {
+    "source": "src/services/codeV2.ts",
+    "target": "src/services/trainingCode/v2AdminApi.ts",
+    "name": "publishAdminCodeWorkspace",
+    "body": "3159fc70da0f1b0d9a25ebe33df583eb727f792ac4b14ce86e2da0742a23d2ea"
+  },
+  {
+    "source": "src/services/codeV2.ts",
+    "target": "src/services/trainingCode/v2AdminApi.ts",
+    "name": "abandonAdminCodeWorkspace",
+    "body": "8fa467e3ee8ae9d7985fff242f35d22db5305f369c502f7f2c2dc7896d2383b6"
+  },
+  {
+    "source": "src/services/codeV2.ts",
+    "target": "src/services/trainingCode/v2AdminApi.ts",
+    "name": "moveAdminCodeWorkspaceFile",
+    "body": "7a98adc51eed1af3d7f7b32e82fa1a2b9a7cea3fd483b049f3a1d8fcc427e5f0"
+  },
+  {
+    "source": "src/services/codeV2.ts",
+    "target": "src/services/trainingCode/v2AdminApi.ts",
+    "name": "validateAdminCodeWorkspace",
+    "body": "f6dc7dd934fd59f3c4eb81acd6b7174e3ce9a4066c04073f76581ee1726841a1"
+  },
+  {
+    "source": "src/services/codeV2.ts",
+    "target": "src/services/trainingCode/v2AdminApi.ts",
+    "name": "downloadAdminCodeWorkspaceFileBlob",
+    "body": "694b9b8f59de1ecc46fed1e81ea9ddc3e740ed9875a1d62b90f7f7a0ca80db7a"
+  },
+  {
+    "source": "src/services/codeV2.ts",
+    "target": "src/services/trainingCode/v2AdminApi.ts",
+    "name": "getAdminCodeVersion",
+    "body": "dd9f208ddfb43df3df618c0baf988d6b5957fcded45a1396745b2156592e1aff"
+  },
+  {
+    "source": "src/services/codeV2.ts",
+    "target": "src/services/trainingCode/v2AdminApi.ts",
+    "name": "getAdminCodeVersionTree",
+    "body": "0a2bb92fd99a735588bf58b17487e47bb51354d66ad6bdd537f40cad342dd9c8"
+  },
+  {
+    "source": "src/services/codeV2.ts",
+    "target": "src/services/trainingCode/v2AdminApi.ts",
+    "name": "getAdminCodeVersionFileContent",
+    "body": "c49ef7dfbfbbb1ca674493f12b4e32014ddd3a1f371318e8ebaed73f21d27844"
+  },
+  {
+    "source": "src/services/codeV2.ts",
+    "target": "src/services/trainingCode/v2AdminApi.ts",
+    "name": "downloadAdminCodeVersionFileBlob",
+    "body": "b10a5bbd68283c079de7f827fd46bc719a0164bc03fc8235149986fbf72893de"
+  },
+  {
+    "source": "src/services/codeV2.ts",
+    "target": "src/services/trainingCode/v2AdminApi.ts",
+    "name": "validateAdminCodeVersion",
+    "body": "3c44f927ab736f084c6234de63b9071fcf200f632bf5a2c4053e31cc78e7a3e2"
+  },
+  {
+    "source": "src/services/codeV2.ts",
+    "target": "src/services/trainingCode/v2AdminApi.ts",
+    "name": "deprecateAdminCodeVersion",
+    "body": "26bf78832f3248bed6b327acb6187da6f13cbdf559559682abc857e247fce5ec"
+  },
+  {
+    "source": "src/services/codeV2.ts",
+    "target": "src/services/trainingCode/v2AdminApi.ts",
+    "name": "archiveAdminCodeVersion",
+    "body": "ce1712fc0a5604af3edb35a5d635ac83d2f6100d919bde537adb24981397c566"
+  },
+  {
+    "source": "src/services/codeV2.ts",
+    "target": "src/services/trainingCode/v2AdminApi.ts",
+    "name": "downloadAdminCodeVersionZip",
+    "body": "f112f435bff3de62a17ecac0a0000ebb23ea16910a9dc0aa837222c398945909"
+  },
+  {
+    "source": "src/services/codeV2.ts",
+    "target": "src/services/trainingCode/v2AdminApi.ts",
+    "name": "listAdminCodeReviewFindings",
+    "body": "d819773249ad75f779fc0cd3962c59a94d847b61395641c4234963274dcb07dc"
+  },
+  {
+    "source": "src/services/codeV2.ts",
+    "target": "src/services/trainingCode/v2AdminApi.ts",
+    "name": "rescanAdminCodeReviewTask",
+    "body": "20ff22b29c387a1b8bf28c2696a04fa7ad5de59aa8a965b9571da59178d90f2b"
+  },
+  {
+    "source": "src/services/codeV2.ts",
+    "target": "src/services/trainingCode/v2Content.ts",
+    "name": "extractV2FileText",
+    "body": "213856088a9d5fbd6a4f0d66a78db1dffe62c7b4b353cec5303bba99e2e2456b"
+  },
+  {
+    "source": "src/services/codeV2.ts",
+    "target": "src/services/trainingCode/v2Content.ts",
+    "name": "errorMessageFromV2",
+    "body": "21eb46d60da8efe6a6b84274ae56ee96807902f084164182afd4d91b5c038e74"
+  },
+  {
+    "source": "src/services/codeV2.ts",
+    "target": "src/services/trainingCode/v2Content.ts",
+    "name": "errorMessageFromV2Blob",
+    "body": "37ae73cec556d44f0c598e3bb08bbb8612d82785e21ed381c2ccfd8007d4a39b"
+  },
+  {
+    "source": "src/services/code.ts",
+    "target": "src/services/trainingCode/assets.ts",
+    "name": "uploadCodeZip",
+    "body": "254fc75f50486321f765653c8ff41b79c2173e66a93b6dab2df411ae7a523e5e"
+  },
+  {
+    "source": "src/services/code.ts",
+    "target": "src/services/trainingCode/assets.ts",
+    "name": "deleteCodeAsset",
+    "body": "7a4c753efd80ec6e3ea92f7a92fb977c94ced1e9dc0b8d1668b6f5e0f088e712"
+  },
+  {
+    "source": "src/services/code.ts",
+    "target": "src/services/trainingCode/assets.ts",
+    "name": "downloadCodeVersionZip",
+    "body": "a818e0431f5ef3989e9d04563c6a3b181641ccf5784918dfe577fddfe04d9b13"
+  },
+  {
+    "source": "src/services/code.ts",
+    "target": "src/services/trainingCode/assets.ts",
+    "name": "updateCodeAssetMeta",
+    "body": "9a43a58532a1e8c69e293123e8258b22653aa0db01723d811517f486a19aaca8"
+  },
+  {
+    "source": "src/services/code.ts",
+    "target": "src/services/trainingCode/assets.ts",
+    "name": "listCodeAssetVersions",
+    "body": "aabc3e14e1f5fad3bd099f641f885ee050c6f8880b35b394c48526878975445a"
+  },
+  {
+    "source": "src/services/code.ts",
+    "target": "src/services/trainingCode/assets.ts",
+    "name": "deprecateCodeVersion",
+    "body": "0f07bd035e58313fa87b4888b3598c7ac3cf9da1903e5c2ceaf90d9a8447c1b1"
+  },
+  {
+    "source": "src/services/code.ts",
+    "target": "src/services/trainingCode/assets.ts",
+    "name": "archiveCodeVersion",
+    "body": "5cede6be86f87cd863bd71252af29804920395d2d0abb6e662efe4964abe0446"
+  },
+  {
+    "source": "src/services/code.ts",
+    "target": "src/services/trainingCode/assets.ts",
+    "name": "upgradeCodeArtifact",
+    "body": "2d7181956d938cf4de2721c31ffa0283a15b603a2231157c34b1d6be5d08e9ed"
+  },
+  {
+    "source": "src/services/code.ts",
+    "target": "src/services/trainingCode/assets.ts",
+    "name": "fetchAdminCodeFindings",
+    "body": "46dccbf5ca259dfd05a5ee9b9bd57120cff5d245e1da5b638263d3efee3e800d"
+  },
+  {
+    "source": "src/services/code.ts",
+    "target": "src/services/trainingCode/assets.ts",
+    "name": "rescanCodeReviewTask",
+    "body": "fcd8ef34a0321194c58366fabf4ac08d1cf352447c8ba6a68211a11255a67b3f"
+  },
+  {
+    "source": "src/services/code.ts",
+    "target": "src/services/trainingCode/assets.ts",
+    "name": "downloadAdminCodeVersionFile",
+    "body": "20bad5bdde345c89739697599b504e81ad097a3bd3e0ec156d964ba80ac5cdfb"
+  },
+  {
+    "source": "src/services/code.ts",
+    "target": "src/services/trainingCode/assets.ts",
+    "name": "validateAdminCodeVersionById",
+    "body": "ef3d8ccf19af8c8142b214308d3765148b7a374f2c17f17cd996e2ce317e4bee"
+  },
+  {
+    "source": "src/services/code.ts",
+    "target": "src/services/trainingCode/assets.ts",
+    "name": "deprecateAdminCodeVersionById",
+    "body": "b6867fedb7a5118959b00996cc989b96f238ab956d4558c74582fe97d6e3b4f6"
+  },
+  {
+    "source": "src/services/code.ts",
+    "target": "src/services/trainingCode/assets.ts",
+    "name": "archiveAdminCodeVersionById",
+    "body": "8a72e3306c5d5f0fce799b617ece0b0591355550277676aec39d1f2032e65ae0"
+  },
+  {
+    "source": "src/services/code.ts",
+    "target": "src/services/trainingCode/assets.ts",
+    "name": "listCodeAssets",
+    "body": "acafaf299839c9a536373df13ed16839ceb8d04d67834bd144c16f25461e8f41"
+  },
+  {
+    "source": "src/services/code.ts",
+    "target": "src/services/trainingCode/assets.ts",
+    "name": "getAdminCodeReviewDetail",
+    "body": "a5503c8673bc686073b7f561975e4f057040413f13e5350ed3799617d152c02a"
+  },
+  {
+    "source": "src/services/code.ts",
+    "target": "src/services/trainingCode/assets.ts",
+    "name": "listAdminCodeReviewFiles",
+    "body": "dbbdad6a0f6c4c11f00a91e20974ce758f6f213312f223a25679a91a15af78ca"
+  },
+  {
+    "source": "src/services/code.ts",
+    "target": "src/services/trainingCode/assets.ts",
+    "name": "previewAdminCodeReviewFile",
+    "body": "7a5493e80f46009e766c210b39b3e00f93d13c23d1bf120db7e361107c6466c9"
+  },
+  {
+    "source": "src/services/code.ts",
+    "target": "src/services/trainingCode/assets.ts",
+    "name": "downloadCodeVersionSingleFile",
+    "body": "f08910c3fc5966aa6f96b3275cef4ec5bfbb261bd9585cc69eb8a3334c1d63d5"
+  },
+  {
+    "source": "src/services/code.ts",
+    "target": "src/services/trainingCode/assets.ts",
+    "name": "validateCodeVersionExplicit",
+    "body": "72f60086fb8b209e720d71d268c915b8e79f996b53e978ba97e2d496159e74dd"
+  },
+  {
+    "source": "src/services/code.ts",
+    "target": "src/services/trainingCode/assets.ts",
+    "name": "downloadAdminCodeVersionZipById",
+    "body": "564f299c5b8ac305ced2c5720016397d4e2a64d3253d0495b961d3a04b65c1ab"
+  },
+  {
+    "source": "src/services/code.ts",
+    "target": "src/services/trainingCode/common.ts",
+    "name": "normalizeCodeApprovalStatus",
+    "body": "f9c1d0ee5bb3132bea2c6c2582453493d27d49dab47ac7bf560ff7a8dab1b4ab"
+  },
+  {
+    "source": "src/services/code.ts",
+    "target": "src/services/trainingCode/common.ts",
+    "name": "suggestNextCodeVersionLabel",
+    "body": "b98168c6704b81c725ed3bd1d528e4db1efb5a91fafa3f1f6c90ec5adefedaee"
+  },
+  {
+    "source": "src/services/code.ts",
+    "target": "src/services/trainingCode/common.ts",
+    "name": "isOpenWorkspace",
+    "body": "b7f44ee4cc2b519fadff1a90d7cfdad1f8f808cf8a99150c6dff95a82a5ce198"
+  },
+  {
+    "source": "src/services/code.ts",
+    "target": "src/services/trainingCode/common.ts",
+    "name": "mapCodeWorkspaceConflictMessage",
+    "body": "6fa43b02e67ae4988c9ac2d9f98da05348d2504d6c6cb88fe6c3eb60fd0657cd"
+  },
+  {
+    "source": "src/services/code.ts",
+    "target": "src/services/trainingCode/inventory.ts",
+    "name": "fetchCodeVersionList",
+    "body": "a486c2e79860605fb9ad1d36438129325a3d1479770463129e4dc4f412dba542"
+  },
+  {
+    "source": "src/services/code.ts",
+    "target": "src/services/trainingCode/inventory.ts",
+    "name": "fetchApprovedCodeVersions",
+    "body": "521f6f4a2971a54358497ce33a30605532e82f3058924b31bc447816b02670de"
+  },
+  {
+    "source": "src/services/code.ts",
+    "target": "src/services/trainingCode/inventory.ts",
+    "name": "unwrapAssetList",
+    "body": "c3d80374a56a35372354b617894d6d685734dc414d8c90f46046119373687d2c"
+  },
+  {
+    "source": "src/services/code.ts",
+    "target": "src/services/trainingCode/inventory.ts",
+    "name": "mergeLocalPendingRows",
+    "body": "117235488044f51402dd23eea5d375d79a2ab4a582f71c7da0df8d4976874ca4"
+  },
+  {
+    "source": "src/services/code.ts",
+    "target": "src/services/trainingCode/inventory.ts",
+    "name": "fetchOwnerCodeVersionInventory",
+    "body": "69cce5a51d266e43164a8a9de52a0204f0ff4411e8133381fafcc9e2dff4b87d"
+  },
+  {
+    "source": "src/services/code.ts",
+    "target": "src/services/trainingCode/inventory.ts",
+    "name": "fetchPendingCodeReviewTasks",
+    "body": "597776f9bba108aea7afd2d4205263b19849ed5ee1577bb9055e935b052c8fdf"
+  },
+  {
+    "source": "src/services/code.ts",
+    "target": "src/services/trainingCode/inventory.ts",
+    "name": "enrichAdminReviewListItem",
+    "body": "5d69f8a623ed3e6d4d5de007f8107c33310f44b0b7e5b054746ac8f471bb893e"
+  },
+  {
+    "source": "src/services/code.ts",
+    "target": "src/services/trainingCode/inventory.ts",
+    "name": "unwrapVersionList",
+    "body": "24abcd384fdf1b05b230d9222e11716c8bd1e4ff13e83e73703f491f70fbe381"
+  },
+  {
+    "source": "src/services/code.ts",
+    "target": "src/services/trainingCode/inventory.ts",
+    "name": "fallbackPendingFromAdminAssets",
+    "body": "a376e95d3e787061598421d36ea18bf3e6fd34338cb393867064700211e76808"
+  },
+  {
+    "source": "src/services/code.ts",
+    "target": "src/services/trainingCode/approval.ts",
+    "name": "decideCodeVersion",
+    "body": "6a3cffc1a8e7a4942c18c0ea47b04f664a59761872aa00974f5f47c772e6dee8"
+  },
+  {
+    "source": "src/services/code.ts",
+    "target": "src/services/trainingCode/approval.ts",
+    "name": "approveCodeVersion",
+    "body": "b85fa131d527cc65fa5be980fc318ece64184203b5f00ccfa0ce9d6ea883ada4"
+  },
+  {
+    "source": "src/services/code.ts",
+    "target": "src/services/trainingCode/approval.ts",
+    "name": "peekCodeApprovalStatus",
+    "body": "1598a419c740dc589a3a5053d6604b2eee7c78b89060fc53ac8e69c4ded78c8f"
+  },
+  {
+    "source": "src/services/code.ts",
+    "target": "src/services/trainingCode/approval.ts",
+    "name": "autoApproveCodeVersionIfEnabled",
+    "body": "b520b91de131d3966386b625edc88a4b5c1503ae1a0d8ffab11b24e61cfb4c46"
+  },
+  {
+    "source": "src/services/code.ts",
+    "target": "src/services/trainingCode/approval.ts",
+    "name": "rejectCodeVersion",
+    "body": "f0bec30d7667c0c3a5a3480db5a9464f26f3f75b9ac1a2b9e0cc1fc7364e4d00"
+  },
+  {
+    "source": "src/services/code.ts",
+    "target": "src/services/trainingCode/approval.ts",
+    "name": "revokeCodeVersion",
+    "body": "48b4623fcf25d307f54084aff3abffb2aadc55a8937970fe1bd7c7165dd5704d"
+  },
+  {
+    "source": "src/services/code.ts",
+    "target": "src/services/trainingCode/approval.ts",
+    "name": "collectValidationReasons",
+    "body": "dabce97c51ecf954d1943e049b9d88bda3f5ff127aaee7c18ebf85aa03ea5575"
+  },
+  {
+    "source": "src/services/code.ts",
+    "target": "src/services/trainingCode/approval.ts",
+    "name": "checkCodeVersionForTraining",
+    "body": "ce2d69ce45cfdb0cfc9b4d32ead4c76be6994b34d1504aefbdd01722b82057fc"
+  },
+  {
+    "source": "src/services/code.ts",
+    "target": "src/services/trainingCode/display.ts",
+    "name": "getCodeUserDisplayName",
+    "body": "04cee681adc23251d2f6da1ee6d6e44910312c3c20c651d314564d184ed074fe"
+  },
+  {
+    "source": "src/services/code.ts",
+    "target": "src/services/trainingCode/display.ts",
+    "name": "fetchCodeAssetMeta",
+    "body": "3a095d9760098bed51ace7579ecb6f81cd86ad81106973d5282c6af66557e07a"
+  },
+  {
+    "source": "src/services/code.ts",
+    "target": "src/services/trainingCode/display.ts",
+    "name": "pickDisplayCodeName",
+    "body": "ede48629dbc85cfaff720ab22fe6e7fa0b66e7279601dfe5de9e2e7337be2ac6"
+  },
+  {
+    "source": "src/services/code.ts",
+    "target": "src/services/trainingCode/display.ts",
+    "name": "enrichCodeVersionDisplayFields",
+    "body": "857c2fcd86de5dfb772b2b010aba663080b62f259b05695d0043b819e55d6f75"
+  },
+  {
+    "source": "src/services/code.ts",
+    "target": "src/services/trainingCode/preview.ts",
+    "name": "getCodeVersionDetail",
+    "body": "ccdc5700578f5266ce58960ecc20bfc8f5059ab9e977c4624f83809fa9c0f970"
+  },
+  {
+    "source": "src/services/code.ts",
+    "target": "src/services/trainingCode/preview.ts",
+    "name": "mapV2TreeFileEntries",
+    "body": "fa09f070df44ac031e6faef612f99b76340a8a799184c346139f72988bef4a1d"
+  },
+  {
+    "source": "src/services/code.ts",
+    "target": "src/services/trainingCode/preview.ts",
+    "name": "mapV2TreeFiles",
+    "removed": "G2 后反向审查确认：私有函数，无调用和导出，删除该函数及专用未用导入",
+    "body": "1ed241d9a8eb6dfe13ab7e47b8336b056e408317a8827a3bfb4e9da855cf909b"
+  },
+  {
+    "source": "src/services/code.ts",
+    "target": "src/services/trainingCode/preview.ts",
+    "name": "fetchV2CodeFilesFromTree",
+    "body": "9808500c1c01b8edf910ebccc6217e20b401aee9009651934f2b524f65cbdaf6"
+  },
+  {
+    "source": "src/services/code.ts",
+    "target": "src/services/trainingCode/preview.ts",
+    "name": "codePreviewErrorMessage",
+    "body": "d980ff3eb22e53d65070cfa01c8a48305e0c846839ee5c23fba83188f69de11b"
+  },
+  {
+    "source": "src/services/code.ts",
+    "target": "src/services/trainingCode/preview.ts",
+    "name": "listCodeVersionFiles",
+    "body": "0c92cb45340aad627723dcecb8f378f8111a030a599787855e061135d2c0e89c"
+  },
+  {
+    "source": "src/services/code.ts",
+    "target": "src/services/trainingCode/preview.ts",
+    "name": "previewCodeVersionFile",
+    "body": "979a59ed17d5e6a94d3eb54f9eec0b658ec1ad9bcf406c81e14fc57d3a829d3e"
+  },
+  {
+    "source": "src/services/code.ts",
+    "target": "src/services/trainingCode/preview.ts",
+    "name": "fetchCodeVersionCodePreview",
+    "body": "e8986a30bbe27e5e5f5a7308b96b1bf2bab3aefd0bd72c70e9bf48e327567b10"
+  },
+  {
+    "source": "src/services/code.ts",
+    "target": "src/services/trainingCode/preview.ts",
+    "name": "fetchCodeEditablePreview",
+    "body": "94c35a30efee23df7489347db3cd4664647fa0e29dbd798c30aac6414d928900"
+  },
+  {
+    "source": "src/services/code.ts",
+    "target": "src/services/trainingCode/preview.ts",
+    "name": "previewCodeEditableFile",
+    "body": "56d8e5f06124030b3f032e5ec83569680a1839d341e2d7658c432e3fabb9cff3"
+  },
+  {
+    "source": "src/services/code.ts",
+    "target": "src/services/trainingCode/workspace.ts",
+    "name": "ensureEditableCodeWorkspace",
+    "body": "45f719a50761bc22c74e99b7fe1b343271f76d8d891e7a9af0ea53b66caaa823"
+  },
+  {
+    "source": "src/services/code.ts",
+    "target": "src/services/trainingCode/workspace.ts",
+    "name": "saveCodeVersionFileAndPublish",
+    "body": "91cee27b10a14f892e9b3a8163a63091290059f64aa83b538d9730c18527d7b1"
+  },
+  {
+    "source": "src/services/code.ts",
+    "target": "src/services/trainingCode/workspace.ts",
+    "name": "publishCodeWorkspaceDraft",
+    "body": "99a91edec47f90d6780efa60b7fe4a669b784bcf33e5dac0f193d74e34a9f20b"
+  },
+  {
+    "source": "src/services/code.ts",
+    "target": "src/services/trainingCode/workspace.ts",
+    "name": "createCodeWorkspaceFile",
+    "body": "cf261d4ae5424f2eda422f4645d082ced1b52d1ca9e8f7925022d5d74869fca0"
+  },
+  {
+    "source": "src/services/code.ts",
+    "target": "src/services/trainingCode/workspace.ts",
+    "name": "deleteCodeWorkspaceFile",
+    "body": "b85a90f3f86897fb47e3dbfb859699f122ff8d3484561aa5fdddfaa07a016901"
+  },
+  {
+    "source": "src/services/code.ts",
+    "target": "src/services/trainingCode/workspace.ts",
+    "name": "moveCodeWorkspaceFile",
+    "body": "b4b02f90b71960c01ab1796c8594144c08979fe5afb2d6249577f402eecf8f29"
+  },
+  {
+    "source": "src/services/code.ts",
+    "target": "src/services/trainingCode/workspace.ts",
+    "name": "abandonCodeWorkspace",
+    "body": "80598a49335b4799a002d5474b8efd14cdbb7e86c387a4faed1509a2a0b0fc79"
+  },
+  {
+    "source": "src/services/code.ts",
+    "target": "src/services/trainingCode/workspace.ts",
+    "name": "validateCodeWorkspaceDraft",
+    "body": "0c13514322db8380ad4ba93cb140df090e9e03f968782ecad301c1f61584f766"
+  },
+  {
+    "source": "src/services/code.ts",
+    "target": "src/services/trainingCode/workspace.ts",
+    "name": "downloadCodeWorkspaceFile",
+    "body": "d467405ed1df52778808d17e7c424d828666919519c133731afe301c89c5b10c"
+  },
+  {
+    "source": "src/services/code.ts",
+    "target": "src/services/trainingCode/adminWorkspace.ts",
+    "name": "saveAdminCodeWorkspaceFile",
+    "body": "50ffb15a71bc3c72f93b6bf8de35111ca22222f65cadd66575bd6e061069ae08"
+  },
+  {
+    "source": "src/services/code.ts",
+    "target": "src/services/trainingCode/adminWorkspace.ts",
+    "name": "publishAdminCodeWorkspaceDraft",
+    "body": "4be7a7b33286b81887fb949a2d4c0df53d2d30bd5229229961dd0c8f8c8f9aa2"
+  },
+  {
+    "source": "src/services/code.ts",
+    "target": "src/services/trainingCode/adminWorkspace.ts",
+    "name": "abandonAdminCodeWorkspaceDraft",
+    "body": "435e193d25846adc5a3d2f0d63abde06e83cb96c7f18de39a33b69fe75cef78e"
+  },
+  {
+    "source": "src/services/code.ts",
+    "target": "src/services/trainingCode/adminWorkspace.ts",
+    "name": "removeAdminCodeWorkspaceFile",
+    "body": "538f3911b9073aacdf9eddeca99497c07be6c57c63f2b565802bbe1d231bcbaa"
+  },
+  {
+    "source": "src/services/code.ts",
+    "target": "src/services/trainingCode/adminWorkspace.ts",
+    "name": "reconcileAdminPublishedVersion",
+    "body": "55000fcea448632d5c79457b8035340ae51d5dc40ba3dff6b79f3c18783cf83e"
+  },
+  {
+    "source": "src/services/code.ts",
+    "target": "src/services/trainingCode/adminWorkspace.ts",
+    "name": "isAdminOpenWorkspace",
+    "body": "0db65b6fceab386c0965ea15eab5bb3c0160a18be81b0d06e82dcb71547c251b"
+  },
+  {
+    "source": "src/services/code.ts",
+    "target": "src/services/trainingCode/adminWorkspace.ts",
+    "name": "ensureAdminCodeAssetWorkspace",
+    "body": "4a3a40b1755d552f453e023346438e5f30be67afca8f7c7cffee4887845552d0"
+  },
+  {
+    "source": "src/services/code.ts",
+    "target": "src/services/trainingCode/adminWorkspace.ts",
+    "name": "createAdminCodeWorkspaceFile",
+    "body": "061b7bb61f76896f75e3eaadf3a694073b28e07089031c3d59efa4c4e16c0469"
+  },
+  {
+    "source": "src/services/code.ts",
+    "target": "src/services/trainingCode/adminWorkspace.ts",
+    "name": "moveAdminCodeWorkspaceFileByPath",
+    "body": "35b94d98d87e79348371c357f0eb46e89eb33be10ae598b50f21071b535a44ed"
+  },
+  {
+    "source": "src/services/code.ts",
+    "target": "src/services/trainingCode/adminWorkspace.ts",
+    "name": "validateAdminCodeWorkspaceDraft",
+    "body": "dd1d521cfa961f039a239394de9ec22af98e72b9f064564d26abec74f3404c07"
+  },
+  {
+    "source": "src/services/code.ts",
+    "target": "src/services/trainingCode/adminWorkspace.ts",
+    "name": "downloadAdminCodeWorkspaceFile",
+    "body": "86bfe04a275a85dd6215fe2b142adb6ae83247f6575990e537f067bae8d133ff"
+  }
+]

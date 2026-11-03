@@ -1,0 +1,33 @@
+.page {
+  --navy: #112d52;
+  position: relative; min-height: 100vh; overflow: hidden; padding: 32px 6vw 24px;
+  color: var(--navy); background: linear-gradient(145deg, #d9e9fa 0%, #edf4fb 42%, #f8fafc 76%);
+  font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+}
+.glow { position: absolute; width: 70vw; height: 70vw; top: -45vw; left: 10%; border-radius: 50%; background: #79b4f8; filter: blur(100px); opacity: .3; pointer-events: none; animation: drift 16s ease-in-out infinite alternate; }
+.header, .footer { position: relative; display: flex; align-items: center; justify-content: space-between; gap: 24px; }
+.brand { display: flex; align-items: center; gap: 14px; color: var(--navy); strong { font-size: 36px; font-weight: 850; letter-spacing: -2px; } strong span { color: #2878dc; margin-left: 7px; } small { max-width: 85px; font-size: 12px; font-weight: 700; letter-spacing: 2px; line-height: 1.5; } }
+.account { border: 1px solid #c5d8ec; border-radius: 30px; padding: 10px 20px; background: #ffffffaa; color: var(--navy); cursor: pointer; }
+.content { position: relative; max-width: 1360px; margin: 60px auto 70px; }
+.eyebrow { font-size: 12px; font-weight: 700; letter-spacing: 4px; color: #4176a9; }
+.intro { margin-bottom: 36px; h1 { margin: 16px 0; font-size: clamp(32px, 3.4vw, 52px); line-height: 1.3; font-weight: 750; letter-spacing: -1.5px; color: var(--navy); } p { color: #5c728c; font-size: 16px; line-height: 1.8; } }
+.grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px; }
+.card { position: relative; display: flex; flex-direction: column; min-width: 0; padding: 28px; border: 1px solid #ffffff; border-radius: 24px; box-shadow: 0 16px 50px #1b457712; transition: transform .3s, box-shadow .3s; }
+.training { background: linear-gradient(140deg, #153c68, #0b2343); color: #fff; &:hover { color: #fff; transform: translateY(-6px); box-shadow: 0 24px 55px #12366440; } .cardBody h2 { color: #fff; } .cardBody p { color: #bbcee4; } .cardBody small { color: #82baff; } .cardBottom { border-color: #ffffff24; } }
+.cardTop { display: flex; justify-content: space-between; align-items: center; > :first-child { font-size: 25px; } }
+.live, .badge { font-size: 12px; padding: 5px 12px; border-radius: 24px; }
+.live { color: #b9efdf; background: #83d6c017; &::before { content: ''; display: inline-block; width: 6px; height: 6px; background: #8de3c8; border-radius: 50%; margin-right: 7px; } }
+.badge { background: #e8eff7; color: #607a99; }
+.orbit, .visual { height: 140px; position: relative; display: flex; align-items: center; justify-content: center; }
+.orbit { i { position: absolute; width: 150px; height: 65px; border: 1px solid #71aeef88; border-radius: 50%; transform: rotate(-30deg); animation: orbit 16s linear infinite; } i:nth-child(2) { animation-delay: -5s; } i:nth-child(3) { animation-delay: -10s; } b { font-size: 25px; letter-spacing: 3px; text-shadow: 0 0 24px #7cbcff; } }
+.pending { background: #ffffffb8; color: #4b7199; }
+.annotation { width: 100px; height: 80px; border: 1px solid #96b7d9; border-radius: 8px; position: relative; transform: rotate(-8deg); span { position: absolute; width: 40px; height: 38px; border: 1px solid #639acf; background: #609ddd12; top: 18px; left: 18px; } span:nth-child(2) { width: 24px; height: 28px; left: 65px; top: 40px; } span:nth-child(3) { width: 32px; height: 2px; left: 20px; top: 64px; } }
+.shield { font-size: 86px; color: #87a8ce; filter: drop-shadow(0 8px 12px #8cafd640); }
+.cardBody { small { font-size: 10px; letter-spacing: 2.5px; font-weight: 600; } h2 { font-size: clamp(22px, 2vw, 28px); color: var(--navy); margin: 12px 0; font-weight: 650; } p { font-size: 14px; line-height: 1.9; color: #647b94; margin: 0 0 28px; } }
+.cardBottom { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-top: auto; padding-top: 20px; border-top: 1px solid #dce7f1; font-size: 14px; > :last-child { font-size: 12px; } }
+.footer { max-width: 1360px; margin: auto; font-size: 12px; color: #71849c; letter-spacing: 1px; }
+.page a:focus-visible, .account:focus-visible { outline: 3px solid #3989e9; outline-offset: 5px; }
+@keyframes orbit { to { transform: rotate(330deg); } }
+@keyframes drift { to { transform: translate(15%, 12%); } }
+@media (max-width: 900px) { .grid { grid-template-columns: 1fr; } .content { margin-top: 40px; } .card { padding: 24px; } .orbit, .visual { height: 110px; } .page { padding: 24px; } .footer { flex-wrap: wrap; } }
+@media (prefers-reduced-motion: reduce) { .glow, .orbit i { animation: none; } .card { transition: none; } }

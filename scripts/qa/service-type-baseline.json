@@ -1,0 +1,17 @@
+{
+  "src/services/ant-design-pro/api.ts": 8,
+  "src/services/ant-design-pro/login.ts": 1,
+  "src/services/ant-design-pro/typings.d.ts": 1,
+  "src/services/files.ts": 4,
+  "src/services/mlflow.ts": 3,
+  "src/services/pointcloud.ts": 3,
+  "src/services/system/config.ts": 4,
+  "src/services/system/user.ts": 2,
+  "src/services/trainingCode/adminWorkspace.ts": 20,
+  "src/services/trainingCode/assets.ts": 41,
+  "src/services/trainingCode/display.ts": 2,
+  "src/services/trainingCode/inventory.ts": 6,
+  "src/services/trainingCode/preview.ts": 9,
+  "src/services/trainingCode/v2Content.ts": 2,
+  "src/services/trainingCode/workspace.ts": 21
+}

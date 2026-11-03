@@ -1,0 +1,38 @@
+name: Frontend TypeScript Gate
+
+on:
+  pull_request:
+    branches:
+      - frontend-dev
+      - frontend-gpu
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  typecheck:
+    name: TypeScript typecheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Generate Umi types
+        run: npm run postinstall
+
+      - name: Run TypeScript typecheck
+        run: npm run tsc
+
+      - name: Check governed service and read-hook boundaries
+        run: npm run lint:governance

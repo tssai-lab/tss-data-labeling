@@ -1,0 +1,45 @@
+.page { min-height: 100vh; background: #edf3fa; color: #112d52; font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif; padding: 24px; }
+.header { position: sticky; top: 0; z-index: 20; display: flex; justify-content: space-between; align-items: center; gap: 24px; margin: -24px -24px 20px; padding: 20px 28px; background: #fff; border-bottom: 3px solid #112d52; box-shadow: 0 4px 16px #112d5208; }
+.identity { display: flex; align-items: center; gap: 28px; min-width: 0; }
+.platformTitle { border-left: 1px solid #dce5f0; padding-left: 28px; h1 { font-size: 24px; line-height: 1.4; color: #112d52; margin: 0 0 6px; font-weight: 650; } > span { font-size: 12px; color: #607a99; } }
+.headerTools { display: flex; flex-direction: column; align-items: flex-end; gap: 14px; flex: 0 0 auto; }
+.backLink { color: #607a99; font-size: 12px; &:hover { color: #2878dc; } &:focus-visible { outline: 2px solid #2878dc; outline-offset: 4px; } }
+.actions { display: flex; gap: 10px; flex-wrap: wrap; }
+.notice { display: flex; justify-content: space-between; gap: 12px; padding: 12px 16px; background: #e1ecfa; color: #486887; margin: 12px 0 20px; font-size: 13px; flex-wrap: wrap; }
+.workspace { display: grid; grid-template-columns: 220px minmax(0, 1fr) 260px; gap: 16px; min-height: 72vh; }
+.sidebar, .inspector, .center { background: #fff; border: 1px solid #dce5f0; border-radius: 10px; min-width: 0; }
+.sidebar, .inspector { padding: 20px; h2 { font-size: 17px; color: #112d52; } p { color: #607a99; font-size: 12px; line-height: 1.8; } }
+.sidebar h2 span { float: right; font-weight: 400; }
+.files { max-height: 65vh; overflow: auto; button { text-align: left; display: block; width: 100%; border: 1px solid transparent; border-bottom-color: #edf3fa; padding: 14px 10px; background: white; cursor: pointer; border-radius: 6px; color: #112d52; } strong { display: block; margin: 6px 0; overflow-wrap: anywhere; } small, span { color: #607a99; font-size: 11px; } button.selected { background: #edf5ff; border-color: #8eb9ed; } }
+.toolbar { display: flex; justify-content: space-between; gap: 16px; padding: 20px 24px; border-bottom: 1px solid #edf3fa; align-items: center; h2 { font-size: 18px; overflow-wrap: anywhere; margin: 0; } p { font-size: 12px; color: #607a99; margin-bottom: 0; } :global(.ant-select) { min-width: 130px; } }
+.canvas { padding: 24px; svg { display: block; width: 100%; max-height: 60vh; background: #f4f7fb; cursor: crosshair; } p { font-size: 12px; color: #607a99; } }
+.axis { display: flex; justify-content: space-between; font-size: 11px; color: #607a99; padding: 10px 0; }
+.inspector { label { display: block; font-size: 13px; margin-bottom: 10px; } :global(.ant-input), > :global(.ant-btn) { margin-bottom: 12px; } }
+.marks { max-height: 40vh; overflow: auto; > div { border-left: 3px solid #e38b23; padding: 10px 12px; background: #f8fbff; margin: 12px 0; overflow-wrap: anywhere; } button { border: 0; color: #8d4e15; background: none; padding: 0; cursor: pointer; font-size: 12px; } }
+.range { display: flex; flex-wrap: wrap; gap: 8px; input { width: 46%; min-width: 0; border: 1px solid #ced9e6; border-radius: 5px; padding: 7px; } }
+.empty { padding: 80px 30px; text-align: center; > span { color: #2878dc; letter-spacing: 3px; font-size: 12px; } h2 { font-size: 24px; margin: 24px 0; color: #112d52; } p { color: #607a99; font-size: 13px; line-height: 1.8; } }
+.page button:focus-visible, .page input:focus-visible { outline: 2px solid #2878dc; outline-offset: 3px; }
+@media (max-width: 1100px) { .workspace { grid-template-columns: 180px minmax(0, 1fr); } .inspector { grid-column: 1 / -1; } }
+@media (max-width: 650px) { .page { padding: 12px; } .header { align-items: flex-start; flex-direction: column; } .workspace { grid-template-columns: 1fr; } .files { max-height: 180px; } .toolbar { flex-wrap: wrap; } .canvas { padding: 12px; } }
+
+.university { display: flex; align-items: center; gap: 16px; flex: 0 0 auto; }
+.universityEmblem { width: 88px; height: 88px; object-fit: contain; flex: 0 0 auto; }
+.universityName { display: flex; flex-direction: column; gap: 6px; strong { font-family: 'STKaiti', 'KaiTi', 'Microsoft YaHei', serif; font-size: 32px; letter-spacing: 4px; color: #112d52; white-space: nowrap; } span { color: #486887; font-size: 9px; letter-spacing: 1.4px; white-space: nowrap; } }
+@media (max-width: 1200px) { .header { flex-wrap: wrap; } .headerTools { width: 100%; flex-direction: row; align-items: center; justify-content: space-between; } }
+@media (max-width: 650px) {
+  .header { position: relative; margin: -12px -12px 16px; padding: 18px 16px; gap: 18px; }
+  .identity { flex-wrap: wrap; gap: 16px; width: 100%; }
+  .universityEmblem { width: 72px; height: 72px; }
+  .universityName strong { font-size: 30px; }
+  .platformTitle { width: 100%; border-left: 0; border-top: 1px solid #dce5f0; padding: 14px 0 0; h1 { font-size: 21px; } }
+  .headerTools { align-items: flex-start; flex-direction: column; gap: 12px; }
+  .actions { gap: 8px; }
+}
+
+.dataSource { display: flex; flex-wrap: wrap; gap: 10px 24px; padding: 18px 4px 0; color: #607a99; font-size: 12px; a { color: #2878dc; } }
+
+.inspector > :global(.ant-select) { width: 100%; margin-bottom: 14px; }
+.labelPreview { padding: 12px; margin-bottom: 14px; background: #edf5ff; border-left: 3px solid #2878dc; overflow-wrap: anywhere; small { display: block; color: #607a99; margin-bottom: 6px; } strong { font-size: 13px; color: #112d52; } }
+
+.marks > .selectedMark { border-left-color: #2878dc; background: #edf5ff; outline: 1px solid #90b9eb; }
+.marks .selectMark { display: block; text-align: left; width: 100%; color: #112d52; span { display: block; color: #2878dc; font-size: 11px; margin-top: 5px; } }

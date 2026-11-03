@@ -1,0 +1,5 @@
+/** 兼容入口：页面继续从这里导入；修改实现请到 dataset/ 对应职责模块。 */
+export { createDatasetAsset, listDatasetAssets, getDatasetAsset, deleteDatasetAsset, createDatasetVersion, listDatasetVersions, getDatasetVersion, updateDatasetVersion, switchDatasetCurrentVersion, updateDatasetVersionStatus, deleteDatasetVersion, downloadDatasetVersion, deleteDataset } from './dataset/assets';
+export { resolveDatasetVersionId, getDatasetList, fetchDatasetList, fetchTrainingDatasetCandidates, fetchAllDatasetList, fetchDatasetDetail } from './dataset/catalog';
+export { datasetUploadInit, datasetUploadChunk, datasetUploadProgress, datasetUploadComplete, calcUploadPercent, waitDatasetUploadSettled, datasetUploadCompleteWithPolling, datasetUploadFolder, uploadDataset } from './dataset/uploads';
+export type { TaskType, DatasetType, CvTaskType, AnnotationFormat, DatasetAsset, DatasetVersion, DatasetListItem, DatasetListQuery, MultimodalSampleGrouping, DatasetUploadInitParams, DatasetUploadProgress, DatasetUploadCompleteResult, DatasetFolderUploadParams, DatasetDeleteResult, DatasetVersionLifecycleStatus, UploadDatasetCompatParams } from './dataset/types';

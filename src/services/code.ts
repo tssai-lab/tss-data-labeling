@@ -1,0 +1,11 @@
+/** 训练代码服务兼容入口。按职责拆分，保留原导出及请求契约；维护索引见 docs/code-governance-sop.md。 */
+export { CONSISTENCY_TRAINING_PROFILE } from './trainingCode/types';
+export type { CodeUploadResult, CodeVersionApprovalResult, CodeVersionListItem, CodeVersionTrainingCheckResult, CodeVersionDetail, CodeVersionPreviewBundle, SaveCodeVersionFileResult, AdminCodeWorkspaceSaveResult, AdminCodeWorkspacePublishResult } from './trainingCode/types';
+export { uploadCodeZip, deleteCodeAsset, downloadCodeVersionZip, updateCodeAssetMeta, listCodeAssetVersions, deprecateCodeVersion, archiveCodeVersion, upgradeCodeArtifact, fetchAdminCodeFindings, rescanCodeReviewTask, downloadAdminCodeVersionFile, validateAdminCodeVersionById, deprecateAdminCodeVersionById, archiveAdminCodeVersionById, listCodeAssets, getAdminCodeReviewDetail, listAdminCodeReviewFiles, previewAdminCodeReviewFile, downloadCodeVersionSingleFile, validateCodeVersionExplicit, downloadAdminCodeVersionZipById } from './trainingCode/assets';
+export { normalizeCodeApprovalStatus } from './trainingCode/common';
+export { fetchCodeVersionList, fetchApprovedCodeVersions, fetchOwnerCodeVersionInventory, fetchPendingCodeReviewTasks } from './trainingCode/inventory';
+export { decideCodeVersion, approveCodeVersion, autoApproveCodeVersionIfEnabled, rejectCodeVersion, revokeCodeVersion, checkCodeVersionForTraining } from './trainingCode/approval';
+export { getCodeUserDisplayName } from './trainingCode/display';
+export { getCodeVersionDetail, listCodeVersionFiles, previewCodeVersionFile, fetchCodeVersionCodePreview, fetchCodeEditablePreview, previewCodeEditableFile } from './trainingCode/preview';
+export { saveCodeVersionFileAndPublish, publishCodeWorkspaceDraft, createCodeWorkspaceFile, deleteCodeWorkspaceFile, moveCodeWorkspaceFile, abandonCodeWorkspace, validateCodeWorkspaceDraft, downloadCodeWorkspaceFile } from './trainingCode/workspace';
+export { saveAdminCodeWorkspaceFile, publishAdminCodeWorkspaceDraft, abandonAdminCodeWorkspaceDraft, removeAdminCodeWorkspaceFile, ensureAdminCodeAssetWorkspace, createAdminCodeWorkspaceFile, moveAdminCodeWorkspaceFileByPath, validateAdminCodeWorkspaceDraft, downloadAdminCodeWorkspaceFile } from './trainingCode/adminWorkspace';
