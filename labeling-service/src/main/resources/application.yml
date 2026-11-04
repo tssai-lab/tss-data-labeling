@@ -1,0 +1,31 @@
+spring:
+  application:
+    name: tss-labeling-service
+  datasource:
+    url: ${LABELING_DATABASE_URL:jdbc:postgresql://127.0.0.1:5433/tss_labeling?currentSchema=labeling}
+    username: ${LABELING_DATABASE_USERNAME:tss_labeling_app}
+    password: ${LABELING_DATABASE_PASSWORD}
+    hikari:
+      maximum-pool-size: 5
+      connection-timeout: 5000
+  flyway:
+    enabled: true
+    url: ${spring.datasource.url}
+    user: ${LABELING_MIGRATION_USERNAME:tss_labeling_owner}
+    password: ${LABELING_MIGRATION_PASSWORD}
+    default-schema: labeling
+    schemas: labeling
+    locations: classpath:db/migration
+    # 专用库必须从明确的迁移历史开始，不自动接管已有业务表。
+    baseline-on-migrate: false
+    validate-on-migrate: true
+    clean-disabled: true
+
+server:
+  # 第一轮本地开发仅允许本机访问，端口可通过环境变量调整。
+  address: ${LABELING_BIND_ADDRESS:127.0.0.1}
+  port: ${LABELING_PORT:8082}
+
+labeling:
+  identity:
+    base-url: ${LABELING_IDENTITY_BASE_URL:http://127.0.0.1:8080}
