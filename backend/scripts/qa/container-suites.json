@@ -1,0 +1,13 @@
+[
+  "com.tss.platform.integration.CodeAssetMinioContainerTest",
+  "com.tss.platform.integration.CodeAssetPostgresContainerTest",
+  "com.tss.platform.integration.CodeAssetPublishIntegrationTest",
+  "com.tss.platform.integration.SaTokenRedisPersistenceContainerTest",
+  "com.tss.platform.integration.DatasetWorkspaceUploadIntegrationTest",
+  "com.tss.platform.repository.CatalogKeywordPostgresRepositoryTest",
+  "com.tss.platform.repository.AssetNameAndAbandonedVersionPostgresRepositoryTest",
+  "com.tss.platform.repository.DatasetUploadFailurePostgresRepositoryTest",
+  "com.tss.platform.repository.TrainingMaintenancePostgresTest",
+  "com.tss.platform.persistence.DatasetCatalogReadinessPostgresContainerTest",
+  "com.tss.platform.service.DatasetWorkspaceMinioContainerTest"
+]

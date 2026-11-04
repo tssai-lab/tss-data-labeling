@@ -1,0 +1,136 @@
+schemaVersion: tss.training.plan/v1
+id: yolo_object_detection
+version: v1
+displayName: YOLO object detection training
+description: Train an uploaded YOLO weight with an uploaded YOLO dataset and approved code.
+enabled: false
+unavailableReason: GPU Worker 新镜像摘要和单卡实机验收尚未完成，暂不允许发起。
+trainingModes: [FROM_SCRATCH, FULL_FINETUNE]
+
+execution:
+  interpreter: python
+  entrypoint: train.py
+  arguments:
+    - --model-dir
+    - ${MODEL_DIR}
+    - --data-dir
+    - ${DATA_DIR}
+    - --output-dir
+    - ${OUTPUT_DIR}
+    - --params-file
+    - ${PARAMS_FILE}
+    - --device
+    - ${DEVICE}
+
+inputs:
+  model:
+    required: true
+    consumed: true
+    formats: [WEIGHT_ARCHIVE]
+    taskTypes: [CV]
+    requiredEntries: [yolo11n.pt]
+    formatGuide: |
+      压缩包内需包含 YOLO 预训练权重文件（.pt）。
+      例如：yolo11n.pt
+  dataset:
+    required: true
+    taskTypes: [CV]
+    cvTaskTypes: [OBJECT_DETECTION]
+    annotationFormats: [YOLO]
+    requiredEntries: [data.yaml]
+    formatGuide: |
+      压缩包内需包含 YOLO 格式数据集，至少包含 data.yaml 配置文件。
+      常见结构：
+        data.yaml          （train/val/test 路径与类别配置）
+        images/
+          train/  *.jpg
+          val/    *.jpg
+          test/   *.jpg
+        labels/
+          train/  *.txt    （每行：class x_center y_center width height）
+          val/    *.txt
+          test/   *.txt
+  code:
+    required: true
+    approvalRequired: true
+    runtime: PYTHON3
+
+parameters:
+  - name: epochs
+    displayName: Epochs
+    type: INTEGER
+    required: false
+    defaultValue: 3
+    minimum: 1
+    maximum: 1000
+  - name: batch
+    displayName: Batch size
+    type: INTEGER
+    required: false
+    defaultValue: 4
+    minimum: 1
+    maximum: 256
+  - name: imgsz
+    displayName: Image size
+    type: INTEGER
+    required: false
+    defaultValue: 640
+    minimum: 32
+    maximum: 4096
+  - name: learningRate
+    displayName: Learning rate
+    type: NUMBER
+    required: false
+    defaultValue: 0.001
+    minimum: 0.000001
+    maximum: 1
+
+runtimes:
+  - id: cv-gpu
+    deviceType: NVIDIA_GPU
+    image: crpi-s1uie3z8n3mbqf6y.cn-shanghai.personal.cr.aliyuncs.com/tss-platform/tss-cv-worker:latest
+    imagePullPolicy: IfNotPresent
+    productionDigestRequired: true
+    resourceProfiles:
+      - id: gpu-1-small
+        cpuRequest: "2"
+        cpuLimit: "8"
+        memoryRequest: 8Gi
+        memoryLimit: 32Gi
+        ephemeralStorageLimit: 50Gi
+        gpuCount: 1
+        nodeSelector:
+          tss.ai/accelerator: nvidia
+
+outputs:
+  progressProtocol: TSS_EVENT_JSONL_V1
+  metricsPath: metrics.json
+  logPath: train.log
+  artifacts:
+    - path: best.pt
+      role: PRIMARY_MODEL
+      required: true
+      format: YOLO_PT
+      publishAsModel: true
+    - path: last.pt
+      role: CHECKPOINT
+      required: true
+      format: YOLO_PT
+      publishAsModel: false
+    - path: metrics.json
+      role: METRICS
+      required: true
+      format: JSON
+      publishAsModel: false
+    - path: train.log
+      role: LOG
+      required: true
+      format: TEXT
+      publishAsModel: false
+
+security:
+  networkPolicy: PLATFORM_SERVICES_ONLY
+  runAsNonRoot: true
+  allowPrivilegeEscalation: false
+  automountServiceAccountToken: false
+  maxRuntimeSeconds: 28800

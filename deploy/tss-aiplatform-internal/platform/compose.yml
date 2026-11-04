@@ -1,0 +1,180 @@
+name: tss-aiplatform-internal
+
+services:
+  postgres:
+    image: ${TSS_POSTGRES_IMAGE:?TSS_POSTGRES_IMAGE is required}
+    container_name: tss-aiplatform-internal-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${TSS_POSTGRES_DB:?TSS_POSTGRES_DB is required}
+      POSTGRES_USER: ${TSS_POSTGRES_USER:?TSS_POSTGRES_USER is required}
+      POSTGRES_PASSWORD: ${TSS_POSTGRES_PASSWORD:?TSS_POSTGRES_PASSWORD is required}
+    ports:
+      - "127.0.0.1:${TSS_POSTGRES_PORT:?TSS_POSTGRES_PORT is required}:5432"
+    volumes:
+      - ${TSS_PLATFORM_ROOT:?TSS_PLATFORM_ROOT is required}/data/postgres:/var/lib/postgresql/data
+      - ${TSS_REPOSITORY_ROOT:?TSS_REPOSITORY_ROOT is required}/backend/src/main/resources/db/module1-schema-postgresql.sql:/docker-entrypoint-initdb.d/001-module1.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB && psql -U $$POSTGRES_USER -d $$POSTGRES_DB -Atqc 'SELECT 1' >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    cpus: 1.0
+    mem_limit: 2g
+    pids_limit: 256
+    security_opt:
+      - no-new-privileges=true
+
+  minio:
+    image: ${TSS_MINIO_IMAGE:?TSS_MINIO_IMAGE is required}
+    container_name: tss-aiplatform-internal-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9011"
+    environment:
+      MINIO_ROOT_USER: ${TSS_MINIO_ROOT_USER:?TSS_MINIO_ROOT_USER is required}
+      MINIO_ROOT_PASSWORD: ${TSS_MINIO_ROOT_PASSWORD:?TSS_MINIO_ROOT_PASSWORD is required}
+    ports:
+      - "${TSS_PLATFORM_BIND_IP:?TSS_PLATFORM_BIND_IP is required}:${TSS_MINIO_API_PORT:?TSS_MINIO_API_PORT is required}:9000"
+      - "127.0.0.1:${TSS_MINIO_CONSOLE_PORT:?TSS_MINIO_CONSOLE_PORT is required}:9011"
+    volumes:
+      - ${TSS_PLATFORM_ROOT}/data/minio:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    cpus: 1.0
+    mem_limit: 1g
+    pids_limit: 256
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges=true
+
+  redis:
+    image: ${TSS_REDIS_IMAGE:?TSS_REDIS_IMAGE is required}
+    container_name: tss-aiplatform-internal-redis
+    pull_policy: never
+    restart: unless-stopped
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --appendfsync
+      - everysec
+      - --maxmemory
+      - 192mb
+      - --maxmemory-policy
+      - noeviction
+    ports:
+      - "127.0.0.1:${TSS_REDIS_PORT:?TSS_REDIS_PORT is required}:6379"
+    volumes:
+      - ${TSS_PLATFORM_ROOT}/data/redis:/data
+    user: "999:1000"
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+    cpus: 0.25
+    mem_limit: 256m
+    pids_limit: 64
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges=true
+
+  mlflow:
+    image: ${TSS_MLFLOW_IMAGE:?TSS_MLFLOW_IMAGE is required}
+    container_name: tss-aiplatform-internal-mlflow
+    restart: unless-stopped
+    ports:
+      - "${TSS_PLATFORM_BIND_IP}:${TSS_MLFLOW_PORT:?TSS_MLFLOW_PORT is required}:5000"
+    volumes:
+      - ${TSS_PLATFORM_ROOT}/data/mlflow:/mlflow
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/', timeout=3).read()
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    cpus: 0.5
+    mem_limit: 512m
+    pids_limit: 128
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges=true
+
+  backend:
+    image: ${TSS_BACKEND_IMAGE:?TSS_BACKEND_IMAGE is required}
+    container_name: tss-aiplatform-internal-backend
+    network_mode: host
+    group_add:
+      - "0"
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      mlflow:
+        condition: service_healthy
+    environment:
+      SERVER_ADDRESS: ${TSS_PLATFORM_BIND_IP}
+      SERVER_PORT: ${TSS_BACKEND_PORT:?TSS_BACKEND_PORT is required}
+      SPRING_PROFILES_ACTIVE: default
+      SPRING_DATASOURCE_URL: jdbc:postgresql://127.0.0.1:${TSS_POSTGRES_PORT}/${TSS_POSTGRES_DB}
+      SPRING_DATASOURCE_USERNAME: ${TSS_POSTGRES_USER}
+      SPRING_DATASOURCE_PASSWORD: ${TSS_POSTGRES_PASSWORD}
+      AUTH_SESSION_STORE: redis
+      SPRING_DATA_REDIS_HOST: 127.0.0.1
+      SPRING_DATA_REDIS_PORT: ${TSS_REDIS_PORT}
+      MINIO_ENDPOINT: http://${TSS_PLATFORM_BIND_IP}:${TSS_MINIO_API_PORT}
+      MINIO_ACCESS_KEY: ${TSS_MINIO_ROOT_USER}
+      MINIO_SECRET_KEY: ${TSS_MINIO_ROOT_PASSWORD}
+      MINIO_BUCKET: models
+      APP_CORS_ALLOWED_ORIGIN_PATTERNS: ${TSS_CORS_ALLOWED_ORIGIN_PATTERNS}
+      TRAINING_MLFLOW_ENABLED: "true"
+      TRAINING_MLFLOW_TRACKING_URI: http://${TSS_PLATFORM_BIND_IP}:${TSS_MLFLOW_PORT}
+      TRAINING_K8S_ENABLED: "true"
+      TRAINING_K8S_CLIENT_MODE: ${TSS_K8S_CLIENT_MODE:-fabric8}
+      TRAINING_K8S_AUTO_CREATE: "false"
+      TRAINING_K8S_VERIFY_ON_STARTUP: "true"
+      TRAINING_K8S_FALLBACK_TO_LOCAL: "false"
+      TRAINING_K8S_CLUSTER_NAME: tss-aiplatform-internal
+      TRAINING_K8S_NAMESPACE: tss-training
+      TRAINING_K8S_SERVICE_ACCOUNT: tss-training-worker
+      TRAINING_K8S_EXACT_GPU_SELECTION_ENABLED: "${TSS_EXACT_GPU_SELECTION_ENABLED:-false}"
+      TRAINING_K8S_GPU_DEVICE_CLASS_NAME: ${TSS_GPU_DEVICE_CLASS_NAME:-gpu.nvidia.com}
+      TRAINING_K8S_PROJECT_ROOT: /opt/tss-platform
+      TRAINING_K8S_KUBECONFIG: /opt/tss-platform/k8s/backend.kubeconfig
+      TRAINING_K8S_KUBECTL_PATH: /opt/tss-platform/.tools/bin/kubectl
+      TRAINING_K8S_VERIFY_SCRIPT: /opt/tss-platform/backend/scripts/k8s/verify-internal-kubeadm.sh
+      TRAINING_K8S_INTERNAL_CALLBACK_TOKEN: ${TSS_INTERNAL_CALLBACK_TOKEN:?TSS_INTERNAL_CALLBACK_TOKEN is required}
+      TRAINING_K8S_BACKEND_SERVICE_URL: http://tss-backend:8080
+      TRAINING_K8S_MINIO_SERVICE_URL: http://tss-minio:9000
+      TRAINING_K8S_MLFLOW_SERVICE_URL: http://tss-mlflow:5000
+      INFERENCE_KUBERNETES_MODEL_CACHE_ENABLED: "false"
+      INFERENCE_KUBERNETES_GPU_WORKER_IMAGE: ${TSS_GPU_INFERENCE_WORKER_IMAGE:-crpi-s1uie3z8n3mbqf6y.cn-shanghai.personal.cr.aliyuncs.com/tss-platform/tss-inference-worker-gpu@sha256:7354987c572dfca03f027442cbd034483f4c915eecf1e4df139e01b35b33c114}
+    volumes:
+      - ${TSS_PLATFORM_ROOT}/logs/backend:/app/logs
+      - ${TSS_PLATFORM_ROOT}/config/backend.kubeconfig:/opt/tss-platform/k8s/backend.kubeconfig:ro
+      - ${TSS_KUBECTL_PATH:?TSS_KUBECTL_PATH is required}:/opt/tss-platform/.tools/bin/kubectl:ro
+      - ${TSS_REPOSITORY_ROOT}/deploy/tss-aiplatform-internal/platform/scripts/verify-internal-kubeadm.sh:/opt/tss-platform/backend/scripts/k8s/verify-internal-kubeadm.sh:ro
+    cpus: 1.0
+    mem_limit: 1536m
+    pids_limit: 256
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges=true

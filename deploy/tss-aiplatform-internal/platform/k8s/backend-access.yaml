@@ -1,0 +1,106 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: tss-backend
+  namespace: tss-training
+  labels:
+    app.kubernetes.io/name: tss-backend
+    app.kubernetes.io/part-of: tss-platform
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: tss-backend-access-token
+  namespace: tss-training
+  annotations:
+    kubernetes.io/service-account.name: tss-backend
+type: kubernetes.io/service-account-token
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: tss-backend-training-controller
+  namespace: tss-training
+rules:
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["resource.k8s.io"]
+    resources: ["resourceclaimtemplates"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["resourcequotas"]
+    resourceNames: ["tss-training-quota"]
+    verbs: ["get", "patch"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["tss-model-cache-policy"]
+    verbs: ["get", "update", "patch", "delete"]
+  # Kubernetes authorization cannot restrict a create request by resourceName.
+  # The backend needs create only for the single policy name enforced in code.
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: tss-backend-training-controller
+  namespace: tss-training
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: tss-backend-training-controller
+subjects:
+  - kind: ServiceAccount
+    name: tss-backend
+    namespace: tss-training
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: tss-aiplatform-internal-backend-observer
+rules:
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["nodes/proxy"]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["metrics.k8s.io"]
+    resources: ["nodes"]
+    verbs: ["get", "list"]
+  # 精确选卡启动检查只读 DRA 设备目录，不允许后端修改集群级设备对象。
+  - apiGroups: ["resource.k8s.io"]
+    resources: ["deviceclasses", "resourceslices"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    resourceNames: ["tss-training"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: tss-aiplatform-internal-backend-observer
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: tss-aiplatform-internal-backend-observer
+subjects:
+  - kind: ServiceAccount
+    name: tss-backend
+    namespace: tss-training

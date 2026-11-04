@@ -1,0 +1,19 @@
+package com.tss.platform.training.plan;
+
+/** Stable codes used by preview APIs, the UI and the user manual. */
+public enum TrainingPlanErrorCode {
+    YAML_EMPTY,
+    YAML_TOO_LARGE,
+    YAML_BOM_NOT_ALLOWED,
+    YAML_INVALID_UTF8,
+    YAML_MULTIPLE_DOCUMENTS,
+    YAML_ALIAS_NOT_ALLOWED,
+    YAML_TAG_NOT_ALLOWED,
+    YAML_PARSE_ERROR,
+    PLAN_SCHEMA_UNSUPPORTED,
+    PLAN_FIELD_INVALID,
+    PLAN_SPEC_UNKNOWN,
+    PLAN_SPEC_KIND_MISMATCH,
+    PLAN_SPEC_NOT_TRAINING_READY,
+    PLAN_SECURITY_POLICY_VIOLATION
+}

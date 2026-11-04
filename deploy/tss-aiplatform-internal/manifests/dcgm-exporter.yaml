@@ -1,0 +1,85 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: tss-dcgm-exporter
+  namespace: kube-system
+  labels:
+    app.kubernetes.io/name: dcgm-exporter
+    app.kubernetes.io/part-of: tss-aiplatform
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: dcgm-exporter
+      app.kubernetes.io/part-of: tss-aiplatform
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: dcgm-exporter
+        app.kubernetes.io/part-of: tss-aiplatform
+    spec:
+      automountServiceAccountToken: false
+      runtimeClassName: nvidia
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      nodeSelector:
+        kubernetes.io/os: linux
+        tss.ai/accelerator: nvidia
+      tolerations:
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
+      containers:
+        - name: dcgm-exporter
+          image: nvcr.io/nvidia/k8s/dcgm-exporter:4.5.3-4.8.2-distroless
+          imagePullPolicy: Never
+          args:
+            - --address=$(HOST_IP):9400
+          env:
+            - name: HOST_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.hostIP
+            - name: DCGM_EXPORTER_KUBERNETES
+              value: "false"
+            # The upstream startup validator exits without diagnostics on the
+            # reviewed GeForce node. The installer replaces it with an exact
+            # live-metric contract check after rollout.
+            - name: DISABLE_STARTUP_VALIDATE
+              value: "true"
+          ports:
+            - name: metrics
+              containerPort: 9400
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /metrics
+              port: metrics
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /metrics
+              port: metrics
+            initialDelaySeconds: 20
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 200m
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+              add:
+                - SYS_ADMIN
+            runAsNonRoot: false
+            runAsUser: 0
+      terminationGracePeriodSeconds: 10

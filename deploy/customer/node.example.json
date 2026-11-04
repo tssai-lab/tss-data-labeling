@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "cluster_name": "tss-customer",
+  "node_name": "ai-node-01",
+  "role": "control-compute",
+  "node_ip": "192.0.2.10",
+  "control_plane_endpoint": "192.0.2.10:6443",
+  "pod_cidr": "10.245.0.0/16",
+  "service_cidr": "10.97.0.0/16",
+  "data_root": "/srv/tss-AIplatform",
+  "source_root": "/srv/tss-AIplatform/source",
+  "etcd_data_dir": "/srv/tss-AIplatform/etcd",
+  "containerd_config_version": 3,
+  "gpu_enabled": true,
+  "reserved": {
+    "system_cpu_millis": 5000,
+    "system_memory_mib": 8192,
+    "kube_cpu_millis": 1000,
+    "kube_memory_mib": 2048
+  },
+  "ports": {
+    "frontend": 18081,
+    "backend": 18080,
+    "postgres": 15432,
+    "redis": 16379,
+    "minio": 19010,
+    "minio_console": 19011,
+    "mlflow": 15000
+  }
+}

@@ -1,0 +1,342 @@
+name: 镜像构建自动部署
+
+on:
+  push:
+    branches:
+      - backend-ops
+    paths:
+      - "deploy/main/mlflow-lite/**"
+      - "k8s/training-worker/**"
+      - "k8s/inference-worker/**"
+      - "deploy/scripts/tss-node-load-inference"
+      - ".github/workflows/runtime-images.yml"
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: Runtime images to build
+        required: true
+        default: all
+        type: choice
+        options:
+          - all
+          - gpu-workers
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: runtime-images-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  mlflow:
+    if: github.event_name != 'workflow_dispatch' || inputs.profile == 'all'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: ./deploy/main/mlflow-lite
+          file: ./deploy/main/mlflow-lite/Dockerfile
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/tss-mlflow-lite:${{ github.sha }}
+          cache-from: type=gha,scope=mlflow-lite
+          cache-to: type=gha,mode=max,scope=mlflow-lite
+
+  training-worker:
+    if: github.event_name != 'workflow_dispatch' || inputs.profile == 'all'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: ./k8s/training-worker
+          file: ./k8s/training-worker/Dockerfile
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/tss-training-worker:${{ github.sha }}
+          cache-from: type=gha,scope=training-worker
+          cache-to: type=gha,mode=max,scope=training-worker
+
+  inference-worker:
+    needs: training-worker
+    if: github.event_name != 'workflow_dispatch' || inputs.profile == 'all'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run inference worker unit tests
+        run: |
+          python3 -m unittest discover -s k8s/inference-worker -p 'test_*.py' -v
+
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/login-action@v3
+        with:
+          registry: crpi-s1uie3z8n3mbqf6y.cn-shanghai.personal.cr.aliyuncs.com
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: ./k8s/inference-worker
+          file: ./k8s/inference-worker/Dockerfile
+          provenance: false
+          push: true
+          build-args: |
+            INFERENCE_BASE_IMAGE=ghcr.io/${{ github.repository_owner }}/tss-training-worker:${{ github.sha }}
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/tss-inference-worker-cpu:${{ github.sha }}
+            ghcr.io/${{ github.repository_owner }}/tss-inference-worker-cpu:latest
+            crpi-s1uie3z8n3mbqf6y.cn-shanghai.personal.cr.aliyuncs.com/tss-platform/tss-inference-worker-cpu:${{ github.sha }}
+            crpi-s1uie3z8n3mbqf6y.cn-shanghai.personal.cr.aliyuncs.com/tss-platform/tss-inference-worker-cpu:latest
+          cache-from: type=gha,scope=inference-worker-cpu
+          cache-to: type=gha,mode=max,scope=inference-worker-cpu
+
+  cv-worker:
+    if: github.event_name != 'workflow_dispatch' || inputs.profile == 'all' || inputs.profile == 'gpu-workers'
+    runs-on: ubuntu-latest
+    outputs:
+      manifest_digest: ${{ steps.build.outputs.digest }}
+      image_id: ${{ steps.build.outputs.imageid }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/login-action@v3
+        with:
+          registry: crpi-s1uie3z8n3mbqf6y.cn-shanghai.personal.cr.aliyuncs.com
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
+      - name: Select immutable and stable tags
+        id: image-tags
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          {
+            echo 'value<<EOF'
+            echo "ghcr.io/${GITHUB_REPOSITORY_OWNER}/tss-cv-worker:${GITHUB_SHA}"
+            echo "crpi-s1uie3z8n3mbqf6y.cn-shanghai.personal.cr.aliyuncs.com/tss-platform/tss-cv-worker:${GITHUB_SHA}"
+            if [[ "$GITHUB_REF" == refs/heads/backend-ops ]]; then
+              echo "ghcr.io/${GITHUB_REPOSITORY_OWNER}/tss-cv-worker:latest"
+              echo "crpi-s1uie3z8n3mbqf6y.cn-shanghai.personal.cr.aliyuncs.com/tss-platform/tss-cv-worker:latest"
+            fi
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
+      - uses: docker/build-push-action@v6
+        id: build
+        with:
+          context: ./k8s/training-worker
+          file: ./k8s/training-worker/Dockerfile.cv
+          provenance: false
+          push: true
+          tags: ${{ steps.image-tags.outputs.value }}
+          cache-from: type=gha,scope=cv-worker
+          cache-to: type=gha,mode=max,scope=cv-worker
+
+  nlp-worker:
+    if: github.event_name != 'workflow_dispatch' || inputs.profile == 'all' || inputs.profile == 'gpu-workers'
+    runs-on: ubuntu-latest
+    outputs:
+      manifest_digest: ${{ steps.build.outputs.digest }}
+      image_id: ${{ steps.build.outputs.imageid }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/login-action@v3
+        with:
+          registry: crpi-s1uie3z8n3mbqf6y.cn-shanghai.personal.cr.aliyuncs.com
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
+      - name: Select immutable and stable tags
+        id: image-tags
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          {
+            echo 'value<<EOF'
+            echo "ghcr.io/${GITHUB_REPOSITORY_OWNER}/tss-nlp-worker:${GITHUB_SHA}"
+            echo "crpi-s1uie3z8n3mbqf6y.cn-shanghai.personal.cr.aliyuncs.com/tss-platform/tss-nlp-worker:${GITHUB_SHA}"
+            if [[ "$GITHUB_REF" == refs/heads/backend-ops ]]; then
+              echo "ghcr.io/${GITHUB_REPOSITORY_OWNER}/tss-nlp-worker:latest"
+              echo "crpi-s1uie3z8n3mbqf6y.cn-shanghai.personal.cr.aliyuncs.com/tss-platform/tss-nlp-worker:latest"
+            fi
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
+      - uses: docker/build-push-action@v6
+        id: build
+        with:
+          context: ./k8s/training-worker
+          file: ./k8s/training-worker/Dockerfile.nlp
+          provenance: false
+          push: true
+          tags: ${{ steps.image-tags.outputs.value }}
+          cache-from: type=gha,scope=nlp-worker
+          cache-to: type=gha,mode=max,scope=nlp-worker
+
+  gpu-inference-worker:
+    name: Build GPU inference worker
+    needs: cv-worker
+    if: github.event_name != 'workflow_dispatch' || inputs.profile == 'all' || inputs.profile == 'gpu-workers'
+    runs-on: ubuntu-latest
+    outputs:
+      manifest_digest: ${{ steps.build.outputs.digest }}
+      image_id: ${{ steps.build.outputs.imageid }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run inference worker unit tests
+        run: python3 -m unittest discover -s k8s/inference-worker -p 'test_*.py' -v
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/login-action@v3
+        with:
+          registry: crpi-s1uie3z8n3mbqf6y.cn-shanghai.personal.cr.aliyuncs.com
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
+      - uses: docker/build-push-action@v6
+        id: build
+        with:
+          context: ./k8s/inference-worker
+          file: ./k8s/inference-worker/Dockerfile.gpu
+          provenance: false
+          push: true
+          build-args: |
+            INFERENCE_GPU_BASE_IMAGE=ghcr.io/${{ github.repository_owner }}/tss-cv-worker@${{ needs.cv-worker.outputs.manifest_digest }}
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/tss-inference-worker-gpu:${{ github.sha }}
+            crpi-s1uie3z8n3mbqf6y.cn-shanghai.personal.cr.aliyuncs.com/tss-platform/tss-inference-worker-gpu:${{ github.sha }}
+          cache-from: type=gha,scope=inference-worker-gpu
+          cache-to: type=gha,mode=max,scope=inference-worker-gpu
+
+  record-gpu-worker-lock:
+    name: Record immutable GPU worker image lock
+    needs:
+      - cv-worker
+      - nlp-worker
+      - gpu-inference-worker
+    if: github.event_name == 'workflow_dispatch' && inputs.profile == 'gpu-workers'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Write and validate immutable image lock
+        env:
+          CV_MANIFEST_DIGEST: ${{ needs.cv-worker.outputs.manifest_digest }}
+          CV_IMAGE_ID: ${{ needs.cv-worker.outputs.image_id }}
+          NLP_MANIFEST_DIGEST: ${{ needs.nlp-worker.outputs.manifest_digest }}
+          NLP_IMAGE_ID: ${{ needs.nlp-worker.outputs.image_id }}
+          GPU_INFERENCE_MANIFEST_DIGEST: ${{ needs.gpu-inference-worker.outputs.manifest_digest }}
+          GPU_INFERENCE_IMAGE_ID: ${{ needs.gpu-inference-worker.outputs.image_id }}
+        run: |
+          set -Eeuo pipefail
+          [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]
+          for value in "$CV_MANIFEST_DIGEST" "$CV_IMAGE_ID" "$NLP_MANIFEST_DIGEST" "$NLP_IMAGE_ID" "$GPU_INFERENCE_MANIFEST_DIGEST" "$GPU_INFERENCE_IMAGE_ID"; do
+            [[ "$value" =~ ^sha256:[0-9a-f]{64}$ ]]
+          done
+          install -d -m 0700 "$RUNNER_TEMP/tss-aiplatform-gpu-runtime-lock"
+          lock="$RUNNER_TEMP/tss-aiplatform-gpu-runtime-lock/gpu-runtime-images.lock"
+          {
+            echo '# source_ref|source_manifest_digest|linux_amd64_image_id|runtime_ref|purpose|producer_run'
+            echo "ghcr.io/${GITHUB_REPOSITORY_OWNER}/tss-cv-worker:${GITHUB_SHA}|${CV_MANIFEST_DIGEST}|${CV_IMAGE_ID}|crpi-s1uie3z8n3mbqf6y.cn-shanghai.personal.cr.aliyuncs.com/tss-platform/tss-cv-worker@${CV_MANIFEST_DIGEST}|cv-gpu-training|${GITHUB_RUN_ID}"
+            echo "ghcr.io/${GITHUB_REPOSITORY_OWNER}/tss-nlp-worker:${GITHUB_SHA}|${NLP_MANIFEST_DIGEST}|${NLP_IMAGE_ID}|crpi-s1uie3z8n3mbqf6y.cn-shanghai.personal.cr.aliyuncs.com/tss-platform/tss-nlp-worker@${NLP_MANIFEST_DIGEST}|nlp-gpu-training|${GITHUB_RUN_ID}"
+            echo "ghcr.io/${GITHUB_REPOSITORY_OWNER}/tss-inference-worker-gpu:${GITHUB_SHA}|${GPU_INFERENCE_MANIFEST_DIGEST}|${GPU_INFERENCE_IMAGE_ID}|crpi-s1uie3z8n3mbqf6y.cn-shanghai.personal.cr.aliyuncs.com/tss-platform/tss-inference-worker-gpu@${GPU_INFERENCE_MANIFEST_DIGEST}|gpu-inference|${GITHUB_RUN_ID}"
+          } > "$lock"
+          test "$(grep -Evc '^(#|$)' "$lock")" -eq 3
+
+      - name: Upload immutable GPU worker image lock
+        uses: actions/upload-artifact@v4
+        with:
+          name: tss-aiplatform-gpu-runtime-lock-${{ github.sha }}
+          path: ${{ runner.temp }}/tss-aiplatform-gpu-runtime-lock/gpu-runtime-images.lock
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Record image build result
+        run: |
+          {
+            echo '### GPU worker images'
+            echo "- Source SHA: \`${GITHUB_SHA}\`"
+            echo '- Built images: CV training, NLP training and GPU inference'
+            echo '- Published tags: immutable commit tags only on non-backend-ops branches'
+            echo '- GPU device plugin and workloads: not enabled'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  deploy-main-inference:
+    name: Deploy and validate Main runtime images
+    needs:
+      - inference-worker
+      - cv-worker
+      - nlp-worker
+    if: >-
+      github.ref == 'refs/heads/backend-ops' &&
+      (github.event_name == 'push' || inputs.profile == 'all')
+    runs-on: ubuntu-latest
+    environment: main
+    concurrency:
+      group: tss-main-runtime
+      cancel-in-progress: false
+    env:
+      DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+      DEPLOY_USER: ${{ vars.DEPLOY_USER }}
+      DEPLOY_KNOWN_HOSTS: ${{ vars.DEPLOY_KNOWN_HOSTS }}
+    steps:
+      - name: Validate deployment configuration
+        run: |
+          test -n "$DEPLOY_HOST"
+          test -n "$DEPLOY_USER"
+          test -n "$DEPLOY_KNOWN_HOSTS"
+          [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]
+
+      - name: Load deployment key
+        uses: webfactory/ssh-agent@v0.9.1
+        with:
+          ssh-private-key: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
+
+      - name: Trust verified target host key
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Log GitHub runner in to Aliyun Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: crpi-s1uie3z8n3mbqf6y.cn-shanghai.personal.cr.aliyuncs.com
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
+
+      - name: Activate runtime images on Main through the private registry
+        run: |
+          image="crpi-s1uie3z8n3mbqf6y.cn-shanghai.personal.cr.aliyuncs.com/tss-platform/tss-inference-worker-cpu:${GITHUB_SHA}"
+          cv_image="crpi-s1uie3z8n3mbqf6y.cn-shanghai.personal.cr.aliyuncs.com/tss-platform/tss-cv-worker:${GITHUB_SHA}"
+          nlp_image="crpi-s1uie3z8n3mbqf6y.cn-shanghai.personal.cr.aliyuncs.com/tss-platform/tss-nlp-worker:${GITHUB_SHA}"
+          docker pull "$image"
+          image_id="$(docker image inspect "$image" --format '{{.Id}}')"
+          ssh -o ServerAliveInterval=30 -o ServerAliveCountMax=20 \
+            "${DEPLOY_USER}@${DEPLOY_HOST}" \
+            "sudo -n /usr/local/sbin/tss-node-load-inference --registry '$image' '$image_id' '$cv_image' '$nlp_image'"

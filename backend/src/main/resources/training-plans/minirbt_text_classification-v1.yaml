@@ -1,0 +1,152 @@
+schemaVersion: tss.training.plan/v2
+id: minirbt_text_classification
+version: v1
+displayName: MiniRBT 中文文本分类（CPU）
+description: 使用离线 MiniRBT-H288 模型和三段 JSONL 数据，在 CPU 上完成小型中文文本分类微调。
+category: NLP
+enabled: true
+trainingModes: [FULL_FINETUNE]
+
+execution:
+  interpreter: python
+  entrypoint: train.py
+  arguments:
+    - --model-dir
+    - "${MODEL_DIR}"
+    - --data-dir
+    - "${DATA_DIR}"
+    - --out-dir
+    - "${OUTPUT_DIR}"
+    - --params-file
+    - "${PARAMS_FILE}"
+    - --device
+    - "${DEVICE}"
+
+inputs:
+  model:
+    required: true
+    consumed: true
+    acceptedSpecIds: [model.nlp.bert-sequence-classification/v1]
+    formatGuide: 模型 ZIP 根目录需包含 model.yaml、config.json、vocab.txt 和 pytorch_model.bin 或 safetensors 权重。
+  dataset:
+    required: true
+    acceptedSpecIds: [dataset.nlp.text-classification-jsonl/v1]
+    formatGuide: 数据集 ZIP 根目录需包含 dataset.json、data/train.jsonl、data/validation.jsonl 和 data/test.jsonl；每行包含 id、text、label。
+  code:
+    required: true
+    approvalRequired: true
+    runtime: PYTHON3
+
+parameters:
+  - name: epochs
+    displayName: 训练轮数
+    type: INTEGER
+    required: false
+    defaultValue: 2
+    minimum: 1
+    maximum: 20
+  - name: batchSize
+    displayName: 批大小
+    type: INTEGER
+    required: false
+    defaultValue: 8
+    minimum: 1
+    maximum: 64
+  - name: lr
+    displayName: 学习率
+    type: NUMBER
+    required: false
+    defaultValue: 0.0001
+    minimum: 0.000001
+    maximum: 0.01
+  - name: weightDecay
+    displayName: 权重衰减
+    type: NUMBER
+    required: false
+    defaultValue: 0.01
+    minimum: 0
+    maximum: 1
+  - name: maxSeqLength
+    displayName: 最大文本长度
+    type: INTEGER
+    required: false
+    defaultValue: 64
+    minimum: 8
+    maximum: 512
+  - name: seed
+    displayName: 随机种子
+    type: INTEGER
+    required: false
+    defaultValue: 42
+    minimum: 0
+    maximum: 2147483647
+  - name: maxTrainSamples
+    displayName: 最大训练样本数
+    type: INTEGER
+    required: false
+    defaultValue: 0
+    minimum: 0
+    maximum: 200000
+  - name: maxEvalSamples
+    displayName: 最大验证/测试样本数
+    type: INTEGER
+    required: false
+    defaultValue: 0
+    minimum: 0
+    maximum: 200000
+
+runtimes:
+  - id: nlp-cpu
+    deviceType: CPU
+    image: crpi-s1uie3z8n3mbqf6y.cn-shanghai.personal.cr.aliyuncs.com/tss-platform/tss-nlp-worker@sha256:cbfd669caf6ce70367b7eb6f0407242f4e537e8863fd26a84826ceb6ff8cc391
+    imagePullPolicy: IfNotPresent
+    productionDigestRequired: true
+    resourceProfiles:
+      - id: cpu-minirbt-small
+        cpuRequest: "1"
+        cpuLimit: "4"
+        memoryRequest: 4Gi
+        memoryLimit: 8Gi
+        ephemeralStorageLimit: 12Gi
+        gpuCount: 0
+        nodeSelector:
+          tss.ai/node-pool: cpu
+
+outputs:
+  progressProtocol: TSS_EVENT_JSONL_V1
+  metricsPath: metrics.json
+  logPath: train.log
+  artifacts:
+    - path: minirbt_text_classifier.zip
+      role: PRIMARY_MODEL
+      required: true
+      format: HF_MODEL_ARCHIVE
+      publishAsModel: true
+      publishedModelSpecId: model.nlp.bert-sequence-classification/v1
+    - path: metrics.json
+      role: METRICS
+      required: true
+      format: JSON
+      publishAsModel: false
+    - path: validation_predictions.csv
+      role: PREDICTIONS
+      required: true
+      format: CSV
+      publishAsModel: false
+    - path: test_predictions.csv
+      role: PREDICTIONS
+      required: true
+      format: CSV
+      publishAsModel: false
+    - path: train.log
+      role: LOG
+      required: true
+      format: TEXT
+      publishAsModel: false
+
+security:
+  networkPolicy: PLATFORM_SERVICES_ONLY
+  runAsNonRoot: true
+  allowPrivilegeEscalation: false
+  automountServiceAccountToken: false
+  maxRuntimeSeconds: 28800

@@ -1,0 +1,44 @@
+# Replace every REPLACE_* value for the target environment. Keep Nginx's own
+# variables (for example $host and $uri) unchanged. Validate with `nginx -t`
+# before installing or reloading Nginx.
+server {
+    listen REPLACE_LISTEN_ADDRESS;
+    server_name REPLACE_SERVER_NAME;
+    client_max_body_size 128m;
+
+    root REPLACE_FRONTEND_ROOT;
+    index index.html;
+
+    location /api/ {
+        proxy_pass REPLACE_BACKEND_ORIGIN;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location /mlflow-api/ {
+        rewrite ^/mlflow-api/(.*) /ajax-api/$1 break;
+        proxy_pass REPLACE_MLFLOW_ORIGIN;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location /v3/api-docs {
+        proxy_pass REPLACE_BACKEND_ORIGIN;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location / {
+        try_files $uri /index.html;
+    }
+
+    location ~* \.(js|css|png|jpg|svg|ico)$ {
+        expires 30d;
+    }
+}

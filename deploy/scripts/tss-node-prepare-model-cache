@@ -1,0 +1,143 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+if [[ $# -gt 1 ]]; then
+  echo "Usage: $0 [node-runtime.env]" >&2
+  exit 2
+fi
+if [[ ${EUID} -ne 0 ]]; then
+  echo "Model cache preparation must run as root on the target physical node." >&2
+  exit 1
+fi
+
+runtime_file="${1:-${TSS_NODE_RUNTIME_ENV:-}}"
+if [[ -n $runtime_file ]]; then
+  if [[ ! -r $runtime_file ]]; then
+    echo "Node runtime configuration is not readable." >&2
+    exit 1
+  fi
+  # shellcheck disable=SC1090
+  source "$runtime_file"
+fi
+
+cache_path="${TSS_MODEL_CACHE_HOST_PATH:-/opt/tss-platform/model-cache}"
+max_bytes="${TSS_MODEL_CACHE_MAX_BYTES:-1073741824}"
+min_free_bytes="${TSS_MODEL_CACHE_MIN_FREE_BYTES:-3221225472}"
+runtime_reserve_bytes="${TSS_MODEL_CACHE_RUNTIME_RESERVE_BYTES:-10737418240}"
+cache_uid="${TSS_MODEL_CACHE_UID:-10001}"
+cache_gid="${TSS_MODEL_CACHE_GID:-10001}"
+
+require_safe_path() {
+  local path="$1" segment
+  local -a segments=()
+  if [[ ! $path =~ ^/[A-Za-z0-9._/-]+$ || $path == / || $path == *"//"* ]]; then
+    echo "Model cache path must be a safe non-root absolute path." >&2
+    return 1
+  fi
+  IFS='/' read -r -a segments <<<"${path#/}"
+  for segment in "${segments[@]}"; do
+    if [[ $segment == "." || $segment == ".." ]]; then
+      echo "Model cache path must not contain dot segments." >&2
+      return 1
+    fi
+  done
+}
+
+require_non_negative_integer() {
+  local label="$1" value="$2"
+  if [[ ! $value =~ ^[0-9]+$ ]]; then
+    echo "$label must be a non-negative integer." >&2
+    return 1
+  fi
+}
+
+require_safe_path "$cache_path"
+for pair in \
+  "TSS_MODEL_CACHE_MAX_BYTES:$max_bytes" \
+  "TSS_MODEL_CACHE_MIN_FREE_BYTES:$min_free_bytes" \
+  "TSS_MODEL_CACHE_RUNTIME_RESERVE_BYTES:$runtime_reserve_bytes" \
+  "TSS_MODEL_CACHE_UID:$cache_uid" \
+  "TSS_MODEL_CACHE_GID:$cache_gid"; do
+  require_non_negative_integer "${pair%%:*}" "${pair#*:}"
+done
+if (( max_bytes == 0 )); then
+  echo "TSS_MODEL_CACHE_MAX_BYTES must be positive." >&2
+  exit 1
+fi
+
+for command_name in df du findmnt install readlink setpriv; do
+  command -v "$command_name" >/dev/null
+done
+
+parent="$cache_path"
+while [[ ! -e $parent && $parent != / ]]; do
+  parent="$(dirname "$parent")"
+done
+if [[ $(readlink -m "$cache_path") != "$cache_path" ]]; then
+  echo "Model cache path must not traverse symbolic links." >&2
+  exit 1
+fi
+for cache_component in \
+  "$cache_path" \
+  "$cache_path/entries" \
+  "$cache_path/locks" \
+  "$cache_path/tmp" \
+  "$cache_path/.tss-model-cache-root" \
+  "$cache_path/capacity.lock"; do
+  if [[ -L $cache_component ]]; then
+    echo "Model cache components must not be symbolic links: $cache_component" >&2
+    exit 1
+  fi
+done
+
+filesystem_type="$(findmnt --noheadings --output FSTYPE --target "$parent" | head -1 | tr -d '[:space:]')"
+case "$filesystem_type" in
+  nfs*|cifs|smb*|fuse.sshfs)
+    echo "Model cache must use node-local storage, not $filesystem_type." >&2
+    exit 1
+    ;;
+esac
+
+install -d -m 0750 -o "$cache_uid" -g "$cache_gid" \
+  "$cache_path" "$cache_path/entries" "$cache_path/locks" "$cache_path/tmp"
+
+sentinel="$cache_path/.tss-model-cache-root"
+if [[ -e $sentinel || -L $sentinel ]]; then
+  if [[ -L $sentinel || ! -f $sentinel || $(<"$sentinel") != "tss-model-cache-v1" ]]; then
+    echo "Existing model cache sentinel is invalid; refusing to reuse the directory." >&2
+    exit 1
+  fi
+else
+  printf 'tss-model-cache-v1\n' >"$sentinel"
+fi
+chown "$cache_uid:$cache_gid" "$sentinel"
+chmod 0640 "$sentinel"
+
+capacity_lock="$cache_path/capacity.lock"
+if [[ -L $capacity_lock || (-e $capacity_lock && ! -f $capacity_lock) ]]; then
+  echo "Existing model cache capacity lock is invalid." >&2
+  exit 1
+fi
+touch "$capacity_lock"
+chown "$cache_uid:$cache_gid" "$capacity_lock"
+chmod 0640 "$capacity_lock"
+
+setpriv --reuid="$cache_uid" --regid="$cache_gid" --clear-groups \
+  sh -ceu 'probe="$1/tmp/.node-write-probe.$$"; umask 077; : >"$probe"; rm -f "$probe"' \
+  sh "$cache_path"
+
+used_bytes="$(du -sb "$cache_path/entries" | awk '{print $1}')"
+available_bytes="$(df -PB1 "$cache_path" | awk 'NR == 2 {print $4}')"
+if (( used_bytes > max_bytes )); then
+  echo "Existing cache usage exceeds the configured maximum." >&2
+  exit 1
+fi
+remaining_cache_bytes=$((max_bytes - used_bytes))
+required_available_bytes=$((remaining_cache_bytes + min_free_bytes + runtime_reserve_bytes))
+if (( available_bytes < required_available_bytes )); then
+  echo "Insufficient node-local disk for cache plus safety reserves: available=$available_bytes required=$required_available_bytes." >&2
+  exit 1
+fi
+
+echo "Model cache directory prepared: path=$cache_path filesystem=$filesystem_type used=$used_bytes available=$available_bytes"
+echo "The Kubernetes ready label has not been added; run tss-node-validate-model-cache from a cluster-admin host."

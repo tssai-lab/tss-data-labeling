@@ -1,0 +1,457 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+if [[ $# -ne 2 && $# -ne 4 ]]; then
+  echo "Usage: $0 <backend-image> <backend-image-id> [cv-image nlp-image]" >&2
+  exit 2
+fi
+
+runtime_file="${TSS_NODE_RUNTIME_ENV:-/etc/tss-platform/node-runtime.env}"
+if [[ ! -r $runtime_file ]]; then
+  echo "Node runtime configuration is not readable." >&2
+  exit 1
+fi
+
+# The helper is installed root-only. Runtime values are loaded from the same
+# protected file used by the deploy loaders; secret values are never printed.
+# shellcheck disable=SC1090
+source "$runtime_file"
+
+backend_image="$1"
+expected_backend_image_id="$2"
+cv_image="${3:-}"
+nlp_image="${4:-}"
+
+docker_bin="${TSS_DOCKER_BIN:-docker}"
+ctr_bin="${TSS_CTR_BIN:-ctr}"
+curl_bin="${TSS_CURL_BIN:-curl}"
+python_bin="${TSS_PYTHON_BIN:-python3}"
+sed_bin="${TSS_SED_BIN:-sed}"
+backend_container="${TSS_BACKEND_CONTAINER:-tss-backend}"
+backend_repository="${TSS_BACKEND_IMAGE_REPOSITORY:-ghcr.io/tssai-lab/tssai-backend}"
+inference_repository="${TSS_INFERENCE_IMAGE_REPOSITORY:-ghcr.io/tssai-lab/tss-inference-worker-cpu}"
+fallback_inference_repository="${TSS_INFERENCE_FALLBACK_IMAGE_REPOSITORY:-crpi-s1uie3z8n3mbqf6y.cn-shanghai.personal.cr.aliyuncs.com/tss-platform/tss-inference-worker-cpu}"
+cv_repository="${TSS_CV_IMAGE_REPOSITORY:-crpi-s1uie3z8n3mbqf6y.cn-shanghai.personal.cr.aliyuncs.com/tss-platform/tss-cv-worker}"
+nlp_repository="${TSS_NLP_IMAGE_REPOSITORY:-crpi-s1uie3z8n3mbqf6y.cn-shanghai.personal.cr.aliyuncs.com/tss-platform/tss-nlp-worker}"
+health_url="${TSS_BACKEND_HEALTH_URL:-http://127.0.0.1:8080/health/ready}"
+platform_url="${TSS_PLATFORM_URL:-http://127.0.0.1:8080}"
+namespace="${TSS_TRAINING_NAMESPACE:-tss-training}"
+service_account="${TSS_TRAINING_SERVICE_ACCOUNT:-tss-training-worker}"
+smoke_node="${TSS_DEPLOYMENT_SMOKE_NODE:-$(hostname)}"
+redis_container="${TSS_REDIS_CONTAINER:-tss-redis}"
+redis_image="${TSS_REDIS_IMAGE:-}"
+redis_image_id="${TSS_REDIS_IMAGE_ID:-}"
+reviewed_redis_image="tss-platform-redis:7.4.11-alpine-amd64-5509c0097c60"
+reviewed_redis_image_id="sha256:5509c0097c6064aa8a3b1df58f1d950e67090fffa6678ae8f3f1dc2385f12deb"
+require_redis_session_store="${TSS_REQUIRE_REDIS_SESSION_STORE:-false}"
+
+require_immutable_image() {
+  local label="$1"
+  local image="$2"
+  local repository="$3"
+  local prefix="${repository}:"
+  if [[ $image != "${prefix}"* || ! ${image#${prefix}} =~ ^[0-9a-f]{40}$ ]]; then
+    echo "$label must use the configured repository and an immutable 40-character Git SHA tag." >&2
+    return 1
+  fi
+}
+
+require_immutable_image_from_either_repository() {
+  local label="$1"
+  local image="$2"
+  local first_repository="$3"
+  local second_repository="$4"
+  if require_immutable_image "$label" "$image" "$first_repository" 2>/dev/null \
+    || require_immutable_image "$label" "$image" "$second_repository" 2>/dev/null; then
+    return 0
+  fi
+  echo "$label must use an approved repository and an immutable 40-character Git SHA tag." >&2
+  return 1
+}
+
+require_image_id() {
+  if [[ ! $1 =~ ^sha256:[0-9a-f]{64}$ ]]; then
+    echo "Backend image ID is invalid." >&2
+    return 1
+  fi
+}
+
+require_safe_path() {
+  local label="$1"
+  local path="$2"
+  local segment
+  local -a segments=()
+  if [[ ! $path =~ ^/[A-Za-z0-9._/-]+$ || $path == *"//"* ]]; then
+    echo "$label is not a safe absolute path." >&2
+    return 1
+  fi
+  IFS='/' read -r -a segments <<<"${path#/}"
+  for segment in "${segments[@]}"; do
+    if [[ $segment == "." || $segment == ".." ]]; then
+      echo "$label is not a safe absolute path." >&2
+      return 1
+    fi
+  done
+}
+
+require_immutable_image "Backend image" "$backend_image" "$backend_repository"
+require_image_id "$expected_backend_image_id"
+if [[ -n $cv_image ]]; then
+  require_immutable_image "CV image" "$cv_image" "$cv_repository"
+  require_immutable_image "NLP image" "$nlp_image" "$nlp_repository"
+fi
+if [[ ! $smoke_node =~ ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$ ]]; then
+  echo "Deployment smoke node is not a valid Kubernetes node name." >&2
+  exit 1
+fi
+for resource_name in "$namespace" "$service_account"; do
+  if [[ ! $resource_name =~ ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$ ]]; then
+    echo "Deployment smoke namespace or ServiceAccount name is invalid." >&2
+    exit 1
+  fi
+done
+
+for command_name in "$docker_bin" "$ctr_bin" "$curl_bin" "$python_bin" "$sed_bin"; do
+  command -v "$command_name" >/dev/null
+done
+
+actual_backend_image="$($docker_bin inspect "$backend_container" --format '{{.Config.Image}}')"
+actual_backend_image_id="$($docker_bin inspect "$backend_container" --format '{{.Image}}')"
+if [[ $actual_backend_image != "$backend_image" || $actual_backend_image_id != "$expected_backend_image_id" ]]; then
+  echo "Running backend image does not match the deployed immutable image." >&2
+  exit 1
+fi
+
+readiness_body=""
+for _ in $(seq 1 5); do
+  if readiness_body="$($curl_bin --fail --silent --show-error --max-time 10 "$health_url")"; then
+    break
+  fi
+  sleep 2
+done
+if [[ -z $readiness_body ]]; then
+  echo "Backend readiness did not return a response." >&2
+  exit 1
+fi
+
+READINESS_BODY="$readiness_body" \
+REQUIRE_REDIS_SESSION_STORE="$require_redis_session_store" \
+  "$python_bin" - <<'PY'
+import json
+import os
+
+body = json.loads(os.environ["READINESS_BODY"])
+if body.get("status") != "UP" or body.get("check") != "readiness":
+    raise SystemExit("readiness status is not UP")
+components = body.get("components") or {}
+expected = {"database": "UP", "objectStorage": "UP", "training": "UP"}
+if any(components.get(key) != value for key, value in expected.items()):
+    raise SystemExit("one or more readiness components are not UP")
+auth_session = components.get("authSession")
+if os.environ["REQUIRE_REDIS_SESSION_STORE"] == "true":
+    if auth_session != "UP":
+        raise SystemExit("Redis-backed auth session readiness is not UP")
+elif auth_session not in {"UP", "MEMORY"}:
+    raise SystemExit("auth session readiness is invalid")
+PY
+
+if [[ $require_redis_session_store == true ]]; then
+  [[ $redis_image == "$reviewed_redis_image" ]] \
+    || { echo "Redis image is not the reviewed immutable reference." >&2; exit 1; }
+  [[ $redis_image_id == "$reviewed_redis_image_id" ]] \
+    || { echo "Redis image identifier is not the reviewed value." >&2; exit 1; }
+  actual_redis_image="$($docker_bin inspect "$redis_container" --format '{{.Config.Image}}')"
+  actual_redis_image_id="$($docker_bin inspect "$redis_container" --format '{{.Image}}')"
+  redis_health="$($docker_bin inspect "$redis_container" --format '{{.State.Health.Status}}')"
+  redis_binding="$($docker_bin port "$redis_container" 6379/tcp)"
+  redis_ping="$($docker_bin exec "$redis_container" redis-cli ping)"
+  if [[ $actual_redis_image != "$redis_image" \
+    || $actual_redis_image_id != "$redis_image_id" \
+    || $redis_health != healthy \
+    || $redis_binding != 127.0.0.1:6379 \
+    || $redis_ping != PONG ]]; then
+    echo "Redis session store runtime identity, binding or health differs." >&2
+    exit 1
+  fi
+elif [[ $require_redis_session_store != false ]]; then
+  echo "TSS_REQUIRE_REDIS_SESSION_STORE must be true or false." >&2
+  exit 1
+fi
+
+expect_http_status() {
+  local label="$1"
+  local expected="$2"
+  local url="$3"
+  local actual
+  actual="$($curl_bin --silent --show-error --output /dev/null --write-out '%{http_code}' --max-time 10 "$url")"
+  if [[ $actual != "$expected" ]]; then
+    echo "$label expected HTTP $expected, got $actual." >&2
+    return 1
+  fi
+}
+
+expect_http_status "Backend liveness" 200 "${platform_url}/health/live"
+expect_http_status "Unauthenticated guard" 401 "${platform_url}/api/user/current-user"
+
+container_env="$($docker_bin inspect "$backend_container" --format '{{range .Config.Env}}{{println .}}{{end}}')"
+read_container_env() {
+  local key="$1"
+  printf '%s\n' "$container_env" | awk -F= -v wanted="$key" '
+    $1 == wanted { print substr($0, index($0, "=") + 1); exit }
+  '
+}
+
+if [[ $require_redis_session_store == true ]]; then
+  if [[ $(read_container_env AUTH_SESSION_STORE) != redis \
+    || $(read_container_env SPRING_DATA_REDIS_HOST) != 127.0.0.1 \
+    || $(read_container_env SPRING_DATA_REDIS_PORT) != 6379 ]]; then
+    echo "Backend is not configured for the required loopback Redis session store." >&2
+    exit 1
+  fi
+fi
+
+kubectl_bin="$(read_container_env TRAINING_K8S_KUBECTL_PATH)"
+kubeconfig="$(read_container_env TRAINING_K8S_KUBECONFIG)"
+inference_image="$(read_container_env INFERENCE_KUBERNETES_WORKER_IMAGE)"
+require_safe_path "kubectl path" "$kubectl_bin"
+require_safe_path "kubeconfig path" "$kubeconfig"
+require_immutable_image_from_either_repository \
+  "Inference image" \
+  "$inference_image" \
+  "$inference_repository" \
+  "$fallback_inference_repository"
+if [[ ! -x $kubectl_bin || ! -r $kubeconfig ]]; then
+  echo "Kubernetes deployment tools are unavailable." >&2
+  exit 1
+fi
+if [[ -n ${TSS_EXPECTED_INFERENCE_IMAGE:-} && $inference_image != "$TSS_EXPECTED_INFERENCE_IMAGE" ]]; then
+  echo "Backend inference image configuration does not match the deployed runtime image." >&2
+  exit 1
+fi
+
+kubectl=("$kubectl_bin" --kubeconfig "$kubeconfig")
+"${kubectl[@]}" wait --for=condition=Ready node --all --timeout=30s >/dev/null
+"${kubectl[@]}" get namespace "$namespace" >/dev/null
+"${kubectl[@]}" get node "$smoke_node" >/dev/null
+
+disk_pressure=""
+disk_pressure_deadline=$((SECONDS + 360))
+while (( SECONDS < disk_pressure_deadline )); do
+  disk_pressure="$(
+    "${kubectl[@]}" get node "$smoke_node" \
+      -o jsonpath='{.status.conditions[?(@.type=="DiskPressure")].status}'
+  )"
+  if [[ $disk_pressure == "False" ]]; then
+    break
+  fi
+  sleep 5
+done
+if [[ $disk_pressure != "False" ]]; then
+  echo "Smoke node remained under DiskPressure: node=$smoke_node status=${disk_pressure:-Unknown}." >&2
+  exit 1
+fi
+
+active_smoke_pods=()
+cleanup() {
+  local pod_name label
+  for pod_name in "${active_smoke_pods[@]:-}"; do
+    [[ -n $pod_name ]] || continue
+    label="$(${kubectl[@]} get pod "$pod_name" --namespace "$namespace" -o jsonpath='{.metadata.labels.tss\.ai/deployment-smoke}' 2>/dev/null || true)"
+    if [[ $label == "true" ]]; then
+      "${kubectl[@]}" delete pod "$pod_name" --namespace "$namespace" --wait=false >/dev/null 2>&1 || true
+    fi
+  done
+}
+trap cleanup EXIT
+
+run_smoke_pod() {
+  local kind="$1"
+  local image="$2"
+  local pull_policy="$3"
+  local timeout_seconds="$4"
+  local python_script="$5"
+  local tag pod_name phase deadline marker
+
+  tag="${backend_image##*:}"
+  pod_name="tss-deploy-${kind}-${tag:0:10}-$(date +%s)-$$"
+  pod_name="${pod_name:0:63}"
+  active_smoke_pods+=("$pod_name")
+
+  {
+    cat <<YAML
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ${pod_name}
+  namespace: ${namespace}
+  labels:
+    app.kubernetes.io/name: tss-deployment-smoke
+    app.kubernetes.io/part-of: tss-platform
+    tss.ai/deployment-smoke: "true"
+spec:
+  nodeName: ${smoke_node}
+  serviceAccountName: ${service_account}
+  automountServiceAccountToken: false
+  restartPolicy: Never
+  activeDeadlineSeconds: ${timeout_seconds}
+  securityContext:
+    runAsNonRoot: true
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: acceptance
+      image: ${image}
+      imagePullPolicy: ${pull_policy}
+      command: ["python", "-c"]
+      env:
+        - name: HOME
+          value: /tmp/home
+        - name: PYTHONDONTWRITEBYTECODE
+          value: "1"
+      args:
+        - |
+YAML
+    printf '%s\n' "$python_script" | "$sed_bin" 's/^/          /'
+    cat <<'YAML'
+      resources:
+        requests:
+          cpu: 100m
+          memory: 128Mi
+        limits:
+          cpu: 500m
+          memory: 1Gi
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: ["ALL"]
+        readOnlyRootFilesystem: true
+      volumeMounts:
+        - name: temporary
+          mountPath: /tmp
+  volumes:
+    - name: temporary
+      emptyDir:
+        sizeLimit: 256Mi
+YAML
+  } | "${kubectl[@]}" apply -f - >/dev/null
+
+  deadline=$((SECONDS + timeout_seconds))
+  phase=""
+  while (( SECONDS < deadline )); do
+    phase="$(${kubectl[@]} get pod "$pod_name" --namespace "$namespace" -o jsonpath='{.status.phase}' 2>/dev/null || true)"
+    if [[ $phase == "Succeeded" || $phase == "Failed" ]]; then
+      break
+    fi
+    sleep 2
+  done
+
+  if [[ $phase != "Succeeded" ]]; then
+    echo "Deployment smoke Pod failed: kind=$kind phase=${phase:-Unknown}." >&2
+    "${kubectl[@]}" describe pod "$pod_name" --namespace "$namespace" >&2 || true
+    "${kubectl[@]}" logs "$pod_name" --namespace "$namespace" >&2 || true
+    return 1
+  fi
+
+  marker="$(${kubectl[@]} logs "$pod_name" --namespace "$namespace")"
+  if [[ $marker != *"TSS_DEPLOYMENT_SMOKE_OK:${kind}"* ]]; then
+    echo "Deployment smoke Pod did not emit its success marker: kind=$kind." >&2
+    return 1
+  fi
+  echo "Deployment smoke passed: kind=$kind pod=$pod_name image=$image"
+
+  "${kubectl[@]}" delete pod "$pod_name" --namespace "$namespace" --wait=true --timeout=30s >/dev/null
+  active_smoke_pods=("${active_smoke_pods[@]/$pod_name}")
+}
+
+inference_script='from urllib.error import HTTPError
+from urllib.request import urlopen
+import infer_worker
+import ultralytics
+
+def status(url):
+    try:
+        with urlopen(url, timeout=10) as response:
+            return response.status
+    except HTTPError as error:
+        return error.code
+
+checks = {
+    "http://tss-backend:8080/health/ready": 200,
+    "http://tss-minio:9000/minio/health/live": 200,
+    "http://tss-mlflow:5000/": 200,
+}
+for url, expected in checks.items():
+    actual = status(url)
+    if actual != expected:
+        raise SystemExit(f"{url}: expected {expected}, got {actual}")
+assert infer_worker.parse_endpoint("http://tss-minio:9000") == ("tss-minio:9000", False)
+print("TSS_DEPLOYMENT_SMOKE_OK:inference")'
+run_smoke_pod "inference" "$inference_image" "IfNotPresent" 300 "$inference_script"
+
+ready_image="$($ctr_bin --namespace k8s.io images list --quiet | grep -F -x "$inference_image" || true)"
+if [[ $ready_image != "$inference_image" ]]; then
+  echo "Inference image reference is missing from Kubernetes containerd after the smoke Pod." >&2
+  exit 1
+fi
+
+cache_enabled="$(read_container_env INFERENCE_KUBERNETES_MODEL_CACHE_ENABLED)"
+if [[ -z $cache_enabled ]]; then
+  cache_enabled=false
+fi
+if [[ $cache_enabled == true ]]; then
+  cache_node_path="$(read_container_env INFERENCE_KUBERNETES_MODEL_CACHE_NODE_PATH)"
+  cache_mount_path="$(read_container_env INFERENCE_KUBERNETES_MODEL_CACHE_MOUNT_PATH)"
+  cache_max_bytes="$(read_container_env INFERENCE_KUBERNETES_MODEL_CACHE_MAX_BYTES)"
+  cache_min_free_bytes="$(read_container_env INFERENCE_KUBERNETES_MODEL_CACHE_MIN_FREE_BYTES)"
+  cache_runtime_reserve_bytes="$(read_container_env INFERENCE_KUBERNETES_MODEL_CACHE_RUNTIME_RESERVE_BYTES)"
+  if [[ -z $cache_runtime_reserve_bytes ]]; then
+    cache_runtime_reserve_bytes="${TSS_MODEL_CACHE_RUNTIME_RESERVE_BYTES:-10737418240}"
+  fi
+  require_safe_path "model cache node path" "$cache_node_path"
+  require_safe_path "model cache mount path" "$cache_mount_path"
+  if [[ ! $cache_max_bytes =~ ^[1-9][0-9]*$ \
+    || ! $cache_min_free_bytes =~ ^[0-9]+$ \
+    || ! $cache_runtime_reserve_bytes =~ ^[0-9]+$ ]]; then
+    echo "Enabled model cache has invalid capacity settings." >&2
+    exit 1
+  fi
+  if [[ ! -x /usr/local/sbin/tss-node-validate-model-cache ]]; then
+    echo "Enabled model cache validation helper is not installed." >&2
+    exit 1
+  fi
+  TSS_KUBECTL_BIN="$kubectl_bin" \
+  TSS_KUBECONFIG="$kubeconfig" \
+  TSS_TRAINING_NAMESPACE="$namespace" \
+  TSS_TRAINING_SERVICE_ACCOUNT="$service_account" \
+  TSS_MODEL_CACHE_HOST_PATH="$cache_node_path" \
+  TSS_MODEL_CACHE_MOUNT_PATH="$cache_mount_path" \
+  TSS_MODEL_CACHE_MAX_BYTES="$cache_max_bytes" \
+  TSS_MODEL_CACHE_MIN_FREE_BYTES="$cache_min_free_bytes" \
+  TSS_MODEL_CACHE_RUNTIME_RESERVE_BYTES="$cache_runtime_reserve_bytes" \
+    /usr/local/sbin/tss-node-validate-model-cache \
+      "$smoke_node" "$inference_image" --probe-only
+elif [[ $cache_enabled != false ]]; then
+  echo "Model cache enabled flag must be true or false." >&2
+  exit 1
+fi
+
+if [[ -n $cv_image ]]; then
+  cv_script='import cv2
+import minio
+import numpy
+import torch
+import transformers
+import ultralytics
+print("TSS_DEPLOYMENT_SMOKE_OK:cv")'
+  nlp_script='import datasets
+import minio
+import numpy
+import sklearn
+import torch
+import transformers
+print("TSS_DEPLOYMENT_SMOKE_OK:nlp")'
+  run_smoke_pod "cv" "$cv_image" "IfNotPresent" 300 "$cv_script"
+  run_smoke_pod "nlp" "$nlp_image" "IfNotPresent" 300 "$nlp_script"
+fi
+
+echo "Deployment validation passed: backend=$backend_image node=$smoke_node"

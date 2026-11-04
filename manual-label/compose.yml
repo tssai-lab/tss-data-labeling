@@ -1,0 +1,30 @@
+name: tss-manual-label-service
+services:
+  manual-label-api:
+    build:
+      context: .
+      args:
+        BASE_IMAGE: ${LABEL_BASE_IMAGE:-python:3.13-slim}
+    image: tss-manual-label-api:20261022
+    restart: unless-stopped
+    environment:
+      LABEL_AUTH_URL: http://backend:8080/api/user/current-user
+      LABEL_MAX_UPLOAD_GB: '10'
+      LABEL_MAX_EXPANDED_GB: '20'
+    volumes:
+      - manual-label-data:/data
+    networks:
+      - platform
+    mem_limit: 768m
+    cpus: 1.0
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'
+volumes:
+  manual-label-data:
+networks:
+  platform:
+    external: true
+    name: tss-trunk-8001_default

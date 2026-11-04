@@ -1,0 +1,116 @@
+schemaVersion: tss.training.plan/v1
+id: image_text_consistency_fusion_logreg
+version: v1
+displayName: Image-text consistency baseline
+description: Compatibility plan for the existing image-text fusion baseline.
+enabled: true
+trainingModes: [FROM_SCRATCH]
+
+execution:
+  interpreter: python
+  entrypoint: scripts/training/train_fusion_baseline.py
+  arguments:
+    - --data-dir
+    - ${DATA_DIR}
+    - --model
+    - logreg
+    - --out-dir
+    - ${OUTPUT_DIR}/fusion_baseline_logreg
+
+inputs:
+  model:
+    required: true
+    consumed: false
+    formats: [LEGACY_WEIGHT_ARCHIVE]
+    taskTypes: [NLP]
+    requiredEntries: []
+    formatGuide: |
+      本方案模型为训练代码内部生成，上传的基础模型包仅作参考。
+      consumed=false，训练过程不消费基础模型权重。
+  dataset:
+    required: true
+    taskTypes: [NLP]
+    cvTaskTypes: []
+    annotationFormats: []
+    requiredEntries: []
+    formatGuide: |
+      图文一致性融合方案，数据集为图文配对数据。
+      具体格式由训练代码 scripts/training/train_fusion_baseline.py 决定。
+  code:
+    required: true
+    approvalRequired: true
+    runtime: PYTHON3
+
+parameters:
+  - name: threshold
+    displayName: Threshold
+    description: Stored in the immutable RunSpec for reproducibility.
+    type: NUMBER
+    required: false
+    defaultValue: 0.5
+    minimum: 0
+    maximum: 1
+
+runtimes:
+  - id: nlp-cpu
+    deviceType: CPU
+    image: crpi-s1uie3z8n3mbqf6y.cn-shanghai.personal.cr.aliyuncs.com/tss-platform/tss-nlp-worker:latest
+    imagePullPolicy: IfNotPresent
+    productionDigestRequired: true
+    resourceProfiles:
+      - id: cpu-small
+        cpuRequest: 500m
+        cpuLimit: "2"
+        memoryRequest: 512Mi
+        memoryLimit: 4Gi
+        ephemeralStorageLimit: 4Gi
+        gpuCount: 0
+        nodeSelector:
+          tss.ai/node-pool: cpu
+
+outputs:
+  progressProtocol: TSS_EVENT_JSONL_V1
+  metricsPath: fusion_baseline_logreg/metrics.json
+  logPath: train.log
+  artifacts:
+    - path: fusion_baseline_logreg/fusion_model.zip
+      role: PRIMARY_MODEL
+      required: true
+      format: SKLEARN_PICKLE_ZIP
+      publishAsModel: true
+      packaging:
+        type: ZIP_SINGLE_FILE
+        sourcePath: fusion_baseline_logreg/fusion_model.pkl
+        entryName: fusion_model.pkl
+    - path: fusion_baseline_logreg/fusion_model.pkl
+      role: CHECKPOINT
+      required: true
+      format: SKLEARN_PICKLE
+      publishAsModel: false
+    - path: fusion_baseline_logreg/metrics.json
+      role: METRICS
+      required: true
+      format: JSON
+      publishAsModel: false
+    - path: fusion_baseline_logreg/val_predictions.csv
+      role: PREDICTIONS
+      required: false
+      format: CSV
+      publishAsModel: false
+    - path: fusion_baseline_logreg/test_predictions.csv
+      role: PREDICTIONS
+      required: false
+      format: CSV
+      publishAsModel: false
+    - path: train.log
+      role: LOG
+      required: true
+      format: TEXT
+      publishAsModel: false
+
+security:
+  networkPolicy: PLATFORM_SERVICES_ONLY
+  runAsNonRoot: true
+  allowPrivilegeEscalation: false
+  automountServiceAccountToken: false
+  maxRuntimeSeconds: 3600

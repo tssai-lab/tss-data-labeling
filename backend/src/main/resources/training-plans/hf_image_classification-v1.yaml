@@ -1,0 +1,159 @@
+schemaVersion: tss.training.plan/v1
+id: hf_image_classification
+version: v1
+displayName: HuggingFace image classification
+description: Fine-tune an uploaded HuggingFace image-classification model with an uploaded ImageFolder dataset.
+enabled: true
+trainingModes: [FULL_FINETUNE]
+
+execution:
+  interpreter: python
+  entrypoint: train.py
+  arguments:
+    - --model-dir
+    - ${MODEL_DIR}
+    - --data-dir
+    - ${DATA_DIR}/data
+    - --out-dir
+    - ${OUTPUT_DIR}
+    - --params-file
+    - ${PARAMS_FILE}
+    - --device
+    - ${DEVICE}
+
+inputs:
+  model:
+    required: true
+    consumed: true
+    formats: [HF_MODEL_ARCHIVE]
+    taskTypes: [CV]
+    requiredEntries: [model.yaml]
+    formatGuide: |
+      压缩包内需包含 HuggingFace 模型文件，至少包含 model.yaml。
+      常见结构：
+        model.yaml
+        config.json
+        preprocessor_config.json
+        *.safetensors / *.bin（模型权重）
+  dataset:
+    required: true
+    taskTypes: [CV]
+    cvTaskTypes: [IMAGE_CLASSIFICATION, UNLABELED]
+    annotationFormats: [FOLDER_CLASSIFICATION, OTHER]
+    requiredEntries: [data/train, data/validation, data/test]
+    formatGuide: |
+      压缩包内需按 HuggingFace ImageFolder 标准结构组织：
+        data/
+          train/
+            <类别1>/  *.jpg *.png ...
+            <类别2>/  *.jpg *.png ...
+          validation/
+            <类别1>/  *.jpg *.png ...
+            <类别2>/  *.jpg *.png ...
+          test/
+            <类别1>/  *.jpg *.png ...
+            <类别2>/  *.jpg *.png ...
+      每个子目录名即为类别名，目录内放置该类别的图片。
+  code:
+    required: true
+    approvalRequired: true
+    runtime: PYTHON3
+
+parameters:
+  - name: epochs
+    displayName: Epochs
+    type: INTEGER
+    required: false
+    defaultValue: 2
+    minimum: 1
+    maximum: 1000
+  - name: batchSize
+    displayName: Batch size
+    type: INTEGER
+    required: false
+    defaultValue: 16
+    minimum: 1
+    maximum: 512
+  - name: lr
+    displayName: Learning rate
+    type: NUMBER
+    required: false
+    defaultValue: 0.00003
+    minimum: 0.00000001
+    maximum: 1
+  - name: weightDecay
+    displayName: Weight decay
+    type: NUMBER
+    required: false
+    defaultValue: 0.01
+    minimum: 0
+    maximum: 1
+  - name: maxTrainSamples
+    displayName: Maximum training samples
+    type: INTEGER
+    required: false
+    defaultValue: 0
+    minimum: 0
+    maximum: 100000000
+  - name: maxEvalSamples
+    displayName: Maximum evaluation samples
+    type: INTEGER
+    required: false
+    defaultValue: 0
+    minimum: 0
+    maximum: 100000000
+
+runtimes:
+  - id: cv-cu
+    deviceType: CPU
+    image: crpi-s1uie3z8n3mbqf6y.cn-shanghai.personal.cr.aliyuncs.com/tss-platform/tss-cv-worker:latest
+    imagePullPolicy: IfNotPresent
+    productionDigestRequired: false
+    resourceProfiles:
+      - id: cpu-hf-small
+        cpuRequest: "1"
+        cpuLimit: "4"
+        memoryRequest: 4Gi
+        memoryLimit: 8Gi
+        ephemeralStorageLimit: 12Gi
+        gpuCount: 0
+        nodeSelector:
+          tss.ai/node-pool: cpu
+
+outputs:
+  progressProtocol: TSS_EVENT_JSONL_V1
+  metricsPath: metrics.json
+  logPath: train.log
+  artifacts:
+    - path: mobilenet_beans_model.zip
+      role: PRIMARY_MODEL
+      required: true
+      format: HF_MODEL_ARCHIVE
+      publishAsModel: true
+    - path: metrics.json
+      role: METRICS
+      required: true
+      format: JSON
+      publishAsModel: false
+    - path: val_predictions.csv
+      role: PREDICTIONS
+      required: false
+      format: CSV
+      publishAsModel: false
+    - path: test_predictions.csv
+      role: PREDICTIONS
+      required: false
+      format: CSV
+      publishAsModel: false
+    - path: train.log
+      role: LOG
+      required: true
+      format: TEXT
+      publishAsModel: false
+
+security:
+  networkPolicy: PLATFORM_SERVICES_ONLY
+  runAsNonRoot: true
+  allowPrivilegeEscalation: false
+  automountServiceAccountToken: false
+  maxRuntimeSeconds: 28800

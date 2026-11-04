@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+source /etc/tss-platform/node-runtime.env
+
+if [[ $# -ne 2 ]]; then
+  echo "Usage: $0 <repository>:<commit-sha> sha256:<image-id>" >&2
+  exit 1
+fi
+
+image="$1"
+expected_image_id="$2"
+prefix="${TSS_BACKEND_IMAGE_REPOSITORY}:"
+if [[ $image != "${prefix}"* ]]; then
+  echo "Refusing an invalid backend image reference." >&2
+  exit 1
+fi
+tag="${image#${prefix}}"
+if [[ ! $tag =~ ^[0-9a-f]{40}$ ]]; then
+  echo "Refusing an invalid backend image reference." >&2
+  exit 1
+fi
+if [[ ! $expected_image_id =~ ^sha256:[0-9a-f]{64}$ ]]; then
+  echo "Refusing an invalid image identifier." >&2
+  exit 1
+fi
+if [[ ! -x /usr/local/sbin/tss-node-activate-backend || ! -x /usr/local/sbin/tss-node-validate-deployment ]]; then
+  echo "Backend deployment helpers are incomplete." >&2
+  exit 1
+fi
+
+gzip -dc | docker load >/dev/null
+actual_image_id="$(docker image inspect "$image" --format '{{.Id}}')"
+if [[ $actual_image_id != "$expected_image_id" ]]; then
+  echo "Loaded image identifier does not match the runner image." >&2
+  exit 1
+fi
+
+exec /usr/local/sbin/tss-node-activate-backend "$image" "$expected_image_id"

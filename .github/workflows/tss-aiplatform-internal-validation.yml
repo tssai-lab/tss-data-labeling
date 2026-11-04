@@ -1,0 +1,1422 @@
+name: tss-AIplatform Internal Cluster Validation
+
+on:
+  pull_request:
+    paths:
+      - "deploy/tss-aiplatform-internal/**"
+      - ".github/workflows/tss-aiplatform-internal-validation.yml"
+      - ".github/workflows/backend-ci.yml"
+      - ".github/workflows/backend-gpu-internal-deploy.yml"
+  push:
+    branches:
+      - backend
+      - backend-ops
+      - backend-gpu
+    paths:
+      - "deploy/tss-aiplatform-internal/**"
+      - ".github/workflows/tss-aiplatform-internal-validation.yml"
+      - ".github/workflows/backend-ci.yml"
+      - ".github/workflows/backend-gpu-internal-deploy.yml"
+  workflow_dispatch:
+    inputs:
+      task:
+        description: Safe internal-cluster task to run
+        required: true
+        default: contract
+        type: choice
+        options:
+          - contract
+          - runner-smoke
+          - resolve-artifact-lock
+          - export-airgap-bundles
+          - export-platform-images
+          - export-backend-image
+          - export-frontend-image
+          - export-cpu-runtime-images
+          - export-gpu-runtime-images
+          - stage-airgap-bundles
+          - stage-platform-images
+          - stage-cpu-runtime-images
+          - stage-gpu-runtime-images
+          - deploy-cpu-runtime-images
+          - deploy-gpu-runtime-images
+          - deploy-backend
+          - deploy-frontend
+      airgap_run_id:
+        description: Successful export workflow run ID (staging task only)
+        required: false
+        type: string
+      airgap_head_sha:
+        description: Exact backend-ops SHA used by the export run (staging task only)
+        required: false
+        type: string
+      runtime_run_id:
+        description: Successful CPU runtime export workflow run ID (runtime staging only)
+        required: false
+        type: string
+      runtime_head_sha:
+        description: Exact backend-ops SHA used by the CPU runtime export run
+        required: false
+        type: string
+      gpu_runtime_run_id:
+        description: Successful GPU runtime export workflow run ID
+        required: false
+        type: string
+      gpu_runtime_head_sha:
+        description: Exact backend-gpu SHA used by the GPU runtime export run
+        required: false
+        type: string
+      platform_run_id:
+        description: Successful platform-image export workflow run ID
+        required: false
+        type: string
+      platform_head_sha:
+        description: Exact backend-ops SHA used by the platform-image export run
+        required: false
+        type: string
+      backend_run_id:
+        description: Successful backend-image export workflow run ID
+        required: false
+        type: string
+      backend_head_sha:
+        description: Exact backend-ops SHA used by the backend-image export run
+        required: false
+        type: string
+      frontend_run_id:
+        description: Successful frontend-image export workflow run ID
+        required: false
+        type: string
+      frontend_head_sha:
+        description: Exact backend-ops SHA used by the frontend-image export run
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+  packages: read
+
+concurrency:
+  # A backend-ops push must not cancel a long, explicitly dispatched artifact
+  # transfer. Repeated runs of the same manual task still replace each other.
+  group: tss-internal-cluster-validation-${{ github.ref }}-${{ github.event_name == 'workflow_dispatch' && inputs.task || github.event_name }}
+  cancel-in-progress: true
+
+jobs:
+  validate-contract:
+    if: >-
+      github.event_name != 'workflow_dispatch' ||
+      inputs.task == 'contract'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Validate internal cluster copy contract
+        run: |
+          bash deploy/tss-aiplatform-internal/tests/test-cluster-copy.sh
+          bash deploy/tss-aiplatform-internal/tests/test-platform-copy.sh
+          bash deploy/tss-aiplatform-internal/tests/test-frontend-deploy.sh
+          bash deploy/tss-aiplatform-internal/tests/test-deployment-lanes.sh
+
+  runner-smoke:
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      inputs.task == 'runner-smoke'
+    runs-on: [self-hosted, Linux, X64, tss-aiplatform-internal, deploy]
+    environment: tss-aiplatform-internal
+    timeout-minutes: 10
+    steps:
+      - name: Check out trusted backend-ops source
+        uses: actions/checkout@v4
+        with:
+          clean: true
+          persist-credentials: false
+
+      - name: Verify isolated Runner data paths
+        env:
+          CONTROL_PLANE_HOST: ${{ vars.CONTROL_PLANE_HOST }}
+          RUNNER_WORK_ROOT: ${{ vars.RUNNER_WORK_ROOT }}
+        run: |
+          set -Eeuo pipefail
+          [[ "$GITHUB_REF" == "refs/heads/backend-ops" ]]
+          test -n "$CONTROL_PLANE_HOST"
+          [[ "$CONTROL_PLANE_HOST" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]]
+          [[ "$RUNNER_WORK_ROOT" == /* && "$RUNNER_WORK_ROOT" != / ]]
+          test -d "$RUNNER_WORK_ROOT"
+          test ! -L "$RUNNER_WORK_ROOT"
+          runner_work_root="$(realpath -e "$RUNNER_WORK_ROOT")"
+          test "$runner_work_root" = "$RUNNER_WORK_ROOT"
+          [[ "$GITHUB_WORKSPACE" == "${runner_work_root}/"* ]]
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+
+      - name: Verify GitHub data path and control-plane TCP reachability
+        env:
+          CONTROL_PLANE_HOST: ${{ vars.CONTROL_PLANE_HOST }}
+        run: |
+          for attempt in 1 2 3; do
+            git ls-remote origin HEAD >/dev/null
+            curl --fail --silent --show-error --max-time 15 \
+              https://api.github.com/repos/tssai-lab/TSSAIPlatform >/dev/null
+          done
+          timeout 5 bash -c "</dev/tcp/${CONTROL_PLANE_HOST}/22"
+
+      - name: Record non-deployment result
+        run: |
+          {
+            echo "### Internal Runner smoke"
+            echo "- Commit: \`${GITHUB_SHA}\`"
+            echo "- Runner: \`${RUNNER_NAME}\`"
+            echo "- GitHub fetch: passed 3/3"
+            echo "- Control-plane TCP/22: reachable"
+            echo "- SSH authentication, sudo, deployment and host writes: not attempted"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  resolve-artifact-lock:
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      inputs.task == 'resolve-artifact-lock'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out trusted source
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Resolve immutable manifest and image digests
+        run: |
+          bash deploy/tss-aiplatform-internal/ci/resolve-artifact-lock.sh \
+            > "$RUNNER_TEMP/tss-aiplatform-artifacts.lock"
+
+      - name: Upload candidate lock
+        uses: actions/upload-artifact@v4
+        with:
+          name: tss-aiplatform-artifact-lock-${{ github.sha }}
+          path: ${{ runner.temp }}/tss-aiplatform-artifacts.lock
+          if-no-files-found: error
+          retention-days: 7
+
+  export-airgap-bundles:
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      inputs.task == 'export-airgap-bundles'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Check out trusted backend-ops source
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Export digest-locked linux-amd64 image bundles
+        run: |
+          bash deploy/tss-aiplatform-internal/ci/export-airgap-bundles.sh \
+            "$RUNNER_TEMP/tss-aiplatform-airgap"
+
+      - name: Upload short-lived air-gap bundles
+        uses: actions/upload-artifact@v4
+        with:
+          name: tss-aiplatform-airgap-${{ github.sha }}
+          path: ${{ runner.temp }}/tss-aiplatform-airgap
+          if-no-files-found: error
+          retention-days: 3
+          compression-level: 0
+
+  export-platform-images:
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      inputs.task == 'export-platform-images'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out trusted source
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Log in to the project image registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Export five registry-locked platform images
+        run: |
+          set -Eeuo pipefail
+          output_dir="$RUNNER_TEMP/tss-aiplatform-platform-images"
+          install -d -m 0700 "$output_dir"
+          bash deploy/tss-aiplatform-internal/platform/scripts/export-platform-images.sh \
+            > "$output_dir/platform-images-amd64.tar"
+          cp deploy/tss-aiplatform-internal/platform/platform-images.lock \
+            "$output_dir/sources.lock"
+          (
+            cd "$output_dir"
+            sha256sum platform-images-amd64.tar sources.lock \
+              > platform-images.sha256
+            sha256sum --check --strict platform-images.sha256
+          )
+
+      - name: Upload reproducible platform-image bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: tss-aiplatform-platform-images-${{ github.sha }}
+          path: ${{ runner.temp }}/tss-aiplatform-platform-images
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+  export-cpu-runtime-images:
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      inputs.task == 'export-cpu-runtime-images'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Check out trusted backend-ops source
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Log in to the project image registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Export only the C6 CPU training and inference images
+        run: |
+          bash deploy/tss-aiplatform-internal/ci/export-cpu-runtime-images.sh \
+            "$RUNNER_TEMP/tss-aiplatform-cpu-runtime"
+
+      - name: Upload short-lived CPU runtime bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: tss-aiplatform-cpu-runtime-${{ github.sha }}
+          path: ${{ runner.temp }}/tss-aiplatform-cpu-runtime
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+  export-gpu-runtime-images:
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      inputs.task == 'export-gpu-runtime-images'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Check out trusted backend-gpu source
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Log in to the project image registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Export the locked GPU training and inference images
+        run: |
+          bash deploy/tss-aiplatform-internal/ci/export-gpu-runtime-images.sh \
+            "$RUNNER_TEMP/tss-aiplatform-gpu-runtime"
+
+      - name: Upload short-lived GPU runtime bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: tss-aiplatform-gpu-runtime-${{ github.sha }}
+          path: ${{ runner.temp }}/tss-aiplatform-gpu-runtime
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+  export-backend-image:
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      inputs.task == 'export-backend-image'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out trusted backend-ops source
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Log in to the project image registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Export only the registry-locked backend image
+        run: |
+          set -Eeuo pipefail
+          output_dir="$RUNNER_TEMP/tss-aiplatform-backend-image"
+          install -d -m 0700 "$output_dir"
+          bash deploy/tss-aiplatform-internal/platform/scripts/export-platform-images.sh \
+            --backend-only > "$output_dir/backend-image-amd64.tar"
+          grep '^ghcr.io/tssai-lab/tssai-backend:' \
+            deploy/tss-aiplatform-internal/platform/platform-images.lock \
+            > "$output_dir/sources.lock"
+          test "$(wc -l < "$output_dir/sources.lock")" -eq 1
+          (
+            cd "$output_dir"
+            sha256sum backend-image-amd64.tar sources.lock > backend-image.sha256
+            sha256sum --check --strict backend-image.sha256
+          )
+
+      - name: Upload reproducible backend-image bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: tss-aiplatform-backend-image-${{ github.sha }}
+          path: ${{ runner.temp }}/tss-aiplatform-backend-image
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+  export-frontend-image:
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      inputs.task == 'export-frontend-image'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out trusted backend-ops source
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Log in to the project image registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Export only the registry-locked frontend image
+        run: |
+          bash deploy/tss-aiplatform-internal/platform/scripts/export-frontend-image.sh \
+            "$RUNNER_TEMP/tss-aiplatform-frontend-image"
+
+      - name: Upload reproducible frontend-image bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: tss-aiplatform-frontend-image-${{ github.sha }}
+          path: ${{ runner.temp }}/tss-aiplatform-frontend-image
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+  stage-airgap-bundles:
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      inputs.task == 'stage-airgap-bundles'
+    runs-on: [self-hosted, Linux, X64, tss-aiplatform-internal, deploy]
+    environment: tss-aiplatform-internal
+    timeout-minutes: 30
+    steps:
+      - name: Check out trusted backend-ops source
+        uses: actions/checkout@v4
+        with:
+          clean: true
+          persist-credentials: false
+
+      - name: Verify trusted export run and isolated staging path
+        env:
+          AIRGAP_RUN_ID: ${{ inputs.airgap_run_id }}
+          AIRGAP_HEAD_SHA: ${{ inputs.airgap_head_sha }}
+          AIRGAP_STAGE_ROOT: ${{ vars.AIRGAP_STAGE_ROOT }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          [[ "$GITHUB_REF" == "refs/heads/backend-ops" ]]
+          [[ "$GITHUB_SHA" == "$AIRGAP_HEAD_SHA" ]]
+          [[ "$AIRGAP_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$AIRGAP_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$AIRGAP_STAGE_ROOT" == /* ]]
+          test -d "$AIRGAP_STAGE_ROOT"
+          test ! -L "$AIRGAP_STAGE_ROOT"
+          test "$(stat -c %U "$AIRGAP_STAGE_ROOT")" = "$(id -un)"
+          stage_mode="$(stat -c %a "$AIRGAP_STAGE_ROOT")"
+          (( (8#$stage_mode & 0022) == 0 ))
+          stage_root="$(realpath -e "$AIRGAP_STAGE_ROOT")"
+          test "$stage_root" = "$AIRGAP_STAGE_ROOT"
+          target_dir="${stage_root}/${AIRGAP_HEAD_SHA}-${AIRGAP_RUN_ID}"
+          test ! -e "$target_dir"
+          test ! -L "$target_dir"
+
+          curl --fail --silent --show-error \
+            --header "Authorization: Bearer ${GH_TOKEN}" \
+            --header "Accept: application/vnd.github+json" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/runs/${AIRGAP_RUN_ID}" \
+            --output "$RUNNER_TEMP/airgap-export-run.json"
+          python3 - "$RUNNER_TEMP/airgap-export-run.json" \
+            "$AIRGAP_HEAD_SHA" <<'PY'
+          import json
+          import sys
+
+          metadata_path, expected_sha = sys.argv[1:]
+          with open(metadata_path, encoding="utf-8") as metadata_file:
+              metadata = json.load(metadata_file)
+          expected = {
+              "head_sha": expected_sha,
+              "head_branch": "backend-ops",
+              "event": "workflow_dispatch",
+              "status": "completed",
+              "conclusion": "success",
+              "path": ".github/workflows/tss-aiplatform-internal-validation.yml",
+          }
+          mismatches = {
+              key: (metadata.get(key), value)
+              for key, value in expected.items()
+              if metadata.get(key) != value
+          }
+          if mismatches:
+              raise SystemExit(f"untrusted export workflow metadata: {mismatches}")
+          PY
+
+      - name: Download exact short-lived air-gap artifact in verified ranges
+        env:
+          AIRGAP_RUN_ID: ${{ inputs.airgap_run_id }}
+          AIRGAP_HEAD_SHA: ${{ inputs.airgap_head_sha }}
+          AIRGAP_STAGE_ROOT: ${{ vars.AIRGAP_STAGE_ROOT }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 deploy/tss-aiplatform-internal/ci/download-airgap-artifact.py \
+            --repository "$GITHUB_REPOSITORY" \
+            --run-id "$AIRGAP_RUN_ID" \
+            --head-sha "$AIRGAP_HEAD_SHA" \
+            --stage-root "$AIRGAP_STAGE_ROOT" \
+            --workers 16
+
+      - name: Verify staged bundle before any image import
+        env:
+          AIRGAP_RUN_ID: ${{ inputs.airgap_run_id }}
+          AIRGAP_HEAD_SHA: ${{ inputs.airgap_head_sha }}
+          AIRGAP_STAGE_ROOT: ${{ vars.AIRGAP_STAGE_ROOT }}
+        run: |
+          set -Eeuo pipefail
+          target_dir="${AIRGAP_STAGE_ROOT}/${AIRGAP_HEAD_SHA}-${AIRGAP_RUN_ID}"
+          test -d "$target_dir"
+          test ! -L "$target_dir"
+          test "$(find "$target_dir" -mindepth 1 -maxdepth 1 -type f | wc -l)" -eq 7
+          test "$(find "$target_dir" -mindepth 1 -maxdepth 1 ! -type f | wc -l)" -eq 0
+          (
+            cd "$target_dir"
+            test "$(awk '{print $2}' airgap-common.sha256)" = $'k8s-core-amd64.tar\ncalico-amd64.tar\nmetrics-server-amd64.tar\nsources.lock'
+            test "$(awk '{print $2}' airgap-gpu.sha256)" = nvidia-amd64.tar
+            sha256sum --check --strict airgap-common.sha256
+            sha256sum --check --strict airgap-gpu.sha256
+            cmp <(grep '^image ' "$GITHUB_WORKSPACE/deploy/tss-aiplatform-internal/artifacts.lock") sources.lock
+            test "$(grep -c '^image ' sources.lock)" -eq 12
+          )
+
+      - name: Record staged artifact result
+        env:
+          AIRGAP_RUN_ID: ${{ inputs.airgap_run_id }}
+          AIRGAP_HEAD_SHA: ${{ inputs.airgap_head_sha }}
+          AIRGAP_STAGE_ROOT: ${{ vars.AIRGAP_STAGE_ROOT }}
+        run: |
+          {
+            echo "### Internal air-gap staging"
+            echo "- Export run: \`${AIRGAP_RUN_ID}\`"
+            echo "- Source SHA: \`${AIRGAP_HEAD_SHA}\`"
+            echo "- Stage: \`${AIRGAP_STAGE_ROOT}/${AIRGAP_HEAD_SHA}-${AIRGAP_RUN_ID}\`"
+            echo "- Checksums and 12-source lock: passed"
+            echo "- sudo, containerd import and cluster writes: not attempted"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  stage-cpu-runtime-images:
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      inputs.task == 'stage-cpu-runtime-images'
+    runs-on: [self-hosted, Linux, X64, tss-aiplatform-internal, deploy]
+    environment: tss-aiplatform-internal
+    timeout-minutes: 90
+    steps:
+      - name: Check out trusted backend-ops source
+        uses: actions/checkout@v4
+        with:
+          clean: true
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify trusted CPU runtime export and isolated staging path
+        env:
+          RUNTIME_RUN_ID: ${{ inputs.runtime_run_id }}
+          RUNTIME_HEAD_SHA: ${{ inputs.runtime_head_sha }}
+          AIRGAP_STAGE_ROOT: ${{ vars.AIRGAP_STAGE_ROOT }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          [[ "$GITHUB_REF_NAME" == backend-ops || "$GITHUB_REF_NAME" == backend-gpu ]]
+          [[ "$RUNTIME_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$RUNTIME_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
+          git merge-base --is-ancestor "$RUNTIME_HEAD_SHA" "$GITHUB_SHA"
+          [[ "$AIRGAP_STAGE_ROOT" == /* ]]
+          test -d "$AIRGAP_STAGE_ROOT"
+          test ! -L "$AIRGAP_STAGE_ROOT"
+          test "$(stat -c %U "$AIRGAP_STAGE_ROOT")" = "$(id -un)"
+          stage_mode="$(stat -c %a "$AIRGAP_STAGE_ROOT")"
+          (( (8#$stage_mode & 0022) == 0 ))
+          stage_root="$(realpath -e "$AIRGAP_STAGE_ROOT")"
+          test "$stage_root" = "$AIRGAP_STAGE_ROOT"
+          target_dir="${stage_root}/${RUNTIME_HEAD_SHA}-${RUNTIME_RUN_ID}"
+          test ! -e "$target_dir"
+          test ! -L "$target_dir"
+
+          curl --fail --silent --show-error \
+            --header "Authorization: Bearer ${GH_TOKEN}" \
+            --header "Accept: application/vnd.github+json" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/runs/${RUNTIME_RUN_ID}" \
+            --output "$RUNNER_TEMP/runtime-export-run.json"
+          python3 - "$RUNNER_TEMP/runtime-export-run.json" \
+            "$RUNTIME_HEAD_SHA" "$GITHUB_REF_NAME" <<'PY'
+          import json
+          import sys
+
+          metadata_path, expected_sha, expected_branch = sys.argv[1:]
+          with open(metadata_path, encoding="utf-8") as metadata_file:
+              metadata = json.load(metadata_file)
+          expected = {
+              "head_sha": expected_sha,
+              "head_branch": expected_branch,
+              "event": "workflow_dispatch",
+              "status": "completed",
+              "conclusion": "success",
+              "path": ".github/workflows/tss-aiplatform-internal-validation.yml",
+          }
+          mismatches = {
+              key: (metadata.get(key), value)
+              for key, value in expected.items()
+              if metadata.get(key) != value
+          }
+          if mismatches:
+              raise SystemExit(f"untrusted CPU runtime export metadata: {mismatches}")
+          PY
+
+      - name: Download exact CPU runtime artifact in verified ranges
+        env:
+          RUNTIME_RUN_ID: ${{ inputs.runtime_run_id }}
+          RUNTIME_HEAD_SHA: ${{ inputs.runtime_head_sha }}
+          AIRGAP_STAGE_ROOT: ${{ vars.AIRGAP_STAGE_ROOT }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 deploy/tss-aiplatform-internal/ci/download-airgap-artifact.py \
+            --repository "$GITHUB_REPOSITORY" \
+            --run-id "$RUNTIME_RUN_ID" \
+            --head-sha "$RUNTIME_HEAD_SHA" \
+            --stage-root "$AIRGAP_STAGE_ROOT" \
+            --profile cpu-runtime \
+            --workers 16
+
+      - name: Verify staged CPU runtime bundle before import
+        env:
+          RUNTIME_RUN_ID: ${{ inputs.runtime_run_id }}
+          RUNTIME_HEAD_SHA: ${{ inputs.runtime_head_sha }}
+          AIRGAP_STAGE_ROOT: ${{ vars.AIRGAP_STAGE_ROOT }}
+        run: |
+          set -Eeuo pipefail
+          target_dir="${AIRGAP_STAGE_ROOT}/${RUNTIME_HEAD_SHA}-${RUNTIME_RUN_ID}"
+          test -d "$target_dir"
+          test ! -L "$target_dir"
+          test "$(find "$target_dir" -mindepth 1 -maxdepth 1 -type f | wc -l)" -eq 3
+          test "$(find "$target_dir" -mindepth 1 -maxdepth 1 ! -type f | wc -l)" -eq 0
+          (
+            cd "$target_dir"
+            test "$(awk '{print $2}' cpu-runtime.sha256)" = $'cpu-runtime-amd64.tar\nsources.lock'
+            sha256sum --check --strict cpu-runtime.sha256
+            git -C "$GITHUB_WORKSPACE" show \
+              "${RUNTIME_HEAD_SHA}:deploy/tss-aiplatform-internal/reproducible/cpu-runtime-images.lock" \
+              > "$RUNNER_TEMP/exported-cpu-runtime-images.lock"
+            cmp "$RUNNER_TEMP/exported-cpu-runtime-images.lock" sources.lock
+            cmp "$GITHUB_WORKSPACE/deploy/tss-aiplatform-internal/reproducible/cpu-runtime-images.lock" \
+              sources.lock
+            test "$(grep -Evc '^(#|$)' sources.lock)" -eq 3
+          )
+
+      - name: Record staged CPU runtime result
+        env:
+          RUNTIME_RUN_ID: ${{ inputs.runtime_run_id }}
+          RUNTIME_HEAD_SHA: ${{ inputs.runtime_head_sha }}
+          AIRGAP_STAGE_ROOT: ${{ vars.AIRGAP_STAGE_ROOT }}
+        run: |
+          {
+            echo "### Internal CPU runtime staging"
+            echo "- Export run: \`${RUNTIME_RUN_ID}\`"
+            echo "- Source SHA: \`${RUNTIME_HEAD_SHA}\`"
+            echo "- Stage: \`${AIRGAP_STAGE_ROOT}/${RUNTIME_HEAD_SHA}-${RUNTIME_RUN_ID}\`"
+            echo "- Checksums and three-source lock: passed"
+            echo "- sudo, containerd import and workload scheduling: not attempted"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  deploy-cpu-runtime-images:
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      inputs.task == 'deploy-cpu-runtime-images'
+    runs-on: [self-hosted, Linux, X64, tss-aiplatform-internal, deploy]
+    environment: tss-aiplatform-internal
+    timeout-minutes: 45
+    steps:
+      - name: Check out trusted backend-ops source
+        uses: actions/checkout@v4
+        with:
+          clean: true
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify exact staged CPU runtime artifact and deployment boundary
+        env:
+          RUNTIME_RUN_ID: ${{ inputs.runtime_run_id }}
+          RUNTIME_HEAD_SHA: ${{ inputs.runtime_head_sha }}
+          AIRGAP_STAGE_ROOT: ${{ vars.AIRGAP_STAGE_ROOT }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          [[ "$GITHUB_REF_NAME" == backend-ops || "$GITHUB_REF_NAME" == backend-gpu ]]
+          [[ "$RUNTIME_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$RUNTIME_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
+          git merge-base --is-ancestor "$RUNTIME_HEAD_SHA" "$GITHUB_SHA"
+          [[ "$AIRGAP_STAGE_ROOT" == /* && "$AIRGAP_STAGE_ROOT" != / ]]
+          test -d "$AIRGAP_STAGE_ROOT"
+          test ! -L "$AIRGAP_STAGE_ROOT"
+          stage_root="$(realpath -e "$AIRGAP_STAGE_ROOT")"
+          test "$stage_root" = "$AIRGAP_STAGE_ROOT"
+          target_dir="${stage_root}/${RUNTIME_HEAD_SHA}-${RUNTIME_RUN_ID}"
+          test -d "$target_dir"
+          test ! -L "$target_dir"
+          target_owner="$(stat -c %U "$target_dir")"
+          [[ "$target_owner" == "$(id -un)" || "$target_owner" == root ]]
+          test "$(stat -c %a "$target_dir")" = 700
+
+          git show \
+            "${RUNTIME_HEAD_SHA}:deploy/tss-aiplatform-internal/reproducible/cpu-runtime-images.lock" \
+            > "$RUNNER_TEMP/exported-cpu-runtime-images.lock"
+          cmp "$RUNNER_TEMP/exported-cpu-runtime-images.lock" \
+            deploy/tss-aiplatform-internal/reproducible/cpu-runtime-images.lock
+
+          curl --fail --silent --show-error \
+            --header "Authorization: Bearer ${GH_TOKEN}" \
+            --header "Accept: application/vnd.github+json" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/runs/${RUNTIME_RUN_ID}" \
+            --output "$RUNNER_TEMP/runtime-deploy-export-run.json"
+          python3 - "$RUNNER_TEMP/runtime-deploy-export-run.json" \
+            "$RUNTIME_HEAD_SHA" "$GITHUB_REF_NAME" <<'PY'
+          import json
+          import sys
+
+          metadata_path, expected_sha, expected_branch = sys.argv[1:]
+          with open(metadata_path, encoding="utf-8") as metadata_file:
+              metadata = json.load(metadata_file)
+          expected = {
+              "head_sha": expected_sha,
+              "head_branch": expected_branch,
+              "event": "workflow_dispatch",
+              "status": "completed",
+              "conclusion": "success",
+              "path": ".github/workflows/tss-aiplatform-internal-validation.yml",
+          }
+          mismatches = {
+              key: (metadata.get(key), value)
+              for key, value in expected.items()
+              if metadata.get(key) != value
+          }
+          if mismatches:
+              raise SystemExit(f"untrusted CPU runtime export metadata: {mismatches}")
+          PY
+
+      - name: Import and verify CPU runtime images through the fixed root helper
+        env:
+          RUNTIME_RUN_ID: ${{ inputs.runtime_run_id }}
+          RUNTIME_HEAD_SHA: ${{ inputs.runtime_head_sha }}
+        run: |
+          set -Eeuo pipefail
+          sudo -n /usr/local/sbin/tss-aiplatform-internal-deploy-cpu-runtime \
+            "$RUNTIME_HEAD_SHA" "$RUNTIME_RUN_ID" \
+            | tee "$RUNNER_TEMP/cpu-runtime-deployment.txt"
+          grep -F 'PASS: CPU runtime deployment verified' \
+            "$RUNNER_TEMP/cpu-runtime-deployment.txt"
+
+      - name: Record CPU runtime deployment result
+        run: |
+          {
+            echo "### Internal CPU runtime deployment"
+            echo "- Export run: \`${{ inputs.runtime_run_id }}\`"
+            echo "- Source SHA: \`${{ inputs.runtime_head_sha }}\`"
+            echo "- Root-owned importer and immutable lock checks: passed"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  stage-gpu-runtime-images:
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      inputs.task == 'stage-gpu-runtime-images'
+    runs-on: [self-hosted, Linux, X64, tss-aiplatform-internal, deploy]
+    environment: tss-aiplatform-internal
+    timeout-minutes: 90
+    steps:
+      - name: Check out trusted backend-gpu source
+        uses: actions/checkout@v4
+        with:
+          clean: true
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify trusted GPU runtime export and isolated staging path
+        env:
+          GPU_RUNTIME_RUN_ID: ${{ inputs.gpu_runtime_run_id }}
+          GPU_RUNTIME_HEAD_SHA: ${{ inputs.gpu_runtime_head_sha }}
+          AIRGAP_STAGE_ROOT: ${{ vars.AIRGAP_STAGE_ROOT }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          [[ "$GITHUB_REF" == "refs/heads/backend-gpu" ]]
+          [[ "$GPU_RUNTIME_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$GPU_RUNTIME_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
+          git merge-base --is-ancestor "$GPU_RUNTIME_HEAD_SHA" "$GITHUB_SHA"
+          [[ "$AIRGAP_STAGE_ROOT" == /* ]]
+          test -d "$AIRGAP_STAGE_ROOT"
+          test ! -L "$AIRGAP_STAGE_ROOT"
+          test "$(stat -c %U "$AIRGAP_STAGE_ROOT")" = "$(id -un)"
+          stage_mode="$(stat -c %a "$AIRGAP_STAGE_ROOT")"
+          (( (8#$stage_mode & 0022) == 0 ))
+          stage_root="$(realpath -e "$AIRGAP_STAGE_ROOT")"
+          test "$stage_root" = "$AIRGAP_STAGE_ROOT"
+          target_dir="${stage_root}/${GPU_RUNTIME_HEAD_SHA}-${GPU_RUNTIME_RUN_ID}"
+          test ! -e "$target_dir"
+          test ! -L "$target_dir"
+
+          curl --fail --silent --show-error \
+            --header "Authorization: Bearer ${GH_TOKEN}" \
+            --header "Accept: application/vnd.github+json" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/runs/${GPU_RUNTIME_RUN_ID}" \
+            --output "$RUNNER_TEMP/gpu-runtime-export-run.json"
+          python3 - "$RUNNER_TEMP/gpu-runtime-export-run.json" \
+            "$GPU_RUNTIME_HEAD_SHA" <<'PY'
+          import json
+          import sys
+
+          metadata_path, expected_sha = sys.argv[1:]
+          with open(metadata_path, encoding="utf-8") as metadata_file:
+              metadata = json.load(metadata_file)
+          expected = {
+              "head_sha": expected_sha,
+              "head_branch": "backend-gpu",
+              "event": "workflow_dispatch",
+              "status": "completed",
+              "conclusion": "success",
+              "path": ".github/workflows/tss-aiplatform-internal-validation.yml",
+          }
+          mismatches = {
+              key: (metadata.get(key), value)
+              for key, value in expected.items()
+              if metadata.get(key) != value
+          }
+          if mismatches:
+              raise SystemExit(f"untrusted GPU runtime export metadata: {mismatches}")
+          PY
+
+      - name: Download exact GPU runtime artifact in verified ranges
+        env:
+          GPU_RUNTIME_RUN_ID: ${{ inputs.gpu_runtime_run_id }}
+          GPU_RUNTIME_HEAD_SHA: ${{ inputs.gpu_runtime_head_sha }}
+          AIRGAP_STAGE_ROOT: ${{ vars.AIRGAP_STAGE_ROOT }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 deploy/tss-aiplatform-internal/ci/download-airgap-artifact.py \
+            --repository "$GITHUB_REPOSITORY" \
+            --run-id "$GPU_RUNTIME_RUN_ID" \
+            --head-sha "$GPU_RUNTIME_HEAD_SHA" \
+            --stage-root "$AIRGAP_STAGE_ROOT" \
+            --profile gpu-runtime \
+            --workers 16
+
+      - name: Verify staged GPU runtime bundle before import
+        env:
+          GPU_RUNTIME_RUN_ID: ${{ inputs.gpu_runtime_run_id }}
+          GPU_RUNTIME_HEAD_SHA: ${{ inputs.gpu_runtime_head_sha }}
+          AIRGAP_STAGE_ROOT: ${{ vars.AIRGAP_STAGE_ROOT }}
+        run: |
+          set -Eeuo pipefail
+          target_dir="${AIRGAP_STAGE_ROOT}/${GPU_RUNTIME_HEAD_SHA}-${GPU_RUNTIME_RUN_ID}"
+          test -d "$target_dir"
+          test ! -L "$target_dir"
+          test "$(find "$target_dir" -mindepth 1 -maxdepth 1 -type f | wc -l)" -eq 3
+          test "$(find "$target_dir" -mindepth 1 -maxdepth 1 ! -type f | wc -l)" -eq 0
+          (
+            cd "$target_dir"
+            test "$(awk '{print $2}' gpu-runtime.sha256)" = $'gpu-runtime-amd64.tar\nsources.lock'
+            sha256sum --check --strict gpu-runtime.sha256
+            git -C "$GITHUB_WORKSPACE" show \
+              "${GPU_RUNTIME_HEAD_SHA}:deploy/tss-aiplatform-internal/reproducible/gpu-runtime-images.lock" \
+              > "$RUNNER_TEMP/exported-gpu-runtime-images.lock"
+            cmp "$RUNNER_TEMP/exported-gpu-runtime-images.lock" sources.lock
+            cmp "$GITHUB_WORKSPACE/deploy/tss-aiplatform-internal/reproducible/gpu-runtime-images.lock" \
+              sources.lock
+            test "$(grep -Evc '^(#|$)' sources.lock)" -eq 3
+          )
+
+      - name: Record staged GPU runtime result
+        env:
+          GPU_RUNTIME_RUN_ID: ${{ inputs.gpu_runtime_run_id }}
+          GPU_RUNTIME_HEAD_SHA: ${{ inputs.gpu_runtime_head_sha }}
+          AIRGAP_STAGE_ROOT: ${{ vars.AIRGAP_STAGE_ROOT }}
+        run: |
+          {
+            echo "### Internal GPU runtime staging"
+            echo "- Export run: \`${GPU_RUNTIME_RUN_ID}\`"
+            echo "- Source SHA: \`${GPU_RUNTIME_HEAD_SHA}\`"
+            echo "- Stage: \`${AIRGAP_STAGE_ROOT}/${GPU_RUNTIME_HEAD_SHA}-${GPU_RUNTIME_RUN_ID}\`"
+            echo "- Checksums and three-source lock: passed"
+            echo "- sudo, containerd import, Device Plugin and workloads: not attempted"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  deploy-gpu-runtime-images:
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      inputs.task == 'deploy-gpu-runtime-images'
+    runs-on: [self-hosted, Linux, X64, tss-aiplatform-internal, deploy]
+    environment: tss-aiplatform-internal
+    timeout-minutes: 60
+    steps:
+      - name: Check out trusted backend-gpu source
+        uses: actions/checkout@v4
+        with:
+          clean: true
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify exact staged GPU runtime artifact and deployment boundary
+        env:
+          GPU_RUNTIME_RUN_ID: ${{ inputs.gpu_runtime_run_id }}
+          GPU_RUNTIME_HEAD_SHA: ${{ inputs.gpu_runtime_head_sha }}
+          AIRGAP_STAGE_ROOT: ${{ vars.AIRGAP_STAGE_ROOT }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          [[ "$GITHUB_REF" == "refs/heads/backend-gpu" ]]
+          [[ "$GPU_RUNTIME_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$GPU_RUNTIME_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
+          git merge-base --is-ancestor "$GPU_RUNTIME_HEAD_SHA" "$GITHUB_SHA"
+          [[ "$AIRGAP_STAGE_ROOT" == /* && "$AIRGAP_STAGE_ROOT" != / ]]
+          test -d "$AIRGAP_STAGE_ROOT"
+          test ! -L "$AIRGAP_STAGE_ROOT"
+          stage_root="$(realpath -e "$AIRGAP_STAGE_ROOT")"
+          test "$stage_root" = "$AIRGAP_STAGE_ROOT"
+          target_dir="${stage_root}/${GPU_RUNTIME_HEAD_SHA}-${GPU_RUNTIME_RUN_ID}"
+          test -d "$target_dir"
+          test ! -L "$target_dir"
+          target_owner="$(stat -c %U "$target_dir")"
+          [[ "$target_owner" == "$(id -un)" || "$target_owner" == root ]]
+          test "$(stat -c %a "$target_dir")" = 700
+
+          git show \
+            "${GPU_RUNTIME_HEAD_SHA}:deploy/tss-aiplatform-internal/reproducible/gpu-runtime-images.lock" \
+            > "$RUNNER_TEMP/exported-gpu-runtime-images.lock"
+          cmp "$RUNNER_TEMP/exported-gpu-runtime-images.lock" \
+            deploy/tss-aiplatform-internal/reproducible/gpu-runtime-images.lock
+
+          curl --fail --silent --show-error \
+            --header "Authorization: Bearer ${GH_TOKEN}" \
+            --header "Accept: application/vnd.github+json" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/runs/${GPU_RUNTIME_RUN_ID}" \
+            --output "$RUNNER_TEMP/gpu-runtime-deploy-export-run.json"
+          python3 - "$RUNNER_TEMP/gpu-runtime-deploy-export-run.json" \
+            "$GPU_RUNTIME_HEAD_SHA" <<'PY'
+          import json
+          import sys
+
+          metadata_path, expected_sha = sys.argv[1:]
+          with open(metadata_path, encoding="utf-8") as metadata_file:
+              metadata = json.load(metadata_file)
+          expected = {
+              "head_sha": expected_sha,
+              "head_branch": "backend-gpu",
+              "event": "workflow_dispatch",
+              "status": "completed",
+              "conclusion": "success",
+              "path": ".github/workflows/tss-aiplatform-internal-validation.yml",
+          }
+          mismatches = {
+              key: (metadata.get(key), value)
+              for key, value in expected.items()
+              if metadata.get(key) != value
+          }
+          if mismatches:
+              raise SystemExit(f"untrusted GPU runtime export metadata: {mismatches}")
+          PY
+
+      - name: Import and verify GPU runtime images through the fixed root helper
+        env:
+          GPU_RUNTIME_RUN_ID: ${{ inputs.gpu_runtime_run_id }}
+          GPU_RUNTIME_HEAD_SHA: ${{ inputs.gpu_runtime_head_sha }}
+        run: |
+          set -Eeuo pipefail
+          sudo -n /usr/local/sbin/tss-aiplatform-internal-deploy-gpu-runtime \
+            "$GPU_RUNTIME_HEAD_SHA" "$GPU_RUNTIME_RUN_ID" \
+            | tee "$RUNNER_TEMP/gpu-runtime-deployment.txt"
+          grep -F 'PASS: GPU runtime deployment verified without enabling workloads' \
+            "$RUNNER_TEMP/gpu-runtime-deployment.txt"
+
+      - name: Record GPU runtime deployment result
+        run: |
+          {
+            echo "### Internal GPU runtime deployment"
+            echo "- Export run: \`${{ inputs.gpu_runtime_run_id }}\`"
+            echo "- Source SHA: \`${{ inputs.gpu_runtime_head_sha }}\`"
+            echo "- Root-owned importer and immutable lock checks: passed"
+            echo "- Device Plugin and GPU workloads: not enabled"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  stage-platform-images:
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      inputs.task == 'stage-platform-images'
+    runs-on: [self-hosted, Linux, X64, tss-aiplatform-internal, deploy]
+    environment: tss-aiplatform-internal
+    timeout-minutes: 30
+    steps:
+      - name: Check out trusted backend-ops source
+        uses: actions/checkout@v4
+        with:
+          clean: true
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify trusted platform-image export and isolated staging path
+        env:
+          PLATFORM_RUN_ID: ${{ inputs.platform_run_id }}
+          PLATFORM_HEAD_SHA: ${{ inputs.platform_head_sha }}
+          AIRGAP_STAGE_ROOT: ${{ vars.AIRGAP_STAGE_ROOT }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          [[ "$GITHUB_REF" == "refs/heads/backend-ops" ]]
+          [[ "$PLATFORM_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$PLATFORM_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
+          git merge-base --is-ancestor "$PLATFORM_HEAD_SHA" "$GITHUB_SHA"
+          [[ "$AIRGAP_STAGE_ROOT" == /* ]]
+          test -d "$AIRGAP_STAGE_ROOT"
+          test ! -L "$AIRGAP_STAGE_ROOT"
+          test "$(stat -c %U "$AIRGAP_STAGE_ROOT")" = "$(id -un)"
+          stage_mode="$(stat -c %a "$AIRGAP_STAGE_ROOT")"
+          (( (8#$stage_mode & 0022) == 0 ))
+          stage_root="$(realpath -e "$AIRGAP_STAGE_ROOT")"
+          test "$stage_root" = "$AIRGAP_STAGE_ROOT"
+          target_dir="${stage_root}/${PLATFORM_HEAD_SHA}-${PLATFORM_RUN_ID}"
+          test ! -e "$target_dir"
+          test ! -L "$target_dir"
+
+          curl --fail --silent --show-error \
+            --header "Authorization: Bearer ${GH_TOKEN}" \
+            --header "Accept: application/vnd.github+json" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/runs/${PLATFORM_RUN_ID}" \
+            --output "$RUNNER_TEMP/platform-export-run.json"
+          python3 - "$RUNNER_TEMP/platform-export-run.json" \
+            "$PLATFORM_HEAD_SHA" <<'PY'
+          import json
+          import sys
+
+          metadata_path, expected_sha = sys.argv[1:]
+          with open(metadata_path, encoding="utf-8") as metadata_file:
+              metadata = json.load(metadata_file)
+          expected = {
+              "head_sha": expected_sha,
+              "head_branch": "backend-ops",
+              "event": "workflow_dispatch",
+              "status": "completed",
+              "conclusion": "success",
+              "path": ".github/workflows/tss-aiplatform-internal-validation.yml",
+          }
+          mismatches = {
+              key: (metadata.get(key), value)
+              for key, value in expected.items()
+              if metadata.get(key) != value
+          }
+          if mismatches:
+              raise SystemExit(f"untrusted platform-image export metadata: {mismatches}")
+          PY
+
+      - name: Download exact platform-image artifact in verified ranges
+        env:
+          PLATFORM_RUN_ID: ${{ inputs.platform_run_id }}
+          PLATFORM_HEAD_SHA: ${{ inputs.platform_head_sha }}
+          AIRGAP_STAGE_ROOT: ${{ vars.AIRGAP_STAGE_ROOT }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 deploy/tss-aiplatform-internal/ci/download-airgap-artifact.py \
+            --repository "$GITHUB_REPOSITORY" \
+            --run-id "$PLATFORM_RUN_ID" \
+            --head-sha "$PLATFORM_HEAD_SHA" \
+            --stage-root "$AIRGAP_STAGE_ROOT" \
+            --profile platform \
+            --workers 16
+
+      - name: Verify staged platform-image bundle before import
+        env:
+          PLATFORM_RUN_ID: ${{ inputs.platform_run_id }}
+          PLATFORM_HEAD_SHA: ${{ inputs.platform_head_sha }}
+          AIRGAP_STAGE_ROOT: ${{ vars.AIRGAP_STAGE_ROOT }}
+        run: |
+          set -Eeuo pipefail
+          target_dir="${AIRGAP_STAGE_ROOT}/${PLATFORM_HEAD_SHA}-${PLATFORM_RUN_ID}"
+          test -d "$target_dir"
+          test ! -L "$target_dir"
+          test "$(find "$target_dir" -mindepth 1 -maxdepth 1 -type f | wc -l)" -eq 3
+          test "$(find "$target_dir" -mindepth 1 -maxdepth 1 ! -type f | wc -l)" -eq 0
+          (
+            cd "$target_dir"
+            test "$(awk '{print $2}' platform-images.sha256)" = $'platform-images-amd64.tar\nsources.lock'
+            sha256sum --check --strict platform-images.sha256
+            git -C "$GITHUB_WORKSPACE" show \
+              "${PLATFORM_HEAD_SHA}:deploy/tss-aiplatform-internal/platform/platform-images.lock" \
+              > "$RUNNER_TEMP/exported-platform-images.lock"
+            cmp "$RUNNER_TEMP/exported-platform-images.lock" sources.lock
+            cmp "$GITHUB_WORKSPACE/deploy/tss-aiplatform-internal/platform/platform-images.lock" \
+              sources.lock
+            test "$(grep -Evc '^(#|$)' sources.lock)" -eq 5
+          )
+
+      - name: Record staged platform-image result
+        env:
+          PLATFORM_RUN_ID: ${{ inputs.platform_run_id }}
+          PLATFORM_HEAD_SHA: ${{ inputs.platform_head_sha }}
+          AIRGAP_STAGE_ROOT: ${{ vars.AIRGAP_STAGE_ROOT }}
+        run: |
+          {
+            echo "### Internal platform-image staging"
+            echo "- Export run: \`${PLATFORM_RUN_ID}\`"
+            echo "- Source SHA: \`${PLATFORM_HEAD_SHA}\`"
+            echo "- Stage: \`${AIRGAP_STAGE_ROOT}/${PLATFORM_HEAD_SHA}-${PLATFORM_RUN_ID}\`"
+            echo "- Checksums and five-source lock: passed"
+            echo "- sudo, Docker import and platform restart: not attempted"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  deploy-backend:
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      inputs.task == 'deploy-backend'
+    runs-on: [self-hosted, Linux, X64, tss-aiplatform-internal, deploy]
+    environment: tss-aiplatform-internal
+    timeout-minutes: 45
+    steps:
+      - name: Check out trusted backend-ops source
+        uses: actions/checkout@v4
+        with:
+          clean: true
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify exact backend export and restricted control channel
+        env:
+          BACKEND_RUN_ID: ${{ inputs.backend_run_id }}
+          BACKEND_HEAD_SHA: ${{ inputs.backend_head_sha }}
+          CONTROL_PLANE_HOST: ${{ vars.CONTROL_PLANE_HOST }}
+          CONTROL_PLANE_DEPLOYMENT_USER: ${{ vars.CONTROL_PLANE_DEPLOYMENT_USER }}
+          CONTROL_PLANE_SSH_KEY: ${{ vars.CONTROL_PLANE_SSH_KEY }}
+          CONTROL_PLANE_KNOWN_HOSTS: ${{ vars.CONTROL_PLANE_KNOWN_HOSTS }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          [[ "$GITHUB_REF_NAME" == backend-ops || "$GITHUB_REF_NAME" == backend-gpu ]]
+          [[ "$GITHUB_SHA" == "$BACKEND_HEAD_SHA" ]]
+          [[ "$BACKEND_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$BACKEND_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$CONTROL_PLANE_HOST" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]]
+          [[ "$CONTROL_PLANE_DEPLOYMENT_USER" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]]
+          [[ "$CONTROL_PLANE_SSH_KEY" == /* && "$CONTROL_PLANE_KNOWN_HOSTS" == /* ]]
+          test -f "$CONTROL_PLANE_SSH_KEY"
+          test ! -L "$CONTROL_PLANE_SSH_KEY"
+          test "$(stat -c %U "$CONTROL_PLANE_SSH_KEY")" = "$(id -un)"
+          test "$(stat -c %a "$CONTROL_PLANE_SSH_KEY")" = 600
+          test -f "$CONTROL_PLANE_KNOWN_HOSTS"
+          test ! -L "$CONTROL_PLANE_KNOWN_HOSTS"
+          test "$(stat -c %U "$CONTROL_PLANE_KNOWN_HOSTS")" = "$(id -un)"
+          known_hosts_mode="$(stat -c %a "$CONTROL_PLANE_KNOWN_HOSTS")"
+          (( (8#$known_hosts_mode & 0022) == 0 ))
+
+          curl --fail --silent --show-error \
+            --header "Authorization: Bearer ${GH_TOKEN}" \
+            --header "Accept: application/vnd.github+json" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/runs/${BACKEND_RUN_ID}" \
+            --output "$RUNNER_TEMP/backend-export-run.json"
+          python3 - "$RUNNER_TEMP/backend-export-run.json" "$BACKEND_HEAD_SHA" "$GITHUB_REF_NAME" <<'PY'
+          import json
+          import sys
+
+          metadata_path, expected_sha, expected_branch = sys.argv[1:]
+          with open(metadata_path, encoding="utf-8") as metadata_file:
+              metadata = json.load(metadata_file)
+          expected = {
+              "head_sha": expected_sha,
+              "head_branch": expected_branch,
+              "event": "workflow_dispatch",
+              "status": "completed",
+              "conclusion": "success",
+              "path": ".github/workflows/tss-aiplatform-internal-validation.yml",
+          }
+          mismatches = {
+              key: (metadata.get(key), value)
+              for key, value in expected.items()
+              if metadata.get(key) != value
+          }
+          if mismatches:
+              raise SystemExit(f"untrusted backend-image export metadata: {mismatches}")
+          PY
+
+      - name: Download and verify exact backend-image artifact
+        env:
+          BACKEND_RUN_ID: ${{ inputs.backend_run_id }}
+          BACKEND_HEAD_SHA: ${{ inputs.backend_head_sha }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          download_root="$RUNNER_TEMP/internal-backend-download"
+          install -d -m 0700 "$download_root"
+          python3 deploy/tss-aiplatform-internal/ci/download-airgap-artifact.py \
+            --repository "$GITHUB_REPOSITORY" \
+            --run-id "$BACKEND_RUN_ID" \
+            --head-sha "$BACKEND_HEAD_SHA" \
+            --stage-root "$download_root" \
+            --profile backend-image \
+            --workers 16
+          target_dir="${download_root}/${BACKEND_HEAD_SHA}-${BACKEND_RUN_ID}"
+          test -d "$target_dir"
+          test ! -L "$target_dir"
+          test "$(find "$target_dir" -mindepth 1 -maxdepth 1 -type f | wc -l)" -eq 3
+          test "$(find "$target_dir" -mindepth 1 -maxdepth 1 ! -type f | wc -l)" -eq 0
+          (
+            cd "$target_dir"
+            test "$(awk '{print $2}' backend-image.sha256)" = $'backend-image-amd64.tar\nsources.lock'
+            sha256sum --check --strict backend-image.sha256
+            grep '^ghcr.io/tssai-lab/tssai-backend:' \
+              "$GITHUB_WORKSPACE/deploy/tss-aiplatform-internal/platform/platform-images.lock" \
+              > "$RUNNER_TEMP/current-backend.lock"
+            test "$(wc -l < "$RUNNER_TEMP/current-backend.lock")" -eq 1
+            cmp "$RUNNER_TEMP/current-backend.lock" sources.lock
+          )
+          printf 'BACKEND_TARGET_DIR=%s\n' "$target_dir" >> "$GITHUB_ENV"
+
+      - name: Synchronize, stage and deploy through the restricted gateway
+        env:
+          CONTROL_PLANE_HOST: ${{ vars.CONTROL_PLANE_HOST }}
+          CONTROL_PLANE_DEPLOYMENT_USER: ${{ vars.CONTROL_PLANE_DEPLOYMENT_USER }}
+          CONTROL_PLANE_SSH_KEY: ${{ vars.CONTROL_PLANE_SSH_KEY }}
+          CONTROL_PLANE_KNOWN_HOSTS: ${{ vars.CONTROL_PLANE_KNOWN_HOSTS }}
+        run: |
+          set -Eeuo pipefail
+          source_bundle="$RUNNER_TEMP/internal-release-source.bundle"
+          source_ref=refs/tss-aiplatform/internal-release
+          git update-ref "$source_ref" "$GITHUB_SHA"
+          trap 'git update-ref -d refs/tss-aiplatform/internal-release >/dev/null 2>&1 || true' EXIT
+          git bundle create "$source_bundle" "$source_ref"
+          git update-ref -d "$source_ref"
+          trap - EXIT
+          git bundle verify "$source_bundle"
+          [[ "$(git bundle list-heads "$source_bundle" "$source_ref")" == \
+            "${GITHUB_SHA} ${source_ref}" ]]
+          source_bundle_size="$(stat -c %s "$source_bundle")"
+          (( source_bundle_size > 0 && source_bundle_size <= 128 * 1024 * 1024 ))
+          ssh_options=(
+            -i "$CONTROL_PLANE_SSH_KEY"
+            -o BatchMode=yes
+            -o IdentitiesOnly=yes
+            -o StrictHostKeyChecking=yes
+            -o "UserKnownHostsFile=${CONTROL_PLANE_KNOWN_HOSTS}"
+            -o ConnectTimeout=10
+            -o ServerAliveInterval=15
+            -o ServerAliveCountMax=2
+          )
+          ssh "${ssh_options[@]}" "${CONTROL_PLANE_DEPLOYMENT_USER}@${CONTROL_PLANE_HOST}" probe
+          ssh "${ssh_options[@]}" "${CONTROL_PLANE_DEPLOYMENT_USER}@${CONTROL_PLANE_HOST}" \
+            "stage-source ${GITHUB_SHA}" < "$source_bundle"
+          ssh "${ssh_options[@]}" "${CONTROL_PLANE_DEPLOYMENT_USER}@${CONTROL_PLANE_HOST}" "sync ${GITHUB_SHA}"
+          tar -C "$BACKEND_TARGET_DIR" -cf - \
+            backend-image-amd64.tar backend-image.sha256 sources.lock \
+            | ssh "${ssh_options[@]}" "${CONTROL_PLANE_DEPLOYMENT_USER}@${CONTROL_PLANE_HOST}" stage-backend
+          ssh "${ssh_options[@]}" "${CONTROL_PLANE_DEPLOYMENT_USER}@${CONTROL_PLANE_HOST}" deploy-backend
+          ssh "${ssh_options[@]}" "${CONTROL_PLANE_DEPLOYMENT_USER}@${CONTROL_PLANE_HOST}" probe \
+            | tee "$RUNNER_TEMP/internal-backend-deployment-state.txt"
+          grep -Fx "TSS_INFRASTRUCTURE_SHA=${GITHUB_SHA}" \
+            "$RUNNER_TEMP/internal-backend-deployment-state.txt"
+
+      - name: Record internal backend deployment result
+        run: |
+          {
+            echo "### Internal backend deployment"
+            echo "- Infrastructure SHA: \`${GITHUB_SHA}\`"
+            echo "- Backend export run: \`${{ inputs.backend_run_id }}\`"
+            echo "- Artifact SHA: \`${{ inputs.backend_head_sha }}\`"
+            echo "- Restricted SSH gateway: passed"
+            echo "- Platform verification and independent release record: passed"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  deploy-frontend:
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      inputs.task == 'deploy-frontend'
+    runs-on: [self-hosted, Linux, X64, tss-aiplatform-internal, deploy]
+    environment: tss-aiplatform-internal
+    timeout-minutes: 30
+    steps:
+      - name: Check out trusted backend-ops source
+        uses: actions/checkout@v4
+        with:
+          clean: true
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify exact frontend export and restricted control channel
+        env:
+          FRONTEND_RUN_ID: ${{ inputs.frontend_run_id }}
+          FRONTEND_HEAD_SHA: ${{ inputs.frontend_head_sha }}
+          CONTROL_PLANE_HOST: ${{ vars.CONTROL_PLANE_HOST }}
+          CONTROL_PLANE_DEPLOYMENT_USER: ${{ vars.CONTROL_PLANE_DEPLOYMENT_USER }}
+          CONTROL_PLANE_SSH_KEY: ${{ vars.CONTROL_PLANE_SSH_KEY }}
+          CONTROL_PLANE_KNOWN_HOSTS: ${{ vars.CONTROL_PLANE_KNOWN_HOSTS }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          [[ "$GITHUB_REF_NAME" == backend-ops || "$GITHUB_REF_NAME" == backend-gpu ]]
+          [[ "$GITHUB_SHA" == "$FRONTEND_HEAD_SHA" ]]
+          [[ "$FRONTEND_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$FRONTEND_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$CONTROL_PLANE_HOST" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]]
+          [[ "$CONTROL_PLANE_DEPLOYMENT_USER" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]]
+          [[ "$CONTROL_PLANE_SSH_KEY" == /* && "$CONTROL_PLANE_KNOWN_HOSTS" == /* ]]
+          test -f "$CONTROL_PLANE_SSH_KEY"
+          test ! -L "$CONTROL_PLANE_SSH_KEY"
+          test "$(stat -c %U "$CONTROL_PLANE_SSH_KEY")" = "$(id -un)"
+          test "$(stat -c %a "$CONTROL_PLANE_SSH_KEY")" = 600
+          test -f "$CONTROL_PLANE_KNOWN_HOSTS"
+          test ! -L "$CONTROL_PLANE_KNOWN_HOSTS"
+          test "$(stat -c %U "$CONTROL_PLANE_KNOWN_HOSTS")" = "$(id -un)"
+          known_hosts_mode="$(stat -c %a "$CONTROL_PLANE_KNOWN_HOSTS")"
+          (( (8#$known_hosts_mode & 0022) == 0 ))
+
+          curl --fail --silent --show-error \
+            --header "Authorization: Bearer ${GH_TOKEN}" \
+            --header "Accept: application/vnd.github+json" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/runs/${FRONTEND_RUN_ID}" \
+            --output "$RUNNER_TEMP/frontend-export-run.json"
+          python3 - "$RUNNER_TEMP/frontend-export-run.json" "$FRONTEND_HEAD_SHA" "$GITHUB_REF_NAME" <<'PY'
+          import json
+          import sys
+
+          metadata_path, expected_sha, expected_branch = sys.argv[1:]
+          with open(metadata_path, encoding="utf-8") as metadata_file:
+              metadata = json.load(metadata_file)
+          expected = {
+              "head_sha": expected_sha,
+              "head_branch": expected_branch,
+              "event": "workflow_dispatch",
+              "status": "completed",
+              "conclusion": "success",
+              "path": ".github/workflows/tss-aiplatform-internal-validation.yml",
+          }
+          mismatches = {
+              key: (metadata.get(key), value)
+              for key, value in expected.items()
+              if metadata.get(key) != value
+          }
+          if mismatches:
+              raise SystemExit(f"untrusted frontend-image export metadata: {mismatches}")
+          PY
+
+      - name: Download and verify exact frontend-image artifact
+        env:
+          FRONTEND_RUN_ID: ${{ inputs.frontend_run_id }}
+          FRONTEND_HEAD_SHA: ${{ inputs.frontend_head_sha }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          download_root="$RUNNER_TEMP/internal-frontend-download"
+          install -d -m 0700 "$download_root"
+          python3 deploy/tss-aiplatform-internal/ci/download-airgap-artifact.py \
+            --repository "$GITHUB_REPOSITORY" \
+            --run-id "$FRONTEND_RUN_ID" \
+            --head-sha "$FRONTEND_HEAD_SHA" \
+            --stage-root "$download_root" \
+            --profile frontend-image \
+            --workers 8
+          target_dir="${download_root}/${FRONTEND_HEAD_SHA}-${FRONTEND_RUN_ID}"
+          test -d "$target_dir"
+          test ! -L "$target_dir"
+          test "$(find "$target_dir" -mindepth 1 -maxdepth 1 -type f | wc -l)" -eq 3
+          test "$(find "$target_dir" -mindepth 1 -maxdepth 1 ! -type f | wc -l)" -eq 0
+          (
+            cd "$target_dir"
+            test "$(awk '{print $2}' frontend-image.sha256)" = $'frontend-image-amd64.tar\nsources.lock'
+            sha256sum --check --strict frontend-image.sha256
+            cmp "$GITHUB_WORKSPACE/deploy/tss-aiplatform-internal/platform/frontend-image.lock" \
+              sources.lock
+            test "$(grep -Evc '^(#|$)' sources.lock)" -eq 1
+          )
+          printf 'FRONTEND_TARGET_DIR=%s\n' "$target_dir" >> "$GITHUB_ENV"
+
+      - name: Synchronize, stage and deploy through the restricted gateway
+        env:
+          CONTROL_PLANE_HOST: ${{ vars.CONTROL_PLANE_HOST }}
+          CONTROL_PLANE_DEPLOYMENT_USER: ${{ vars.CONTROL_PLANE_DEPLOYMENT_USER }}
+          CONTROL_PLANE_SSH_KEY: ${{ vars.CONTROL_PLANE_SSH_KEY }}
+          CONTROL_PLANE_KNOWN_HOSTS: ${{ vars.CONTROL_PLANE_KNOWN_HOSTS }}
+        run: |
+          set -Eeuo pipefail
+          source_bundle="$RUNNER_TEMP/internal-release-source.bundle"
+          source_ref=refs/tss-aiplatform/internal-release
+          git update-ref "$source_ref" "$GITHUB_SHA"
+          trap 'git update-ref -d refs/tss-aiplatform/internal-release >/dev/null 2>&1 || true' EXIT
+          git bundle create "$source_bundle" "$source_ref"
+          git update-ref -d "$source_ref"
+          trap - EXIT
+          git bundle verify "$source_bundle"
+          [[ "$(git bundle list-heads "$source_bundle" "$source_ref")" == \
+            "${GITHUB_SHA} ${source_ref}" ]]
+          source_bundle_size="$(stat -c %s "$source_bundle")"
+          (( source_bundle_size > 0 && source_bundle_size <= 128 * 1024 * 1024 ))
+          ssh_options=(
+            -i "$CONTROL_PLANE_SSH_KEY"
+            -o BatchMode=yes
+            -o IdentitiesOnly=yes
+            -o StrictHostKeyChecking=yes
+            -o "UserKnownHostsFile=${CONTROL_PLANE_KNOWN_HOSTS}"
+            -o ConnectTimeout=10
+            -o ServerAliveInterval=15
+            -o ServerAliveCountMax=2
+          )
+          ssh "${ssh_options[@]}" "${CONTROL_PLANE_DEPLOYMENT_USER}@${CONTROL_PLANE_HOST}" probe-frontend
+          ssh "${ssh_options[@]}" "${CONTROL_PLANE_DEPLOYMENT_USER}@${CONTROL_PLANE_HOST}" \
+            "stage-source ${GITHUB_SHA}" < "$source_bundle"
+          ssh "${ssh_options[@]}" "${CONTROL_PLANE_DEPLOYMENT_USER}@${CONTROL_PLANE_HOST}" "sync ${GITHUB_SHA}"
+          tar --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner \
+            --mode='u+rw,go-rwx' -C "$FRONTEND_TARGET_DIR" -cf - \
+            frontend-image-amd64.tar frontend-image.sha256 sources.lock \
+            | ssh "${ssh_options[@]}" "${CONTROL_PLANE_DEPLOYMENT_USER}@${CONTROL_PLANE_HOST}" stage-frontend
+          ssh "${ssh_options[@]}" "${CONTROL_PLANE_DEPLOYMENT_USER}@${CONTROL_PLANE_HOST}" deploy-frontend
+          ssh "${ssh_options[@]}" "${CONTROL_PLANE_DEPLOYMENT_USER}@${CONTROL_PLANE_HOST}" probe-frontend \
+            | tee "$RUNNER_TEMP/internal-frontend-deployment-state.txt"
+          grep -Fx "TSS_INFRASTRUCTURE_SHA=${GITHUB_SHA}" \
+            "$RUNNER_TEMP/internal-frontend-deployment-state.txt"
+
+      - name: Record internal frontend deployment result
+        run: |
+          {
+            echo "### Internal frontend deployment"
+            echo "- Infrastructure SHA: \`${GITHUB_SHA}\`"
+            echo "- Frontend export run: \`${{ inputs.frontend_run_id }}\`"
+            echo "- Artifact SHA: \`${{ inputs.frontend_head_sha }}\`"
+            echo "- Restricted SSH gateway: passed"
+            echo "- Locked image, health and backend-proxy checks: passed"
+          } >> "$GITHUB_STEP_SUMMARY"
