@@ -1,17 +1,17 @@
-# 接口契约 V1.1（拟实现）
+# 接口契约 V1.1
 
-前缀 `/api/labeling/v1`。这是本平台业务契约，不是Label Studio原生API。尚未实现，不应将示例当作可调用线上接口。
+前缀 `/api/labeling/v1`。这是本平台业务契约，不是Label Studio原生API。身份与项目接口已在本地标注服务实现；其余路径仍是设计契约，不能视为已上线能力。
 
 ## 1. 通用规则
 
 - 使用现有统一登录Bearer Token，后端解析身份；不信任请求体中的owner/actor/role。标注管理员权限单独判断，不用训练roleId替代。
 - 成功返回200/201；异步任务202。统一JSON响应 `{ "data": ..., "requestId": "..." }`，文件下载除外。
 - 错误 `{ "error": {"code":"SLOT_FULL","message":"任务包已被领满"}, "requestId":"..." }`。
-- ID为不透明字符串，时间ISO8601 UTC；列表用cursor、limit（默认20，上限100），响应items/nextCursor。
+- 数据库业务ID为UUID，API以规范UUID字符串传递，调用方将ID视为不透明值；`identityUserId`保持统一身份服务给出的原始字符串。时间ISO8601 UTC；列表用cursor、limit（默认20，上限100），响应items/nextCursor。
 - 创建、发布、领取、放弃、提交、导出等POST写操作必须带Idempotency-Key；同调用者/方法/资源/键和相同请求返回原结果，同键不同内容409。幂等记录至少保存到所属资源归档清理，清理后仍由业务唯一约束防重复。
 - 草稿用baseRevision，分片用offset与sha256；二者按各自协议避免重复。403/404统一隐藏不属于调用者的资源，不能通过错误枚举他人数据。
 
-原始样本、编辑器和草稿访问还须项目处于OPEN；暂停时本人不可继续读取工作数据。本人已提交结果可只读查看；owner可管理历史结果并导出。归档后不允许新业务写入。创建项目的taskType与规范taskType必须一致，不能跨类型发布。
+原始样本、编辑器和草稿访问还须项目处于OPEN；暂停时本人不可继续读取工作数据。本人已提交结果可只读查看；owner可管理历史结果并导出。归档后禁止新增标注、导入和发布；owner仍可查看历史结果并创建只读结果导出任务。创建项目的taskType与规范taskType必须一致，不能跨类型发布。
 
 ## 2. 身份与项目
 
@@ -20,11 +20,13 @@
 | GET /me | 标注平台启用用户 | 无 | actorId、labelingAdmin、canCreateProject=true、canAnnotate=true |
 | POST /projects | 任意启用人工用户，无需审批 | name、description、taskType | 201 projectId、ownerActorId、DRAFT、revision |
 | GET /projects?scope=owned | 当前用户 | cursor/limit | 只列本人创建项目；不是全站项目原数据入口 |
-| GET /projects/{projectId} | 项目owner | 无 | 项目、批次、规范摘要、进度 |
+| GET /projects/{projectId} | 项目owner | 无 | 项目与已有规范版本；批次和进度随数据导入模块补齐 |
 | POST /projects/{projectId}/pause | owner或标注管理员 | reason、baseRevision | PAUSED和新revision |
 | POST /projects/{projectId}/resume | owner或标注管理员 | baseRevision | OPEN和新revision；规范/批次需仍有效 |
-| POST /projects/{projectId}/archive | owner或标注管理员 | reason、baseRevision | 无有效领取后ARCHIVED，否则409 |
+| POST /projects/{projectId}/archive | owner或标注管理员 | reason、baseRevision | 无有效领取及执行中发布/导入任务后ARCHIVED，否则409 |
 | POST /projects/{projectId}/spec-versions | owner | taskType、labels[{id,name}]、instructions、editorConfig、schemaVersion | 新specVersionId；不能原位改已发布规范 |
+
+上表中的身份、建项、本人项目列表和项目详情接口已在本地服务实现。服务将原始 `Authorization` 头转交训练后端 `/api/user/current-user` 验证，再把身份ID映射为唯一HUMAN actor；不读取或复制训练平台roleId。训练后端不可用时返回503。项目仅owner可查看和管理。创建项目与创建规范版本要求 `Idempotency-Key`，相同键和请求返回原资源，不同请求复用同键返回409。`taskType`先按大写编码保存，具体首期任务模板仍需团队确认后冻结。
 
 创建示例：
 ```json
@@ -61,7 +63,9 @@
 | POST /assignments/{assignmentId}/release | 本人 | baseRevision、reason | RELEASED；已提交409 |
 | POST /admin/assignments/{assignmentId}/revoke | 标注管理员 | baseRevision、reason必填 | REVOKED；不自动赋予查看原数据权限 |
 
-默认packageSize=10、annotatorsPerSample=1，必须为正整数并满足配置上限；发布后冻结。N=2为同包创建2个不同人的席位，remainingSlots不能为负。同人重复领取409 ALREADY_CLAIMED；相同幂等键重试返回第一次领取响应。
+同批次只能正式发布一次；成功计划的publishedAt永久保留。重复发布同一计划返回原结果；同批次其他计划已发布返回409 BATCH_ALREADY_PUBLISHED。发布前检查样本集合、每包人数与席位编号1..N完整，失败不开放领取。
+
+默认packageSize=10、annotatorsPerSample=1，必须为正整数并满足配置上限；发布后冻结。N=2为同包创建2个不同人的席位，remainingSlots不能为负。可用席位暂时被并发事务锁定返回409 CLAIM_BUSY，客户端刷新后有限次重试；确定已领满才返回SLOT_FULL。同人重复领取409 ALREADY_CLAIMED；相同幂等键重试返回第一次领取响应。
 
 ## 5. 编辑器与保存提交
 
@@ -87,9 +91,9 @@
 ```json
 {"items":[{"sampleId":"sample-001","revision":3},{"sampleId":"sample-002","revision":1}]}
 ```
-必须与包成员完全一致；漏样本、多样本、未完成或过期revision分别返回422 INCOMPLETE_PACKAGE/INVALID_RESULT或409 REVISION_CONFLICT。示例ID为占位，不是实际UUID。身份、规范版本、外部任务ID由后端映射取得，不允许客户端指定提交人。
+首个草稿保存将CLAIMED变为IN_PROGRESS；CLAIMED不直接提交。提交清单必须与包成员完全一致且不含重复sampleId；漏样本、多样本、未完成或过期revision分别返回422 INCOMPLETE_PACKAGE/INVALID_RESULT或409 REVISION_CONFLICT。示例ID为占位，不是实际UUID。身份、规范版本、外部任务ID由后端映射取得，不允许客户端指定提交人。
 
-编辑器保存只代表草稿，提交接口成功才代表交付。首期提交后只读，不提供覆盖、撤回或返工接口。后续返工按新轮次设计，不改变已导出的快照。
+编辑器保存只代表草稿，提交接口成功才代表交付。首期提交后只读，不提供覆盖、撤回或返工接口。同幂等键重试返回原submissionId；换键再次提交已结束领取返回409 ASSIGNMENT_CLOSED。后续返工按新轮次设计，不改变已导出的快照。
 
 ## 6. 查看与导出
 
@@ -97,9 +101,9 @@
 |---|---|---|---|
 | POST /projects/{id}/exports | owner | format、scope、submissionIds（选定模式）、includeOriginals=false | 202 exportId、QUEUED |
 | GET /exports/{id} | owner/该任务创建者且仍有项目权限 | 无 | QUEUED/RUNNING/SUCCEEDED/FAILED、数量及错误摘要 |
-| GET /exports/{id}/download | 同上 | 无 | 授权文件下载；未完成409 |
+| GET /exports/{id}/download | 同上 | 无 | 授权文件下载；未完成409；产物已清理410 EXPORT_EXPIRED |
 
-scope为ALL_SUBMITTED或SELECTED_SUBMISSIONS；创建时冻结清单。首期建议只实现原生结果JSON＋ID映射，业务确认后增加一种适用标准；未支持format返回422 UNSUPPORTED_FORMAT。includeOriginals=true首期未实现时明确拒绝，不静默忽略。
+scope为ALL_SUBMITTED或SELECTED_SUBMISSIONS；创建时在同一数据库快照中冻结提交清单和完成情况，清单写入export_job_submission并校验同项目归属。空清单返回422 NO_SUBMISSIONS。后台开始、产物发布和下载时重查权限。首期建议只实现原生结果JSON＋ID映射，业务确认后增加一种适用标准；未支持format返回422 UNSUPPORTED_FORMAT。includeOriginals=true首期未实现时明确拒绝，不静默忽略。
 
 导出包含结果、mapping.csv、manifest.json和标签说明。mapping字段至少projectId/batchId/packageId/sampleId/assignmentId/actorId/submissionId/specVersionId/sourcePath/checksum。N=2分别保存两人结果；清单列出目标人数、已提交人数和未完成样本，不把缺结果表示成正常标签。不使用编辑器默认全项目导出替代本平台授权范围。
 
@@ -114,11 +118,14 @@ GET /admin/audit-events供标注管理员查看管理审计，不返回原始数
 | 401 | UNAUTHENTICATED |
 | 403 | LABELING_DISABLED、ADMIN_REQUIRED |
 | 404 | RESOURCE_NOT_FOUND（包括不应暴露的他人资源） |
-| 409 | SLOT_FULL、ALREADY_CLAIMED、REVISION_CONFLICT、ASSIGNMENT_CLOSED、PROJECT_PAUSED、IDEMPOTENCY_CONFLICT |
+| 409 | SLOT_FULL、CLAIM_BUSY、RESOURCE_BUSY、ALREADY_CLAIMED、BATCH_ALREADY_PUBLISHED、REVISION_CONFLICT、ASSIGNMENT_CLOSED、PROJECT_PAUSED、IDEMPOTENCY_CONFLICT |
+| 410 | EXPORT_EXPIRED |
 | 413 | UPLOAD_TOO_LARGE |
-| 422 | INVALID_RESULT、INCOMPLETE_PACKAGE、UNSUPPORTED_FORMAT |
-| 503 | IDENTITY_UNAVAILABLE、EDITOR_UNAVAILABLE |
+| 422 | INVALID_RESULT、INCOMPLETE_PACKAGE、UNSUPPORTED_FORMAT、NO_SUBMISSIONS |
+| 503 | IDENTITY_UNAVAILABLE、EDITOR_UNAVAILABLE、TRANSACTION_RETRY_EXHAUSTED |
 
 ## 8. 最小联调顺序
 
 普通用户GET /me → POST /projects（无人审批）→ 建规范 → 上传完成 → 打包预览/发布 → 两个不同用户领取N=2包 → 分别编辑/同步/提交 → owner查看两份结果 → 创建导出 → 下载核对ID。并行验收第三人超领、同人重复领取、未领取读文件、回收后迟到提交、同一结果重复提交、导出他人项目均被正确处理。
+
+2026-11-04一致性补充：暂停事务提交后拒绝新工作数据访问和草稿/提交/同步写入；此前已持共享锁的短事务先完成，已传输的字节无法撤回。导出提交清单不随重试变化。数据库死锁/序列化冲突最多重试整个事务3次，外部编辑器和存储请求不放进数据库重试闭包。幂等记录与业务写入/响应同事务提交；上传分片回执持久化，持久化成功前不推进offset。
