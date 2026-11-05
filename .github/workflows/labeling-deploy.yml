@@ -1,0 +1,91 @@
+name: 统一前端自动部署
+on:
+  push:
+    branches: [frontend]
+    paths:
+      - 'src/**'
+      - 'public/**'
+      - 'config/**'
+      - 'types/**'
+      - 'scripts/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.npmrc'
+      - 'tsconfig.json'
+      - '.github/workflows/labeling-deploy.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: labeling-production-frontend
+  cancel-in-progress: false
+jobs:
+  deploy:
+    if: github.repository == 'tssai-lab/tss-data-labeling' && github.ref == 'refs/heads/frontend'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment: labeling-production
+    permissions:
+      contents: read
+    env:
+      DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+      DEPLOY_USER: ${{ vars.DEPLOY_USER }}
+      DEPLOY_PORT: ${{ vars.DEPLOY_PORT || '22' }}
+      DEPLOY_KNOWN_HOSTS: ${{ vars.DEPLOY_KNOWN_HOSTS }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - name: 安装依赖并构建统一前端
+        run: |
+          npm ci
+          npm run build
+          test -s dist/index.html
+      - name: 配置 SSH
+        env:
+          DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          [[ "$DEPLOY_HOST" == 47.111.225.144 ]]
+          [[ "$DEPLOY_USER" == root ]]
+          [[ "$DEPLOY_PORT" =~ ^[0-9]+$ ]]
+          test -n "$DEPLOY_KNOWN_HOSTS"
+          test -n "$DEPLOY_SSH_PRIVATE_KEY"
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_PRIVATE_KEY" > ~/.ssh/labeling_deploy_key
+          chmod 600 ~/.ssh/labeling_deploy_key
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+          cat > ~/.ssh/config <<EOF
+          Host labeling-target
+            HostName $DEPLOY_HOST
+            User $DEPLOY_USER
+            Port $DEPLOY_PORT
+            IdentityFile ~/.ssh/labeling_deploy_key
+            IdentitiesOnly yes
+            BatchMode yes
+            StrictHostKeyChecking yes
+          EOF
+      - name: 确认部署版本仍是分支最新提交
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          current_sha="$(git ls-remote origin "refs/heads/$GITHUB_REF_NAME" | cut -f1)"
+          test "$current_sha" = "$GITHUB_SHA"
+      - name: 上传资源并切换网页入口
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          # 先传资源，再切换入口；保留旧资源供已打开的页面继续加载。
+          test -z "$(find dist -type l -print -quit)"
+          ssh labeling-target 'test -d /var/www && test -f /var/www/index.html'
+          rsync -rltz --chmod=D755,F644 --delay-updates --exclude='/index.html' dist/ labeling-target:/var/www/
+          remote_index="/var/tmp/tss-frontend-${GITHUB_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.html"
+          digest="$(sha256sum dist/index.html | cut -d ' ' -f1)"
+          scp dist/index.html "labeling-target:$remote_index"
+          ssh labeling-target bash -s -- "$remote_index" "$digest" "$GITHUB_SHA" \
+            < scripts/deploy-labeling-frontend.sh
+          echo "已部署统一前端提交：$GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
