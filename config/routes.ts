@@ -1,4 +1,6 @@
 export default [
+  { path: '/labeling', component: './labeling', layout: false, hideInMenu: true },
+  { path: '/labeling/projects/:projectId', component: './labeling', layout: false, hideInMenu: true },
   { path: '/label-projects', component: './label-projects', layout: false, hideInMenu: true },
   { path: '/manual-label-server/:projectId', component: './manual-label', layout: false, hideInMenu: true },
   { path: '/manual-label', component: './manual-label', layout: false, hideInMenu: true },
