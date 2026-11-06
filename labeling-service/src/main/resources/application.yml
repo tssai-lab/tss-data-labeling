@@ -27,5 +27,18 @@ server:
   port: ${LABELING_PORT:8082}
 
 labeling:
+  imports:
+    # 独立持久化目录，部署时挂载；不要使用训练平台数据卷。
+    storage-root: ${LABELING_STORAGE_ROOT:./data/labeling}
+    chunk-size-bytes: ${LABELING_CHUNK_SIZE_BYTES:4194304}
+    max-archive-bytes: ${LABELING_MAX_ARCHIVE_BYTES:2147483648}
+    max-expanded-bytes: ${LABELING_MAX_EXPANDED_BYTES:8589934592}
+    max-file-bytes: ${LABELING_MAX_FILE_BYTES:67108864}
+    max-entries: ${LABELING_MAX_ENTRIES:100000}
+    max-pixels: ${LABELING_MAX_PIXELS:40000000}
+    max-errors: ${LABELING_MAX_ERRORS:1000}
+    zip-encoding: ${LABELING_ZIP_ENCODING:UTF-8}
+    worker-enabled: ${LABELING_IMPORT_WORKER_ENABLED:true}
+    poll-delay-ms: ${LABELING_IMPORT_POLL_DELAY_MS:1000}
   identity:
     base-url: ${LABELING_IDENTITY_BASE_URL:http://127.0.0.1:8080}
