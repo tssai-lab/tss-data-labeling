@@ -4,7 +4,7 @@ on:
     branches: [backend]
     paths:
       - 'labeling-service/**'
-      - '.github/workflows/labeling-deploy.yml'
+      - '.github/workflows/labeling-backend-deploy.yml'
   workflow_dispatch:
 permissions:
   contents: read
