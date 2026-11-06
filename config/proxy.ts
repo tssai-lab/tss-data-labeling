@@ -7,6 +7,10 @@ const apiTarget = process.env.DEV_API_TARGET || 'http://127.0.0.1:8080';
 const mlflowTarget = process.env.DEV_MLFLOW_TARGET || 'http://127.0.0.1:5000';
 const proxy = {
   '/label-api/': { target: process.env.LABEL_PROXY_TARGET || 'http://127.0.0.1:8013', changeOrigin: true },
+  '/api/labeling/': {
+    target: process.env.DEV_LABELING_TARGET || apiTarget,
+    changeOrigin: true,
+  },
   '/api/': { target: apiTarget, changeOrigin: true },
   '/v3/api-docs': { target: apiTarget, changeOrigin: true },
   '/mlflow-api/': {
