@@ -41,12 +41,12 @@ export default function Platforms() {
             <div className={styles.cardBody}><small>DATA ANNOTATION DEMO</small><h2>数据标注平台 Demo</h2><p>导入数据，手动标注，保存工作成果</p></div>
             <div className={styles.cardBottom}><span>进入 Demo</span><ArrowRightOutlined /></div>
           </Link>
-          <article className={`${styles.card} ${styles.pending}`} aria-labelledby="label-platform-title">
-            <div className={styles.cardTop}><AppstoreOutlined /><span className={styles.badge}>待接入</span></div>
+          <Link to="/labeling" className={`${styles.card} ${styles.pending}`} aria-labelledby="label-platform-title">
+            <div className={styles.cardTop}><AppstoreOutlined /><span className={styles.badge}>图片分类</span></div>
             <div className={styles.visual} aria-hidden="true"><AppstoreOutlined className={styles.shield} /></div>
             <div className={styles.cardBody}><small>DATA ANNOTATION</small><h2 id="label-platform-title">数据标注平台</h2></div>
-            <div className={styles.cardBottom}><span>敬请期待</span><span>暂未开放</span></div>
-          </article>
+            <div className={styles.cardBottom}><span>进入数据标注平台</span><ArrowRightOutlined /></div>
+          </Link>
         </div>
       </section>
       <footer className={styles.footer}><span>TSS AI 平台 · 数据标注与模型训练</span><span>数据 · 标注 · 训练</span></footer>

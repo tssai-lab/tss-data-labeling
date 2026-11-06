@@ -1,0 +1,7 @@
+node_modules/
+dist/
+src/.umi*/
+coverage/
+.env.local
+.env.*.local
+*.log
