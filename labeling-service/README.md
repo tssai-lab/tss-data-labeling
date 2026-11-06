@@ -46,4 +46,21 @@ curl -X POST http://127.0.0.1:8082/api/labeling/v1/projects \
   -d '{"name":"表面缺陷标注","description":"接口联调项目","taskType":"IMAGE_CLASSIFICATION"}'
 ```
 
-创建项目和规范版本接口要求唯一 `Idempotency-Key`。相同用户、操作、键和请求会返回已创建的资源；复用同键提交不同请求会返回409。创建项目示例返回 `201`，响应体为 `{ "data": { ... }, "requestId": "..." }`。上传、领取、Label Studio、草稿提交与导出接口仍未实现；不要据此认为全链路已经完成。
+创建项目和规范版本接口要求唯一 `Idempotency-Key`。相同用户、操作、键和请求会返回已创建的资源；复用同键提交不同请求会返回409。创建项目示例返回 `201`，响应体为 `{ "data": { ... }, "requestId": "..." }`。
+
+## 图片导入
+
+本功能分支增加 ZIP 分片上传、持久化解析、失败重试、JPEG/PNG 样本分页和 owner 授权原图。接口细则见 [图片导入 API](../docs/labeling-v1.1/08-image-import-api.md)，宋雷鸣可运行的调用示例见 [examples/README.md](examples/README.md)。
+
+启动前将 `LABELING_STORAGE_ROOT` 指向独立的可写持久化目录，数据库与文件目录需要共同备份。Flyway 新增 V3 迁移，不改已发布的 V1/V2；迁移账户需有 DDL 权限，服务仍使用 tss_labeling_app。不要在共享库中手工重跑建表脚本。
+
+```powershell
+# Java 17 + Maven，在 labeling-service 目录
+mvn test
+# 安装了 Node 18+ 时启用真实 HTTP 调用示例测试
+$env:LABELING_NODE_E2E = 'true'
+mvn test
+mvn package
+```
+
+集成测试自行启动临时 PostgreSQL 和身份服务桩，不连接现有业务数据库。Linux 必须以普通用户运行。正式联调仍需用真实统一登录和选定的数据集复验。领取、Label Studio、草稿提交与导出仍未实现；导入通过不能代表标注全链路已经完成。

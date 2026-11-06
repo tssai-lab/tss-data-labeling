@@ -39,7 +39,16 @@ public class ApiExceptionHandler {
         ErrorDetails error;
         HttpStatus status;
 
-        if (exception instanceof HttpMessageNotReadableException) {
+        if (exception instanceof BusinessException business) {
+            status = business.status();
+            error = new ErrorDetails(business.code(), business.getMessage());
+        } else if (exception instanceof org.springframework.web.method.annotation.MethodArgumentTypeMismatchException) {
+            status = HttpStatus.BAD_REQUEST;
+            error = new ErrorDetails("INVALID_REQUEST", "请求参数类型不正确");
+        } else if (exception instanceof org.springframework.web.HttpMediaTypeNotSupportedException) {
+            status = HttpStatus.UNSUPPORTED_MEDIA_TYPE;
+            error = new ErrorDetails("UNSUPPORTED_MEDIA_TYPE", "请求媒体类型不受支持");
+        } else if (exception instanceof HttpMessageNotReadableException) {
             status = HttpStatus.BAD_REQUEST;
             error = new ErrorDetails("INVALID_REQUEST", "请求内容无法解析");
         } else if (exception instanceof MethodArgumentNotValidException
