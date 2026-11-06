@@ -1,4 +1,5 @@
 name: 统一前端自动部署
+
 on:
   push:
     branches: [frontend]
@@ -12,13 +13,16 @@ on:
       - 'package-lock.json'
       - '.npmrc'
       - 'tsconfig.json'
-      - '.github/workflows/labeling-deploy.yml'
+      - '.github/workflows/labeling-frontend-deploy.yml'
   workflow_dispatch:
+
 permissions:
   contents: read
+
 concurrency:
   group: labeling-production-frontend
   cancel-in-progress: false
+
 jobs:
   deploy:
     if: github.repository == 'tssai-lab/tss-data-labeling' && github.ref == 'refs/heads/frontend'
@@ -32,17 +36,21 @@ jobs:
       DEPLOY_USER: ${{ vars.DEPLOY_USER }}
       DEPLOY_PORT: ${{ vars.DEPLOY_PORT || '22' }}
       DEPLOY_KNOWN_HOSTS: ${{ vars.DEPLOY_KNOWN_HOSTS }}
+
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: npm
+
       - name: 安装依赖并构建统一前端
         run: |
           npm ci
           npm run build
           test -s dist/index.html
+
       - name: 配置 SSH
         env:
           DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
@@ -69,12 +77,14 @@ jobs:
             BatchMode yes
             StrictHostKeyChecking yes
           EOF
+
       - name: 确认部署版本仍是分支最新提交
         shell: bash
         run: |
           set -Eeuo pipefail
           current_sha="$(git ls-remote origin "refs/heads/$GITHUB_REF_NAME" | cut -f1)"
           test "$current_sha" = "$GITHUB_SHA"
+
       - name: 上传资源并切换网页入口
         shell: bash
         run: |
