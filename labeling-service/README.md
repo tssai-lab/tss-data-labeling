@@ -6,6 +6,8 @@
 
 - `GET /api/labeling/v1/health`：检查服务进程。
 - `GET /api/labeling/v1/me`：验证统一登录并建立/读取人工 actor。
+- `GET /api/labeling/v1/admin/users?limit=20&offset=0`：标注管理员查看已建立映射的用户。
+- `PATCH /api/labeling/v1/admin/users/{actorId}`：标注管理员修改他人状态或管理员权限，需 reason。
 - `POST /api/labeling/v1/projects`：创建项目，调用者自动成为 owner。
 - `GET /api/labeling/v1/projects?scope=owned&limit=20`：列出自己的项目。
 - `GET /api/labeling/v1/projects/{projectId}`：读取自己的项目和规范版本。
@@ -64,3 +66,17 @@ mvn package
 ```
 
 集成测试自行启动临时 PostgreSQL 和身份服务桩，不连接现有业务数据库。Linux 必须以普通用户运行。正式联调仍需用真实统一登录和选定的数据集复验。领取、Label Studio、草稿提交与导出仍未实现；导入通过不能代表标注全链路已经完成。
+
+## 任务包与领取（本地已实现，需部署 V4）
+
+- `POST /api/labeling/v1/projects/{projectId}/package-plans`：owner 创建打包预览，默认每包 10 张、每张 1 人。
+- `POST /api/labeling/v1/package-plans/{planId}/publish`：owner 原子发布计划并开放项目。
+- `GET /api/labeling/v1/package-plans/{planId}`：owner 查看计划和包摘要。
+- `GET /api/labeling/v1/task-pool`：查看可领取包简介。
+- `POST /api/labeling/v1/packages/{packageId}/claims`：领取一个席位，支持幂等重试。
+- `GET /api/labeling/v1/assignments?scope=mine`：本人领取列表。
+- `GET /api/labeling/v1/assignments/{assignmentId}/items`：读取自己包内样本及规范。
+- `GET /api/labeling/v1/assignments/{assignmentId}/samples/{sampleId}/file`：授权读取包内图片。
+
+POST 均需 Idempotency-Key。完整字段、上限和错误码见 `../docs/labeling-v1.1/04-api.md` 的任务包首轮实现。
+本轮不包含放弃/回收领取、Label Studio、标注结果保存或导出。

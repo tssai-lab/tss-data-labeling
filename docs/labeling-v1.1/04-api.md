@@ -114,14 +114,14 @@ scope为ALL_SUBMITTED或SELECTED_SUBMISSIONS；创建时在同一数据库快照
 
 ## 7. 管理接口与错误码
 
-GET /admin/actors、POST /admin/actors/{id}/disable、POST /admin/actors/{id}/enable仅标注管理员可用；只影响标注平台使用状态，不改统一用户账号或训练权限。禁用不自动删除领取与结果；后续读写拒绝，可由管理员回收。初始管理员通过受控初始化配置建立，首期不开放自助授予管理员接口。
+用户管理本轮采用 `GET /admin/users` 和 `PATCH /admin/users/{actorId}`，替代此前规划的 `/admin/actors` 启停接口。只影响标注身份，普通用户不得自助授予管理员权限；管理员可管理其他用户的权限。具体字段与行为见下方身份权限补充。
 
-GET /admin/audit-events供标注管理员查看管理审计，不返回原始数据/完整答案。所有回收、暂停、禁用需reason。
+`GET /admin/audit-events` 尚未实现。本轮用户权限变更要求 reason，并在事务成功后写入服务日志（操作者、目标、操作内容、原因、requestId）；持久化审计查询后续实现。所有回收、暂停、禁用需 reason。
 
 | HTTP | code示例 |
 |---|---|
 | 401 | UNAUTHENTICATED |
-| 403 | LABELING_DISABLED、ADMIN_REQUIRED |
+| 403 | FORBIDDEN |
 | 404 | RESOURCE_NOT_FOUND（包括不应暴露的他人资源） |
 | 409 | SLOT_FULL、CLAIM_BUSY、RESOURCE_BUSY、ALREADY_CLAIMED、BATCH_ALREADY_PUBLISHED、REVISION_CONFLICT、ASSIGNMENT_CLOSED、PROJECT_PAUSED、IDEMPOTENCY_CONFLICT |
 | 410 | EXPORT_EXPIRED |
@@ -134,3 +134,91 @@ GET /admin/audit-events供标注管理员查看管理审计，不返回原始数
 普通用户GET /me → POST /projects（无人审批）→ 建规范 → 上传完成 → 打包预览/发布 → 两个不同用户领取N=2包 → 分别编辑/同步/提交 → owner查看两份结果 → 创建导出 → 下载核对ID。并行验收第三人超领、同人重复领取、未领取读文件、回收后迟到提交、同一结果重复提交、导出他人项目均被正确处理。
 
 2026-11-04一致性补充：暂停事务提交后拒绝新工作数据访问和草稿/提交/同步写入；此前已持共享锁的短事务先完成，已传输的字节无法撤回。导出提交清单不随重试变化。数据库死锁/序列化冲突最多重试整个事务3次，外部编辑器和存储请求不放进数据库重试闭包。幂等记录与业务写入/响应同事务提交；上传分片回执持久化，持久化成功前不推进offset。
+
+## 标注身份权限补充（2026-11-07，本地实现待合并部署）
+
+所有以下接口使用 `Authorization: Bearer <登录令牌>`，前缀 `/api/labeling/v1`。
+标注角色独立于训练平台的 roleId。普通启用用户可直接创建项目，无需求方申请审批。
+
+| 接口 | 权限与响应 |
+| --- | --- |
+| `GET /me` | 已登录且标注身份启用；返回 actorId、labelingAdmin、canCreateProject、canAnnotate |
+| `GET /admin/users?limit=20&offset=0` | 仅启用的标注管理员；data 为用户数组，limit 为 1–100，offset 非负 |
+| `PATCH /admin/users/{actorId}` | 仅启用的标注管理员；成功返回 200，data 为 null |
+
+用户列表只包含已经访问标注平台并建立 HUMAN 映射的人，不是统一登录系统全部账号。
+列表字段：actorId、identityUserId、displayName、status、labelingAdmin；不返回密码或令牌。
+修改请求支持部分更新，至少提供一个非空字段：
+
+```json
+{"status":"DISABLED","labelingAdmin":false,"reason":"联调停用验证"}
+```
+
+`reason` 必填，1–500 字符且不能全为空白。`status` 只接受 ENABLED / DISABLED；`labelingAdmin` 为布尔值。
+停用不删除项目、不修改统一身份账号或训练角色；单独停用保留已有标注管理员授予记录，重新启用会恢复其有效权限。
+管理员不能停用自己或撤销自己的管理员权限（409），请由另一个管理员操作。
+授权变更在事务内串行化，并重新核验操作者当前身份，防止并发互相撤权导致无人管理。
+不存在的 HUMAN actor 返回 404，普通用户调用管理员接口返回 403。
+403 统一错误码调整为 FORBIDDEN，前端不要将所有 403 当作密码错误或登出指令。
+
+项目列表、详情和规范创建仍按 owner 授权，标注管理员无权直接查看他人的原始数据或项目详情。
+他人项目详情返回 404。普通用户仍可以创建自己的项目。
+停用后新的 /me、项目和管理请求被拒绝；已经执行中的请求不会强制中断。
+
+### 对 B、C、D 的接入要求
+
+- C：用 /me 控制管理入口显示；调用管理接口时携带同一个统一登录令牌。隐藏按钮不能替代后端鉴权。
+- B、D：图片读取、导入、编辑器与后续提交接口都必须先验证统一身份并调用 ActorService.resolve，再检查项目或领取归属；写事务中重查并锁定启用状态。
+- 本次已合并 backend 的 V3 图片导入代码和测试；V1/V2/V3 迁移保持原样。权限功能复用已有 actor 和 actor_role_grant 表，不新增迁移。
+
+### 验收
+
+执行 `mvn -f labeling-service/pom.xml test` 运行权限单元测试。
+部署后用两个普通账号和一个标注管理员联调：普通账号管理接口 403、普通用户创建项目成功、跨账号项目详情 404、管理员也不能读取他人项目、停用后 /me 403、恢复后 /me 200、撤销管理员后管理接口 403、自停用或自撤权 409。
+单元测试不等同于真实 PostgreSQL 并发测试和服务器验收。
+
+## 任务包首轮实现（2026-11-07，本地代码，待提交部署）
+
+本节是本轮实际接口范围；上文 release/revoke、编辑器、草稿、提交、导出仍为后续设计，不能当作已实现接口。
+
+已实现创建打包预览、发布、查看计划、任务池、领取、本人领取列表、包内样本与图片读取。
+所有接口带统一登录 Bearer Token；所有 POST 带 Idempotency-Key。领取请求只接受空对象或无请求体。
+
+### 给 B、C、D 的调用顺序
+
+1. B 的批次导入达到 READY，取得 batchId；项目 owner 创建规范，取得 specVersionId。
+2. owner 调用 `POST /projects/{projectId}/package-plans`，请求：
+
+```json
+{"batchId":"批次UUID","specVersionId":"规范UUID","packageSize":10,"annotatorsPerSample":2}
+```
+
+省略 packageSize / annotatorsPerSample 时分别为 10 / 1。响应 data 包含 planId、status=DRAFT、selectionHash、sampleCount、packageSampleCounts、totalWorkload、packages（发布前为空）。样本按固定 UUID 顺序打包，不复制文件。每个包的 N 个席位代表 N 人分别标注该包全部样本。
+
+3. owner 调用 `POST /package-plans/{planId}/publish`，请求 `{"selectionHash":"预览返回的摘要"}`。
+本轮在单个事务中同步完成，成功返回 200 和 PUBLISHED 计划、包列表；项目由 DRAFT 转为 OPEN。发布后结构冻结。同批次其他计划发布返回 409 BATCH_ALREADY_PUBLISHED；重复发布同一计划不新建包。
+
+4. 标注员调用 `GET /task-pool?limit=20&taskType=IMAGE_CLASSIFICATION`。
+返回 data.items：packageId、projectId、projectName、taskType、sampleCount、requiredCount、remainingSlots；不返回原图、文件路径或他人身份。默认全部启用人工用户可见开放包，已领取或已领满的包不再出现。
+
+5. 标注员调用 `POST /packages/{packageId}/claims`，请求 `{}`。
+201 返回 assignmentId、packageId、slotNo、status=CLAIMED、revision=1。同一用户同一幂等键重试返回原结果；换键重复领取返回 ALREADY_CLAIMED；席位已满返回 SLOT_FULL。首轮同包请求使用行锁短事务串行等待，不使用跳锁策略，暂不返回上文规划的 CLAIM_BUSY。
+
+6. `GET /assignments?scope=mine&limit=20` 列出本人领取。首轮不提供 status 筛选。
+7. `GET /assignments/{assignmentId}/items?limit=20` 返回包内样本和冻结规范。
+响应包含 assignmentId、packageId、status、readOnly、items、nextCursor、specification；规范包含 specVersionId、labels 数组、instructions、editorConfig 对象。样本包含 sampleId、sourcePath、mediaType、contentSha256、ordinal、fileUrl。
+8. 图片通过返回的 fileUrl（`/assignments/{assignmentId}/samples/{sampleId}/file`）携带相同令牌读取。D 使用 assignmentId＋sampleId＋specVersionId 做编辑器映射，不能仅用 sampleId 区分个人结果。本接口尚不保存标注结果。
+
+任务池、本人领取和包内样本使用 UUID 游标：下一页传响应 nextCursor，末页为 null；limit 为 1–100。包内样本分页按 sampleId 排序，ordinal 供显示打包顺序。
+
+### 权限与部署边界
+
+- owner 才能打包、发布和查看计划，batch/spec 必须同项目；管理员无 owner 绕过。
+- 项目 OPEN 才能领取及读取包内图片；暂停或归档拒绝工作数据访问。停用身份拒绝新请求。
+- 他人的领取、包外样本返回 404；原 owner 图片接口不会因领取而放开整个项目。
+- 每个请求重新鉴权；已经开始传输的文件不强行中断。
+- 新增 Flyway V4，保留 V1/V2/V3；升级只创建任务包相关表和约束，数据仍在独立标注库。
+- 同步发布默认最多 10000 个样本、每包最多 1000 个、每包最多 10 人。分别由 LABELING_TASK_MAX_SAMPLES、LABELING_TASK_MAX_PACKAGE_SIZE、LABELING_TASK_MAX_ANNOTATORS 配置；样本超过上限返回 422 SAMPLE_LIMIT，应拆分导入批次，异步发布后续实现。
+- 任务推荐算法、领取释放/回收、编辑器、结果提交与集成尚未实现，不能将 CLAIMED 当作已完成。
+
+验证命令：`mvn -f labeling-service/pom.xml verify`。测试覆盖现有图片导入、多人并发争抢、重复领取与重放、跨用户和跨包读图、暂停/停用拒绝访问、同批次防重复发布。
