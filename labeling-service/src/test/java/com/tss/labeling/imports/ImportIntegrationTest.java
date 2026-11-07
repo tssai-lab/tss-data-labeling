@@ -51,7 +51,7 @@ class ImportIntegrationTest {
             IDENTITY = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
             IDENTITY.createContext("/api/user/current-user", exchange -> {
                 String auth = exchange.getRequestHeaders().getFirst("Authorization");
-                String user = "Bearer owner".equals(auth) ? "owner" : "other";
+                String user = auth != null && auth.startsWith("Bearer ") ? auth.substring(7) : "other";
                 byte[] json = ("{\"code\":200,\"data\":{\"id\":\"" + user + "\",\"username\":\"" + user + "\"}}")
                         .getBytes(StandardCharsets.UTF_8);
                 exchange.getResponseHeaders().set("Content-Type", "application/json");
@@ -386,4 +386,123 @@ class ImportIntegrationTest {
             assertEquals(manifest.path("batch").path("batchId"), replayed.path("batch").path("batchId"));
         } finally { if (client.isAlive()) client.destroyForcibly(); }
     }
+
+    JsonNode taskPost(String path, String user, String key, Object body, int expected) throws Exception {
+        String content = mvc.perform(post(API + path).header("Authorization", "Bearer " + user)
+                .header("Idempotency-Key", key).contentType("application/json").content(json.writeValueAsString(body)))
+                .andExpect(status().is(expected)).andReturn().getResponse().getContentAsString();
+        return json.readTree(content).path("data");
+    }
+
+    JsonNode taskPlan(int people) throws Exception {
+        String project = project();
+        String batch = uploaded(project, zip(Map.of("a.png", image("png"), "b.png", image("png"), "c.png", image("png"))));
+        command(batch, "complete", UUID.randomUUID().toString()).andExpect(status().isAccepted());
+        processQueue();
+        JsonNode spec = taskPost("/projects/" + project + "/spec-versions", "owner", UUID.randomUUID().toString(),
+                Map.of("taskType", "IMAGE_CLASSIFICATION", "schemaVersion", "1", "labels", java.util.List.of(Map.of("id", "normal", "name", "正常"))), 201);
+        JsonNode plan = taskPost("/projects/" + project + "/package-plans", "owner", UUID.randomUUID().toString(),
+                Map.of("batchId", batch, "specVersionId", spec.path("specVersionId").asText(), "packageSize", 2, "annotatorsPerSample", people), 201);
+        assertEquals(3, plan.path("sampleCount").asInt());
+        assertEquals(2, plan.path("packageSampleCounts").size());
+        assertEquals(3 * people, plan.path("totalWorkload").asInt());
+        return plan;
+    }
+
+    JsonNode publishTask(JsonNode plan) throws Exception {
+        return taskPost("/package-plans/" + plan.path("planId").asText() + "/publish", "owner", UUID.randomUUID().toString(),
+                Map.of("selectionHash", plan.path("selectionHash").asText()), 200);
+    }
+
+    @Test void taskPackagesAllowOnlyClaimedImagesAndReplayClaims() throws Exception {
+        JsonNode draft = taskPlan(2);
+        JsonNode published = publishTask(draft);
+        assertEquals(published, publishTask(draft));
+        String pkg = published.path("packages").get(0).path("packageId").asText();
+        String pool = mvc.perform(get(API + "/task-pool").header("Authorization", "Bearer worker").param("limit", "100"))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+        assertTrue(pool.contains(pkg));
+        assertFalse(pool.contains("storage_key"));
+        assertFalse(pool.contains("fileUrl"));
+        mvc.perform(get(API + "/task-pool")).andExpect(status().isUnauthorized());
+        String key = UUID.randomUUID().toString();
+        JsonNode claim = taskPost("/packages/" + pkg + "/claims", "worker", key, Map.of(), 201);
+        assertEquals(claim, taskPost("/packages/" + pkg + "/claims", "worker", key, Map.of(), 201));
+        taskPost("/packages/" + pkg + "/claims", "worker", UUID.randomUUID().toString(), Map.of(), 409);
+        taskPost("/packages/" + pkg + "/claims", "worker2", UUID.randomUUID().toString(), Map.of(), 201);
+        taskPost("/packages/" + pkg + "/claims", "worker3", UUID.randomUUID().toString(), Map.of(), 409);
+        String id = claim.path("assignmentId").asText();
+        String mine = mvc.perform(get(API + "/assignments").header("Authorization", "Bearer worker"))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+        assertTrue(mine.contains(id));
+        String others = mvc.perform(get(API + "/assignments").header("Authorization", "Bearer worker3"))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+        assertFalse(others.contains(id));
+        String content = mvc.perform(get(API + "/assignments/" + id + "/items").header("Authorization", "Bearer worker"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.specification.labels[0].id").value("normal"))
+                .andReturn().getResponse().getContentAsString();
+        JsonNode items = json.readTree(content).path("data").path("items");
+        assertEquals(2, items.size());
+        String file = items.get(0).path("fileUrl").asText();
+        mvc.perform(get(file).header("Authorization", "Bearer worker")).andExpect(status().isOk());
+        mvc.perform(get(file).header("Authorization", "Bearer worker2")).andExpect(status().isNotFound());
+        UUID otherSample = db.queryForObject("SELECT sample_id FROM package_item WHERE package_id=?", UUID.class,
+                UUID.fromString(published.path("packages").get(1).path("packageId").asText()));
+        mvc.perform(get(API + "/assignments/" + id + "/samples/" + otherSample + "/file").header("Authorization", "Bearer worker"))
+                .andExpect(status().isNotFound());
+        UUID projectId = db.queryForObject("SELECT project_id FROM package_plan WHERE id=?", UUID.class, UUID.fromString(draft.path("planId").asText()));
+        mvc.perform(get(API + "/projects/" + projectId + "/samples/" + items.get(0).path("sampleId").asText() + "/file")
+                .header("Authorization", "Bearer worker")).andExpect(status().isNotFound());
+        db.update("UPDATE project SET status='PAUSED' WHERE id=?", projectId);
+        mvc.perform(get(file).header("Authorization", "Bearer worker")).andExpect(status().isConflict());
+        db.update("UPDATE project SET status='OPEN' WHERE id=?", projectId);
+        db.update("UPDATE actor SET status='DISABLED' WHERE identity_user_id='worker'");
+        try { mvc.perform(get(file).header("Authorization", "Bearer worker")).andExpect(status().isForbidden()); }
+        finally { db.update("UPDATE actor SET status='ENABLED' WHERE identity_user_id='worker'"); }
+    }
+
+    @Test void concurrentClaimsNeverOverbook() throws Exception {
+        JsonNode published = publishTask(taskPlan(2));
+        String pkg = published.path("packages").get(0).path("packageId").asText();
+        var executor = java.util.concurrent.Executors.newFixedThreadPool(6);
+        var start = new java.util.concurrent.CountDownLatch(1);
+        try {
+            var futures = new java.util.ArrayList<java.util.concurrent.Future<Integer>>();
+            for (int i = 0; i < 6; i++) {
+                String user = "concurrent-" + UUID.randomUUID();
+                futures.add(executor.submit(() -> {
+                    start.await();
+                    return mvc.perform(post(API + "/packages/" + pkg + "/claims").header("Authorization", "Bearer " + user)
+                            .header("Idempotency-Key", UUID.randomUUID()).contentType("application/json").content("{}"))
+                            .andReturn().getResponse().getStatus();
+                }));
+            }
+            start.countDown();
+            int successes = 0;
+            for (var future : futures) {
+                int code = future.get(20, java.util.concurrent.TimeUnit.SECONDS);
+                assertTrue(code == 201 || code == 409, "非预期状态：" + code);
+                if (code == 201) successes++;
+            }
+            assertEquals(2, successes);
+            assertEquals(2, db.queryForObject("SELECT count(*) FROM assignment WHERE package_id=?", Integer.class, UUID.fromString(pkg)));
+        } finally { executor.shutdownNow(); }
+    }
+
+    @Test void cannotPublishSameBatchTwiceOrUseForeignSpecification() throws Exception {
+        JsonNode plan = taskPlan(1);
+        UUID planId = UUID.fromString(plan.path("planId").asText());
+        var row = db.queryForMap("SELECT * FROM package_plan WHERE id=?", planId);
+        String project = row.get("project_id").toString();
+        JsonNode second = taskPost("/projects/" + project + "/package-plans", "owner", UUID.randomUUID().toString(),
+                Map.of("batchId", row.get("batch_id"), "specVersionId", row.get("spec_version_id")), 201);
+        publishTask(plan);
+        taskPost("/package-plans/" + second.path("planId").asText() + "/publish", "owner", UUID.randomUUID().toString(),
+                Map.of("selectionHash", second.path("selectionHash").asText()), 409);
+        taskPost("/projects/" + project + "/package-plans", "other", UUID.randomUUID().toString(),
+                Map.of("batchId", row.get("batch_id"), "specVersionId", row.get("spec_version_id")), 404);
+        taskPost("/projects/" + project() + "/package-plans", "owner", UUID.randomUUID().toString(),
+                Map.of("batchId", row.get("batch_id"), "specVersionId", row.get("spec_version_id")), 404);
+    }
+
 }

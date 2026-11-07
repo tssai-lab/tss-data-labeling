@@ -53,7 +53,7 @@ public class ImportStorage {
         }
     }
 
-    Path sample(UUID batch, UUID sample) throws IOException {
+    public Path sample(UUID batch, UUID sample) throws IOException {
         Path result = sampleDirectory(batch).resolve(sample + ".bin");
         if (!Files.isRegularFile(result, NOFOLLOW_LINKS)) throw new IOException("样本文件不存在");
         return result;
