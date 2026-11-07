@@ -63,7 +63,7 @@ public class ProjectService {
         return findProject(projectId, actor.actorId());
     }
 
-    @Transactional(readOnly = true)
+    @Transactional
     public ProjectPage list(ActorService.ActorContext actor, int limit, String cursor) {
         lockEnabledActor(actor.actorId());
         String cursorClause = "";
@@ -72,7 +72,7 @@ public class ProjectService {
             cursorClause = " AND (created_at, id) < (?, ?)";
         }
 
-        // Arguments are appended in SQL order below for the optional cursor clause.
+        // 按 SQL 顺序追加分页参数。
         List<Object> orderedArguments = new ArrayList<>();
         orderedArguments.add(actor.actorId());
         if (!cursorClause.isEmpty()) {
@@ -103,7 +103,7 @@ public class ProjectService {
         return new ProjectPage(items, nextCursor);
     }
 
-    @Transactional(readOnly = true)
+    @Transactional
     public ProjectView get(ActorService.ActorContext actor, String projectId) {
         lockEnabledActor(actor.actorId());
         return findProject(parseId(projectId), actor.actorId());

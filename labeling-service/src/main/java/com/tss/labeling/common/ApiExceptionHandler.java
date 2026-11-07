@@ -84,7 +84,7 @@ public class ApiExceptionHandler {
     private ErrorDetails clientError(HttpStatus status) {
         return switch (status) {
             case UNAUTHORIZED -> new ErrorDetails("UNAUTHENTICATED", "请先登录");
-            case FORBIDDEN -> new ErrorDetails("LABELING_DISABLED", "当前账号无法使用标注平台");
+            case FORBIDDEN -> new ErrorDetails("FORBIDDEN", "当前账号已停用或无权执行此操作");
             case NOT_FOUND -> new ErrorDetails(
                     "RESOURCE_NOT_FOUND", "请求的资源不存在");
             case CONFLICT -> new ErrorDetails(
