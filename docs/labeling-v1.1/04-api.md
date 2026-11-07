@@ -176,3 +176,49 @@ scope为ALL_SUBMITTED或SELECTED_SUBMISSIONS；创建时在同一数据库快照
 执行 `mvn -f labeling-service/pom.xml test` 运行权限单元测试。
 部署后用两个普通账号和一个标注管理员联调：普通账号管理接口 403、普通用户创建项目成功、跨账号项目详情 404、管理员也不能读取他人项目、停用后 /me 403、恢复后 /me 200、撤销管理员后管理接口 403、自停用或自撤权 409。
 单元测试不等同于真实 PostgreSQL 并发测试和服务器验收。
+
+## 任务包首轮实现（2026-11-07，本地代码，待提交部署）
+
+本节是本轮实际接口范围；上文 release/revoke、编辑器、草稿、提交、导出仍为后续设计，不能当作已实现接口。
+
+已实现创建打包预览、发布、查看计划、任务池、领取、本人领取列表、包内样本与图片读取。
+所有接口带统一登录 Bearer Token；所有 POST 带 Idempotency-Key。领取请求只接受空对象或无请求体。
+
+### 给 B、C、D 的调用顺序
+
+1. B 的批次导入达到 READY，取得 batchId；项目 owner 创建规范，取得 specVersionId。
+2. owner 调用 `POST /projects/{projectId}/package-plans`，请求：
+
+```json
+{"batchId":"批次UUID","specVersionId":"规范UUID","packageSize":10,"annotatorsPerSample":2}
+```
+
+省略 packageSize / annotatorsPerSample 时分别为 10 / 1。响应 data 包含 planId、status=DRAFT、selectionHash、sampleCount、packageSampleCounts、totalWorkload、packages（发布前为空）。样本按固定 UUID 顺序打包，不复制文件。每个包的 N 个席位代表 N 人分别标注该包全部样本。
+
+3. owner 调用 `POST /package-plans/{planId}/publish`，请求 `{"selectionHash":"预览返回的摘要"}`。
+本轮在单个事务中同步完成，成功返回 200 和 PUBLISHED 计划、包列表；项目由 DRAFT 转为 OPEN。发布后结构冻结。同批次其他计划发布返回 409 BATCH_ALREADY_PUBLISHED；重复发布同一计划不新建包。
+
+4. 标注员调用 `GET /task-pool?limit=20&taskType=IMAGE_CLASSIFICATION`。
+返回 data.items：packageId、projectId、projectName、taskType、sampleCount、requiredCount、remainingSlots；不返回原图、文件路径或他人身份。默认全部启用人工用户可见开放包，已领取或已领满的包不再出现。
+
+5. 标注员调用 `POST /packages/{packageId}/claims`，请求 `{}`。
+201 返回 assignmentId、packageId、slotNo、status=CLAIMED、revision=1。同一用户同一幂等键重试返回原结果；换键重复领取返回 ALREADY_CLAIMED；席位已满返回 SLOT_FULL。首轮同包请求使用行锁短事务串行等待，不使用跳锁策略，暂不返回上文规划的 CLAIM_BUSY。
+
+6. `GET /assignments?scope=mine&limit=20` 列出本人领取。首轮不提供 status 筛选。
+7. `GET /assignments/{assignmentId}/items?limit=20` 返回包内样本和冻结规范。
+响应包含 assignmentId、packageId、status、readOnly、items、nextCursor、specification；规范包含 specVersionId、labels 数组、instructions、editorConfig 对象。样本包含 sampleId、sourcePath、mediaType、contentSha256、ordinal、fileUrl。
+8. 图片通过返回的 fileUrl（`/assignments/{assignmentId}/samples/{sampleId}/file`）携带相同令牌读取。D 使用 assignmentId＋sampleId＋specVersionId 做编辑器映射，不能仅用 sampleId 区分个人结果。本接口尚不保存标注结果。
+
+任务池、本人领取和包内样本使用 UUID 游标：下一页传响应 nextCursor，末页为 null；limit 为 1–100。包内样本分页按 sampleId 排序，ordinal 供显示打包顺序。
+
+### 权限与部署边界
+
+- owner 才能打包、发布和查看计划，batch/spec 必须同项目；管理员无 owner 绕过。
+- 项目 OPEN 才能领取及读取包内图片；暂停或归档拒绝工作数据访问。停用身份拒绝新请求。
+- 他人的领取、包外样本返回 404；原 owner 图片接口不会因领取而放开整个项目。
+- 每个请求重新鉴权；已经开始传输的文件不强行中断。
+- 新增 Flyway V4，保留 V1/V2/V3；升级只创建任务包相关表和约束，数据仍在独立标注库。
+- 同步发布默认最多 10000 个样本、每包最多 1000 个、每包最多 10 人。分别由 LABELING_TASK_MAX_SAMPLES、LABELING_TASK_MAX_PACKAGE_SIZE、LABELING_TASK_MAX_ANNOTATORS 配置；样本超过上限返回 422 SAMPLE_LIMIT，应拆分导入批次，异步发布后续实现。
+- 任务推荐算法、领取释放/回收、编辑器、结果提交与集成尚未实现，不能将 CLAIMED 当作已完成。
+
+验证命令：`mvn -f labeling-service/pom.xml verify`。测试覆盖现有图片导入、多人并发争抢、重复领取与重放、跨用户和跨包读图、暂停/停用拒绝访问、同批次防重复发布。
