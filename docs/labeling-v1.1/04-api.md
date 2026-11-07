@@ -1,6 +1,6 @@
 # 接口契约 V1.1
 
-前缀 `/api/labeling/v1`。这是本平台业务契约，不是Label Studio原生API。身份与项目接口已有本地实现；图片导入、样本列表及 owner 原图读取的功能分支实现见第 3.1 节，其余路径仍为设计契约。代码实现不代表服务已部署或真实数据集已验收。
+统一前缀为 `/api/labeling/v1`。本文包含已实现接口及后续设计。2026-11-07 以 `backend` 提交 `bbf022d` 为核对基线，身份与项目、图片导入与 owner 原图读取、用户权限、任务包与领取已实现并合入 `backend`。图片导入契约见第 3 节，身份权限和任务包的实际范围见文末补充。编辑器会话、草稿保存、结果提交、导出及其他规划接口按各章节标注推进。部署与真实账号验收进度由交接、验证记录单独记录。
 
 ## 1. 通用规则
 
@@ -26,32 +26,171 @@
 | POST /projects/{projectId}/archive | owner或标注管理员 | reason、baseRevision | 无有效领取及执行中发布/导入任务后ARCHIVED，否则409 |
 | POST /projects/{projectId}/spec-versions | owner | taskType、labels[{id,name}]、instructions、editorConfig、schemaVersion | 新specVersionId；不能原位改已发布规范 |
 
-上表中的身份、建项、本人项目列表和项目详情接口已在本地服务实现。服务将原始 `Authorization` 头转交训练后端 `/api/user/current-user` 验证，再把身份ID映射为唯一HUMAN actor；不读取或复制训练平台roleId。训练后端不可用时返回503。项目仅owner可查看和管理。创建项目与创建规范版本要求 `Idempotency-Key`，相同键和请求返回原资源，不同请求复用同键返回409。`taskType`先按大写编码保存，具体首期任务模板仍需团队确认后冻结。
+上表中的身份、建项、本人项目列表和项目详情接口已实现并合入 `backend`。服务将原始 `Authorization` 头转交训练后端 `/api/user/current-user` 验证，再把身份ID映射为唯一HUMAN actor；不读取或复制训练平台roleId。训练后端不可用时返回503。项目仅owner可查看和管理。创建项目与创建规范版本要求 `Idempotency-Key`，相同键和请求返回原资源，不同请求复用同键返回409。`taskType`按大写编码保存，本轮图片导入接受 `IMAGE_CLASSIFICATION` 项目。
 
 创建示例：
 ```json
 {"name":"表面缺陷标注","description":"按项目规范标注","taskType":"IMAGE_CLASSIFICATION"}
 ```
-示例任务类型只用于说明字段，不代表首期范围已确定。调用者ID由登录身份写入ownerActorId；没有“申请成为需求方”的接口。
+本轮图片导入使用上述 `IMAGE_CLASSIFICATION` 项目。调用者ID由登录身份写入ownerActorId。
 
-## 3. 上传与解析
+## 3. 图片 ZIP 导入、样本列表与原图读取
 
-| 方法与路径 | 权限 | 输入与行为 | 返回 |
-|---|---|---|---|
-| POST /projects/{id}/imports | owner | filename、sizeBytes、sha256 | 201 batchId、chunkSizeBytes、receivedBytes=0 |
-| GET /imports/{batchId} | owner | 查询状态/失败原因/有效样本数 | UPLOADING/PROCESSING/READY/FAILED与offset |
-| PUT /imports/{batchId}/chunks?offset=0 | owner | application/octet-stream；X-Chunk-SHA256；按服务器chunkSize发送 | receivedBytes；顺序追加 |
-| POST /imports/{batchId}/complete | owner | 无 | 202解析任务；总长度/摘要不符422 |
-| POST /imports/{batchId}/retry | owner | 仅FAILED且原始文件完整 | 202；按稳定批次路径幂等解析，不重复建sample |
-| GET /imports/{batchId}/samples | owner | cursor/limit | sampleId、相对路径、媒体类型与解析元数据 |
+本节按 `backend` 提交 `bbf022d` 的 `ImportController`、`ImportService` 和解析器核对。首轮项目类型为 `IMAGE_CLASSIFICATION`，支持 ZIP/单卷 ZIP64 中的 JPG、JPEG、PNG。导入批次、样本及原图均归属项目 owner。以下路径均接在统一前缀 `/api/labeling/v1` 后。
 
-同offset已上传分片且摘要一致返回当前offset；不一致409 UPLOAD_CONFLICT；未知间隙409 OFFSET_MISMATCH。完成后拒绝追加。解析只允许配置的格式，错误逐文件返回；压缩包校验路径、符号链接与展开数量/大小。容量上限由部署配置和任务格式确定，不硬编码100MB产品限制。
+| 方法与路径 | 输入与请求头 | 成功返回 |
+|---|---|---|
+| POST /projects/{projectId}/imports | JSON `{filename,sizeBytes,sha256}`，带 Idempotency-Key | 201，完整批次对象 |
+| GET /imports/{batchId} | 无请求体 | 200，完整批次对象 |
+| PUT /imports/{batchId}/chunks?offset={receivedBytes} | 二进制分片，Content-Type 为 application/octet-stream，带 X-Chunk-SHA256 | 200，`data.receivedBytes` |
+| POST /imports/{batchId}/complete | 空请求体，带 Idempotency-Key | 202，当前批次对象，首次受理进入 PROCESSING |
+| POST /imports/{batchId}/retry | 空请求体，带 Idempotency-Key | 202，当前批次对象 |
+| GET /imports/{batchId}/samples?limit=20&cursor={nextCursor} | 首次省略 cursor，后续使用上一页 nextCursor | 200，`data.items` 和 `data.nextCursor` |
+| GET /projects/{projectId}/samples/{sampleId}/file | 无请求体 | 200，JPEG/PNG 二进制原图 |
 
-原始文件只能经授权文件接口下载；不会把storageKey、全库目录或长效凭据直接暴露给浏览器。
+### 3.1 登录、权限与请求约定
 
-### 3.1 图片分类首轮实现
+所有接口带 `Authorization: Bearer <统一登录令牌>`。后端重新校验统一身份、标注平台 ENABLED 状态及项目 owner 归属。标注管理员按同一 owner 规则访问图片导入数据，他人资源返回 404。有效领取者的包内图片使用第 5 节的 assignment 文件接口授权。
 
-本轮固定字段、错误和配置见 [图片导入接口细则](08-image-import-api.md)。七个接口的调用示例见 [前端示例](../../labeling-service/examples/README.md)，分支与交付约束见 [交接说明](07-image-import-handoff.md)。
+owner 的 DRAFT/OPEN 项目允许创建批次、上传、完成、重试和预览。PAUSED/ARCHIVED 项目拒绝导入写操作，PAUSED 拒绝读取原图，ARCHIVED 允许读取已有原图。批次查询及 READY 批次的样本元数据查询可供历史查看。
+
+三个 POST 均要求非空且不超过 200 字符的 `Idempotency-Key`。同一调用者、操作、键及相同请求返回首次保存的响应快照。创建时同键传入不同 JSON 内容返回 409 IDEMPOTENCY_CONFLICT。网络重试复用原键，新操作使用新键。重放后通过 GET 批次取得当前状态。
+
+### 3.2 创建、查询与批次字段
+
+创建请求使用 `Content-Type: application/json`。`filename` 为长度 1–255 的 ZIP 文件名，使用 `.zip` 后缀并且不含目录分隔符。`sizeBytes` 为正整数字节数，`sha256` 为整包原始字节的 64 位十六进制 SHA-256，大小受部署上限约束。
+
+```json
+{
+  "filename": "images.zip",
+  "sizeBytes": 1024,
+  "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+}
+```
+
+创建响应示例，查询、complete 和 retry 的成功响应使用相同字段结构。
+
+```json
+{
+  "data": {
+    "batchId": "22222222-2222-4222-8222-222222222222",
+    "projectId": "11111111-1111-4111-8111-111111111111",
+    "status": "UPLOADING",
+    "sizeBytes": 1024,
+    "receivedBytes": 0,
+    "chunkSizeBytes": 4194304,
+    "originalComplete": false,
+    "validSampleCount": 0,
+    "errorCount": 0,
+    "errors": [],
+    "errorCode": null
+  },
+  "requestId": "44444444-4444-4444-8444-444444444444"
+}
+```
+
+示例中的 UUID、摘要和字节数用于说明结构。实际调用使用服务返回的 ID，并计算所选 ZIP 的真实大小和摘要。
+
+| 批次字段 | 含义 |
+|---|---|
+| batchId、projectId | 批次及所属项目的 UUID 字符串 |
+| status | UPLOADING、PROCESSING、READY 或 FAILED |
+| sizeBytes、receivedBytes | 整包声明大小、已持久化接收字节数 |
+| chunkSizeBytes | 为此批次冻结的分片尺寸，调用方按返回值上传 |
+| originalComplete | 原包曾通过整包长度和摘要校验，重试解析时仍会复核原包 |
+| validSampleCount | 成功解析并持久化的图片数 |
+| errorCount、errors | 错误总数及 `[{sourcePath,code,message}]` 明细，明细受部署展示上限限制 |
+| errorCode | 批次失败原因，正常批次通常为 null |
+
+### 3.3 分片上传与续传
+
+首次 `offset=0`，后续 offset 使用服务器返回的 `receivedBytes`。请求体为当前分片的原始字节，`X-Chunk-SHA256` 为当前分片的 64 位十六进制 SHA-256。非末片长度等于 `chunkSizeBytes`，末片等于剩余字节数。
+
+```json
+{"data":{"receivedBytes":1024},"requestId":"44444444-4444-4444-8444-444444444444"}
+```
+
+UPLOADING 状态下，同一已记录 offset、长度和摘要的分片重传返回当前总进度，避免重复追加。断线后先 GET 批次，再用同一 ZIP 从 `receivedBytes` 继续。数据库进度持久化后才推进返回值。完成受理后，继续上传或重传分片返回 409 UPLOAD_CLOSED。
+
+### 3.4 完成、解析状态与失败重试
+
+上传全部字节后调用 complete，发送零字节请求体。complete/retry 传入 `{}` 也会返回 400 INVALID_REQUEST。首次 complete 校验整包长度和摘要，通过后保存 PROCESSING 状态并返回 202，由后台 worker 解析。调用方持续 GET 批次，按返回状态更新页面。
+
+- UPLOADING 表示仍在接收分片。
+- PROCESSING 表示等待或正在解析。
+- READY 表示有效样本可浏览。部分文件损坏或格式不支持时，可同时存在 `errorCount > 0`，页面展示有效样本和错误明细。
+- FAILED 表示本次解析失败。查看 `errorCode` 和 `errors`；原包完整且 `originalComplete=true` 时可调用 retry 重新解析。
+
+无有效图片时为 FAILED/NO_VALID_SAMPLES。危险路径、符号链接、重复路径、展开超限、ZIP 完整性等问题使整批 FAILED。后台解析问题通过批次对象中的 `errorCode`、`errors[].code` 返回，GET 批次本身仍可成功返回 200。常见解析码包括 INVALID_ARCHIVE、UNSAFE_ARCHIVE、EXPANSION_LIMIT、UNSUPPORTED_FORMAT、INVALID_IMAGE、IMAGE_TOO_LARGE、ARCHIVE_READ_FAILED、NO_VALID_SAMPLES。
+
+retry 会再次校验完整原包，并复用稳定的批次路径和 sampleId。同批次同规范化源路径保持同一 sampleId，避免重试重复入库。文件内容需要修正时，修正 ZIP 后创建新批次。
+
+### 3.5 样本列表与分页
+
+仅 READY 批次允许读取样本列表，其他状态返回 409 IMPORT_NOT_READY。`limit` 默认为 20，范围 1–100。响应按 sampleId 稳定排序，`cursor` 与批次绑定。下一页使用服务器返回的 `nextCursor`，最后一页为 null。
+
+```json
+{
+  "data": {
+    "items": [
+      {
+        "sampleId": "33333333-3333-4333-8333-333333333333",
+        "projectId": "11111111-1111-4111-8111-111111111111",
+        "batchId": "22222222-2222-4222-8222-222222222222",
+        "sourcePath": "normal/one.jpg",
+        "mediaType": "image/jpeg",
+        "contentSha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "metadata": {"width": 640, "height": 480, "sizeBytes": 1024},
+        "fileUrl": "/api/labeling/v1/projects/11111111-1111-4111-8111-111111111111/samples/33333333-3333-4333-8333-333333333333/file"
+      }
+    ],
+    "nextCursor": null
+  },
+  "requestId": "44444444-4444-4444-8444-444444444444"
+}
+```
+
+`sourcePath` 保存 ZIP 内的 Unicode NFC 规范化相对路径，`contentSha256` 用于核对原图内容。metadata 提供宽、高和原始字节数。游标按不透明字符串传回，并进行 URL 编码。
+
+### 3.6 原图读取与页面预览
+
+使用样本返回的 `fileUrl`，携带与 owner 相同的登录身份读取。成功响应体为原始图片字节，`Content-Type` 为 image/jpeg 或 image/png，带 Content-Length、`Cache-Control: private, no-store` 和 `X-Content-Type-Options: nosniff`。错误响应使用通用 JSON 错误结构。
+
+前端通过携带 Authorization 的 fetch 取得 Blob，再创建 Blob URL 供图片元素展示，切换或关闭时释放 Blob URL。项目ID和样本ID须对应，图片内容可按 `contentSha256` 校验。调用示例见 [image-preview.js](../../labeling-service/examples/image-preview.js)。
+
+### 3.7 图片导入错误与完整调用示例
+
+下表是同步请求的 HTTP 错误。异步解析失败按第 3.4 节读取批次状态。
+
+| HTTP | code | 调用方处理 |
+|---|---|---|
+| 400 | INVALID_REQUEST、INVALID_CURSOR、UPLOAD_INTERRUPTED | 检查字段、请求头、请求体和批次游标，传输中断后查询进度再重试 |
+| 401 | UNAUTHENTICATED | 重新取得统一登录令牌 |
+| 403 | FORBIDDEN、LABELING_DISABLED | 检查标注身份启用状态和权限 |
+| 404 | RESOURCE_NOT_FOUND | 检查资源 ID 和 owner 身份 |
+| 409 | UPLOAD_CONFLICT、OFFSET_MISMATCH | 核对所选 ZIP，重新查询 receivedBytes 和分片边界 |
+| 409 | UPLOAD_CLOSED、IMPORT_NOT_READY、IMPORT_FAILED、IMPORT_NOT_RETRYABLE | 查询批次状态，按完成、等待或失败重试流程处理 |
+| 409 | IDEMPOTENCY_CONFLICT、PROJECT_PAUSED、PROJECT_ARCHIVED | 核对幂等键对应的请求及项目状态 |
+| 413 | UPLOAD_TOO_LARGE | 检查整包部署上限和服务器返回的分片尺寸 |
+| 415 | UNSUPPORTED_MEDIA_TYPE | 分片请求使用 application/octet-stream |
+| 422 | UNSUPPORTED_FORMAT、UPLOAD_INCOMPLETE、CHECKSUM_MISMATCH、CHUNK_SIZE_MISMATCH | 检查项目类型、ZIP、长度及摘要，原文件需修正时新建批次 |
+| 503 | IDENTITY_UNAVAILABLE、STORAGE_UNAVAILABLE | 检查统一身份服务或持久化存储，恢复后按原进度和幂等键重试 |
+
+完整调用顺序为统一登录、GET /me、创建项目、创建导入批次、按返回尺寸上传分片、complete、轮询至 READY、读取所有样本页、携带授权读取原图。
+
+给宋雷鸣的可执行示例见 [examples/README.md](../../labeling-service/examples/README.md)。在 `labeling-service/` 目录、使用 Node 18+ 运行以下 PowerShell 示例，输入调用者本人创建的 projectId。TOKEN 通过现有登录流程取得并设置为当前终端环境变量。
+
+```powershell
+$env:LABELING_API_BASE = 'http://47.111.225.144/api/labeling/v1'
+$projectId = Read-Host '请输入本人创建的项目 ID'
+$imageZip = Read-Host '请输入图片 ZIP 的绝对路径'
+$downloadDir = Read-Host '请输入原图下载验证目录'
+node examples/image-import.mjs $projectId $imageZip $downloadDir
+```
+
+脚本执行上传、轮询、全部分页、原图下载及 SHA-256 校验，并保存包含项目、批次、样本 ID 的 manifest.json。批次查询和 samples 接口用于导入数据浏览，分类结果的草稿保存与最终提交按第 5 节后续接口接入。
+
+部署可调容量、ZIP 安全检查及恢复细节见 [图片导入接口细则](08-image-import-api.md)，交接记录见 [交接说明](07-image-import-handoff.md)，验证记录见 [图片导入本地验证记录](09-image-import-verification.md)。
 
 ## 4. 打包与领取
 
@@ -120,14 +259,16 @@ scope为ALL_SUBMITTED或SELECTED_SUBMISSIONS；创建时在同一数据库快照
 
 | HTTP | code示例 |
 |---|---|
+| 400 | INVALID_REQUEST、INVALID_CURSOR、UPLOAD_INTERRUPTED |
 | 401 | UNAUTHENTICATED |
-| 403 | FORBIDDEN |
+| 403 | FORBIDDEN、LABELING_DISABLED |
 | 404 | RESOURCE_NOT_FOUND（包括不应暴露的他人资源） |
-| 409 | SLOT_FULL、CLAIM_BUSY、RESOURCE_BUSY、ALREADY_CLAIMED、BATCH_ALREADY_PUBLISHED、REVISION_CONFLICT、ASSIGNMENT_CLOSED、PROJECT_PAUSED、IDEMPOTENCY_CONFLICT |
+| 409 | SLOT_FULL、CLAIM_BUSY、RESOURCE_BUSY、ALREADY_CLAIMED、BATCH_ALREADY_PUBLISHED、REVISION_CONFLICT、ASSIGNMENT_CLOSED、PROJECT_PAUSED、PROJECT_ARCHIVED、IDEMPOTENCY_CONFLICT、UPLOAD_CONFLICT、OFFSET_MISMATCH、UPLOAD_CLOSED、IMPORT_NOT_READY、IMPORT_FAILED、IMPORT_NOT_RETRYABLE |
 | 410 | EXPORT_EXPIRED |
 | 413 | UPLOAD_TOO_LARGE |
-| 422 | INVALID_RESULT、INCOMPLETE_PACKAGE、UNSUPPORTED_FORMAT、NO_SUBMISSIONS |
-| 503 | IDENTITY_UNAVAILABLE、EDITOR_UNAVAILABLE、TRANSACTION_RETRY_EXHAUSTED |
+| 415 | UNSUPPORTED_MEDIA_TYPE |
+| 422 | INVALID_RESULT、INCOMPLETE_PACKAGE、UNSUPPORTED_FORMAT、NO_SUBMISSIONS、UPLOAD_INCOMPLETE、CHECKSUM_MISMATCH、CHUNK_SIZE_MISMATCH |
+| 503 | IDENTITY_UNAVAILABLE、STORAGE_UNAVAILABLE、EDITOR_UNAVAILABLE、TRANSACTION_RETRY_EXHAUSTED |
 
 ## 8. 最小联调顺序
 
@@ -135,7 +276,7 @@ scope为ALL_SUBMITTED或SELECTED_SUBMISSIONS；创建时在同一数据库快照
 
 2026-11-04一致性补充：暂停事务提交后拒绝新工作数据访问和草稿/提交/同步写入；此前已持共享锁的短事务先完成，已传输的字节无法撤回。导出提交清单不随重试变化。数据库死锁/序列化冲突最多重试整个事务3次，外部编辑器和存储请求不放进数据库重试闭包。幂等记录与业务写入/响应同事务提交；上传分片回执持久化，持久化成功前不推进offset。
 
-## 标注身份权限补充（2026-11-07，本地实现待合并部署）
+## 标注身份权限补充（2026-11-07，已合入 backend）
 
 所有以下接口使用 `Authorization: Bearer <登录令牌>`，前缀 `/api/labeling/v1`。
 标注角色独立于训练平台的 roleId。普通启用用户可直接创建项目，无需求方申请审批。
@@ -159,7 +300,7 @@ scope为ALL_SUBMITTED或SELECTED_SUBMISSIONS；创建时在同一数据库快照
 管理员不能停用自己或撤销自己的管理员权限（409），请由另一个管理员操作。
 授权变更在事务内串行化，并重新核验操作者当前身份，防止并发互相撤权导致无人管理。
 不存在的 HUMAN actor 返回 404，普通用户调用管理员接口返回 403。
-403 统一错误码调整为 FORBIDDEN，前端不要将所有 403 当作密码错误或登出指令。
+身份与管理接口的 403 错误码为 FORBIDDEN。图片导入事务内重新核验停用状态时也可能返回 LABELING_DISABLED，前端按 403 展示标注身份或权限提示，重新登录由 401 响应触发。
 
 项目列表、详情和规范创建仍按 owner 授权，标注管理员无权直接查看他人的原始数据或项目详情。
 他人项目详情返回 404。普通用户仍可以创建自己的项目。
@@ -177,7 +318,7 @@ scope为ALL_SUBMITTED或SELECTED_SUBMISSIONS；创建时在同一数据库快照
 部署后用两个普通账号和一个标注管理员联调：普通账号管理接口 403、普通用户创建项目成功、跨账号项目详情 404、管理员也不能读取他人项目、停用后 /me 403、恢复后 /me 200、撤销管理员后管理接口 403、自停用或自撤权 409。
 单元测试不等同于真实 PostgreSQL 并发测试和服务器验收。
 
-## 任务包首轮实现（2026-11-07，本地代码，待提交部署）
+## 任务包首轮实现（2026-11-07，已合入 backend）
 
 本节是本轮实际接口范围；上文 release/revoke、编辑器、草稿、提交、导出仍为后续设计，不能当作已实现接口。
 
