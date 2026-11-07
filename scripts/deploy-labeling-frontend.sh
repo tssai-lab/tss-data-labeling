@@ -35,5 +35,15 @@ mv -f "${target}.next" "$target"
 served_digest=$(curl -fsS --max-time 15 -H 'Host: 47.111.225.144' \
     'http://127.0.0.1/index.html' | sha256sum | cut -d ' ' -f1)
 [[ $served_digest == "$digest" ]]
+# The public 8001 entry must see this release too, not an older image layer.
+entry_digest=$(curl -fsS --max-time 15 \
+    'http://127.0.0.1:8001/index.html' | sha256sum | cut -d ' ' -f1)
+[[ $entry_digest == "$digest" ]]
+# Distinguish the labeling service from the legacy training API at this path.
+probe=$(curl -sS --max-time 15 -w '|%{http_code}' \
+    'http://127.0.0.1:8001/api/labeling/v1/me')
+[[ $probe == *'|401' ]]
+python3 -c 'import json,sys; r=json.load(sys.stdin); assert r["error"]["code"] == "UNAUTHENTICATED" and r.get("requestId")' \
+    <<< "${probe%|401}"
 printf '%s\n' "$revision" > /var/lib/tss-labeling-frontend.revision
 echo "统一前端已部署：$revision"
