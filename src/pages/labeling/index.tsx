@@ -43,6 +43,7 @@ import {
 } from '@/services/labeling';
 import { hashFile, uploadChunks } from '@/services/labelingUpload.mjs';
 import styles from './index.less';
+import ProjectEditorEntry from './ProjectEditorEntry';
 
 const { Text, Paragraph } = Typography;
 const taskType = 'IMAGE_CLASSIFICATION';
@@ -998,7 +999,7 @@ export default function Labeling() {
                         />
                       )}
                       <div className={styles.classification}>
-                        <Text strong>选择分类</Text>
+                        <Text strong>试选分类（此处不保存）</Text>
                         {latestSpec ? (
                           <Radio.Group
                             value={category}
@@ -1015,15 +1016,20 @@ export default function Labeling() {
                             请先保存分类标签与标注说明。
                           </Text>
                         )}
-                        <Alert
-                          type="warning"
-                          showIcon
-                          message="分类保存待接入"
-                          description="当前可预览图片和试选分类，所选内容尚未保存。待领取、分类保存接口及编辑器同步链路接入后，才能保存到平台。"
-                        />
-                        <Button type="primary" disabled>
-                          保存标注（待接入）
-                        </Button>
+                        {identity && latestSpec ? (
+                          <ProjectEditorEntry
+                            key={`${identity.actorId}:${project.projectId}:${selected.sampleId}:${latestSpec.specVersionId}`}
+                            projectId={project.projectId}
+                            sampleId={selected.sampleId}
+                            actorId={identity.actorId}
+                            specVersionId={latestSpec.specVersionId}
+                            enabled={writable}
+                          />
+                        ) : (
+                          <Text type="secondary">
+                            配置分类标签后可打开标注编辑器。
+                          </Text>
+                        )}
                       </div>
                     </>
                   ) : (
