@@ -1,0 +1,20 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="icon" href="data:,"><title>本地图片分类接入演示</title>
+<style>body{font:16px/1.7 system-ui,sans-serif;max-width:1000px;margin:40px auto;padding:0 24px;color:#182230;background:#f8fafc}section{background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:24px;margin:20px 0}button{padding:10px 18px;background:#155eef;color:#fff;border:0;border-radius:6px;cursor:pointer;margin-right:10px;font:inherit}button.secondary{background:#475569}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f1f5f9;padding:14px;font-size:13px}#status{color:#b42318}small{color:#475569}</style></head><body>
+<h1>本地图片分类接入演示</h1><p>本页仅用于开发验证。所有服务运行在本机，不连接团队业务数据库；身份由本地测试服务模拟。</p>
+<p>两名测试标注员已分别领取同一图片的两个席位。点击进入编辑器，选择类别并保存，再回本页读取结果。</p><p id="status">正在读取本地演示信息…</p>
+<section><h2>测试标注员 A</h2><button data-who="demo-a" data-action="open">进入 A 的编辑器</button><button class="secondary" data-who="demo-a" data-action="read">读取 A 的平台结果</button><pre id="result-demo-a">尚未读取</pre></section>
+<section><h2>测试标注员 B</h2><button data-who="demo-b" data-action="open">进入 B 的编辑器</button><button class="secondary" data-who="demo-b" data-action="read">读取 B 的平台结果</button><pre id="result-demo-b">尚未读取</pre></section>
+<section><h2>当前本地数据</h2><pre id="ids"></pre><small>这是独立演示启动页，不是对宋雷鸣正式页面的修改。测试身份、任务和图片副本均与服务器原项目分开。</small></section>
+<script>
+let model;const status=document.getElementById('status');
+async function load(){model=await(await fetch('/local-demo/model')).json();if(!model.ready){status.textContent='演示数据正在准备，请稍后刷新。';return;}status.textContent='本地环境已就绪。';document.getElementById('ids').textContent=JSON.stringify({projectId:model.projectId,sampleId:model.sampleId,assignmentA:model.assignmentA,assignmentB:model.assignmentB},null,2);}
+document.querySelectorAll('button[data-who]').forEach(button=>button.onclick=async()=>{
+ if(!model?.ready)return;const who=button.dataset.who;const assignment=who==='demo-a'?model.assignmentA:model.assignmentB;
+ const opening=button.dataset.action==='open';const popup=opening?window.open('about:blank','_blank'):null;button.disabled=true;
+ try{const response=await fetch('/api/labeling/v1/assignments/'+assignment+(opening?'/editor-sessions':'/drafts/'+model.sampleId),{method:opening?'POST':'GET',headers:{Authorization:'Bearer '+model.tokens[who],...(opening?{'Content-Type':'application/json','Idempotency-Key':crypto.randomUUID()}:{})},body:opening?JSON.stringify({sampleId:model.sampleId}):undefined});
+ const body=await response.json();if(!response.ok)throw new Error(body.error?.message||'请求失败');
+ if(opening){if(popup)popup.location.href=body.data.editorUrl;else status.textContent='弹窗被拦截，请允许本地页面打开新窗口后重试。';}
+ else document.getElementById('result-'+who).textContent=JSON.stringify(body.data,null,2);
+ }catch(e){if(popup)popup.close();status.textContent=e.message;}finally{button.disabled=false;}
+});load().catch(e=>status.textContent=e.message);
+</script></body></html>

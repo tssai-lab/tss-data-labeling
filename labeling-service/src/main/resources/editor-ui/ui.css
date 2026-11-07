@@ -1,0 +1,5 @@
+.platform-header{padding:20px 28px;border-bottom:1px solid #e2e8f0;background:#f8fafc;color:#0f172a;font:14px/1.6 system-ui,sans-serif}
+.platform-header h2{font-size:22px;font-weight:600;margin:0 0 8px}.platform-header p{margin:8px 0;overflow-wrap:anywhere}
+.platform-header button{background:#155eef;color:white;border:1px solid #155eef;border-radius:6px;padding:8px 16px;margin:8px 8px 8px 0;cursor:pointer;font:inherit}
+.platform-header button#reload{background:white;color:#344054;border-color:#cbd5e1}.platform-header button:disabled{opacity:.5;cursor:wait}
+.platform-header button:focus-visible{outline:3px solid #93c5fd;outline-offset:2px}#status{font-weight:600}

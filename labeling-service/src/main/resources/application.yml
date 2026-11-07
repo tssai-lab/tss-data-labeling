@@ -27,6 +27,15 @@ server:
   port: ${LABELING_PORT:8082}
 
 labeling:
+  project-editor:
+    enabled: ${LABELING_PROJECT_EDITOR_ENABLED:false}
+  assignment-editor:
+    enabled: ${LABELING_ASSIGNMENT_EDITOR_ENABLED:false}
+  editor:
+    projects: ${LABELING_EDITOR_PROJECTS:}
+    base-url: ${LABELING_EDITOR_BASE_URL:http://127.0.0.1:8085}
+    username: ${LABELING_EDITOR_USERNAME:}
+    password: ${LABELING_EDITOR_PASSWORD:}
   tasks:
     # 同步打包的资源上限，不代表无限上传或无限发布。
     max-samples: ${LABELING_TASK_MAX_SAMPLES:10000}

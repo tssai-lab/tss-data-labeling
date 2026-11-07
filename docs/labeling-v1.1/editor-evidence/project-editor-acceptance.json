@@ -1,0 +1,24 @@
+{
+  "passed": true,
+  "realIdentity": true,
+  "realLocalLabelStudio": true,
+  "existingLocalProject": true,
+  "createdProjects": 0,
+  "uploadedImages": 0,
+  "calledClaims": 0,
+  "calledPublish": 0,
+  "projectId": "02d39b85-a099-4a3e-8eb3-ee7acd079c0f",
+  "actorId": "f594e705-bd07-4cf1-b40f-705671e1aa37",
+  "results": [
+    {
+      "sampleId": "2dbd9b11-cb54-36ea-b0e1-a64745011d1c",
+      "category": "破损",
+      "revision": 2
+    },
+    {
+      "sampleId": "b550c051-f22a-3d73-9583-29bf303fc9e9",
+      "category": "破损",
+      "revision": 2
+    }
+  ]
+}
