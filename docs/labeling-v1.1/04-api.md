@@ -114,14 +114,14 @@ scope为ALL_SUBMITTED或SELECTED_SUBMISSIONS；创建时在同一数据库快照
 
 ## 7. 管理接口与错误码
 
-GET /admin/actors、POST /admin/actors/{id}/disable、POST /admin/actors/{id}/enable仅标注管理员可用；只影响标注平台使用状态，不改统一用户账号或训练权限。禁用不自动删除领取与结果；后续读写拒绝，可由管理员回收。初始管理员通过受控初始化配置建立，首期不开放自助授予管理员接口。
+用户管理本轮采用 `GET /admin/users` 和 `PATCH /admin/users/{actorId}`，替代此前规划的 `/admin/actors` 启停接口。只影响标注身份，普通用户不得自助授予管理员权限；管理员可管理其他用户的权限。具体字段与行为见下方身份权限补充。
 
-GET /admin/audit-events供标注管理员查看管理审计，不返回原始数据/完整答案。所有回收、暂停、禁用需reason。
+`GET /admin/audit-events` 尚未实现。本轮用户权限变更要求 reason，并在事务成功后写入服务日志（操作者、目标、操作内容、原因、requestId）；持久化审计查询后续实现。所有回收、暂停、禁用需 reason。
 
 | HTTP | code示例 |
 |---|---|
 | 401 | UNAUTHENTICATED |
-| 403 | LABELING_DISABLED、ADMIN_REQUIRED |
+| 403 | FORBIDDEN |
 | 404 | RESOURCE_NOT_FOUND（包括不应暴露的他人资源） |
 | 409 | SLOT_FULL、CLAIM_BUSY、RESOURCE_BUSY、ALREADY_CLAIMED、BATCH_ALREADY_PUBLISHED、REVISION_CONFLICT、ASSIGNMENT_CLOSED、PROJECT_PAUSED、IDEMPOTENCY_CONFLICT |
 | 410 | EXPORT_EXPIRED |
@@ -134,3 +134,45 @@ GET /admin/audit-events供标注管理员查看管理审计，不返回原始数
 普通用户GET /me → POST /projects（无人审批）→ 建规范 → 上传完成 → 打包预览/发布 → 两个不同用户领取N=2包 → 分别编辑/同步/提交 → owner查看两份结果 → 创建导出 → 下载核对ID。并行验收第三人超领、同人重复领取、未领取读文件、回收后迟到提交、同一结果重复提交、导出他人项目均被正确处理。
 
 2026-11-04一致性补充：暂停事务提交后拒绝新工作数据访问和草稿/提交/同步写入；此前已持共享锁的短事务先完成，已传输的字节无法撤回。导出提交清单不随重试变化。数据库死锁/序列化冲突最多重试整个事务3次，外部编辑器和存储请求不放进数据库重试闭包。幂等记录与业务写入/响应同事务提交；上传分片回执持久化，持久化成功前不推进offset。
+
+## 标注身份权限补充（2026-11-07，本地实现待合并部署）
+
+所有以下接口使用 `Authorization: Bearer <登录令牌>`，前缀 `/api/labeling/v1`。
+标注角色独立于训练平台的 roleId。普通启用用户可直接创建项目，无需求方申请审批。
+
+| 接口 | 权限与响应 |
+| --- | --- |
+| `GET /me` | 已登录且标注身份启用；返回 actorId、labelingAdmin、canCreateProject、canAnnotate |
+| `GET /admin/users?limit=20&offset=0` | 仅启用的标注管理员；data 为用户数组，limit 为 1–100，offset 非负 |
+| `PATCH /admin/users/{actorId}` | 仅启用的标注管理员；成功返回 200，data 为 null |
+
+用户列表只包含已经访问标注平台并建立 HUMAN 映射的人，不是统一登录系统全部账号。
+列表字段：actorId、identityUserId、displayName、status、labelingAdmin；不返回密码或令牌。
+修改请求支持部分更新，至少提供一个非空字段：
+
+```json
+{"status":"DISABLED","labelingAdmin":false,"reason":"联调停用验证"}
+```
+
+`reason` 必填，1–500 字符且不能全为空白。`status` 只接受 ENABLED / DISABLED；`labelingAdmin` 为布尔值。
+停用不删除项目、不修改统一身份账号或训练角色；单独停用保留已有标注管理员授予记录，重新启用会恢复其有效权限。
+管理员不能停用自己或撤销自己的管理员权限（409），请由另一个管理员操作。
+授权变更在事务内串行化，并重新核验操作者当前身份，防止并发互相撤权导致无人管理。
+不存在的 HUMAN actor 返回 404，普通用户调用管理员接口返回 403。
+403 统一错误码调整为 FORBIDDEN，前端不要将所有 403 当作密码错误或登出指令。
+
+项目列表、详情和规范创建仍按 owner 授权，标注管理员无权直接查看他人的原始数据或项目详情。
+他人项目详情返回 404。普通用户仍可以创建自己的项目。
+停用后新的 /me、项目和管理请求被拒绝；已经执行中的请求不会强制中断。
+
+### 对 B、C、D 的接入要求
+
+- C：用 /me 控制管理入口显示；调用管理接口时携带同一个统一登录令牌。隐藏按钮不能替代后端鉴权。
+- B、D：图片读取、导入、编辑器与后续提交接口都必须先验证统一身份并调用 ActorService.resolve，再检查项目或领取归属；写事务中重查并锁定启用状态。
+- 本次已合并 backend 的 V3 图片导入代码和测试；V1/V2/V3 迁移保持原样。权限功能复用已有 actor 和 actor_role_grant 表，不新增迁移。
+
+### 验收
+
+执行 `mvn -f labeling-service/pom.xml test` 运行权限单元测试。
+部署后用两个普通账号和一个标注管理员联调：普通账号管理接口 403、普通用户创建项目成功、跨账号项目详情 404、管理员也不能读取他人项目、停用后 /me 403、恢复后 /me 200、撤销管理员后管理接口 403、自停用或自撤权 409。
+单元测试不等同于真实 PostgreSQL 并发测试和服务器验收。

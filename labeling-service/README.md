@@ -6,6 +6,8 @@
 
 - `GET /api/labeling/v1/health`：检查服务进程。
 - `GET /api/labeling/v1/me`：验证统一登录并建立/读取人工 actor。
+- `GET /api/labeling/v1/admin/users?limit=20&offset=0`：标注管理员查看已建立映射的用户。
+- `PATCH /api/labeling/v1/admin/users/{actorId}`：标注管理员修改他人状态或管理员权限，需 reason。
 - `POST /api/labeling/v1/projects`：创建项目，调用者自动成为 owner。
 - `GET /api/labeling/v1/projects?scope=owned&limit=20`：列出自己的项目。
 - `GET /api/labeling/v1/projects/{projectId}`：读取自己的项目和规范版本。
