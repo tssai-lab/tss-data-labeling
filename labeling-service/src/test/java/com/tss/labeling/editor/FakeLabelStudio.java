@@ -14,6 +14,10 @@ public class FakeLabelStudio implements AutoCloseable {
     private final HttpServer server;private final ObjectMapper json=new ObjectMapper();
     private final AtomicInteger ids=new AtomicInteger();
     private final Map<String,ObjectNode> annotations=new ConcurrentHashMap<>();
+    public volatile boolean failNextAnnotationRead;
+    public volatile Runnable afterWrite;
+    public int annotationCount(){return annotations.size();}
+    public void setAuthor(String id,int author){annotations.get(id).put("completed_by",author);}
     public FakeLabelStudio()throws Exception {
         server=HttpServer.create(new InetSocketAddress("127.0.0.1",0),0);
         server.createContext("/",exchange->{
@@ -32,11 +36,13 @@ public class FakeLabelStudio implements AutoCloseable {
                 }else if(p.matches("/api/tasks/[0-9]+/annotations/")){
                     String task=p.split("/")[3];String id=""+ids.incrementAndGet();var a=(ObjectNode)json.readTree(exchange.getRequestBody());
                     a.put("id",Integer.parseInt(id));a.put("task",Integer.parseInt(task));a.put("completed_by",99);annotations.put(id,a);response=a;
+                    if(afterWrite!=null){var callback=afterWrite;afterWrite=null;callback.run();}
                 }else if(p.matches("/api/tasks/[0-9]+/")){
                     String task=p.split("/")[3];response=Map.of("annotations",annotations.values().stream().filter(a->task.equals(a.path("task").asText())).toList());
                 }else if(p.matches("/api/annotations/[0-9]+/")){
                     String id=p.split("/")[3];var a=annotations.get(id);if(a==null){status=404;}else{
-                        if(method.equals("PATCH"))a.set("result",json.readTree(exchange.getRequestBody()).path("result"));response=a;
+                        if(method.equals("PATCH")){a.set("result",json.readTree(exchange.getRequestBody()).path("result"));if(afterWrite!=null){var callback=afterWrite;afterWrite=null;callback.run();}}response=a;
+                        if(method.equals("GET")&&failNextAnnotationRead){failNextAnnotationRead=false;status=503;response=Map.of();}
                     }
                 }else status=404;
                 byte[] b=json.writeValueAsBytes(response);exchange.getResponseHeaders().set("Content-Type","application/json");
@@ -46,5 +52,6 @@ public class FakeLabelStudio implements AutoCloseable {
     }
     public String baseUrl(){return "http://127.0.0.1:"+server.getAddress().getPort();}
     public void tamper(String id,JsonNode value){annotations.get(id).set("result",value);}
+    public void tamperTask(String task,JsonNode value){annotations.values().stream().filter(a->task.equals(a.path("task").asText())).forEach(a->a.set("result",value));}
     public void close(){server.stop(0);}
 }

@@ -28,10 +28,10 @@ docker compose ps
 
 ## 平台后端配置
 
-JDK17，PostgreSQL，沿用原数据库及身份服务配置。项目模式需要：
+JDK17，PostgreSQL，沿用原数据库及身份服务配置。领取编辑器需要：
 
 ```text
-LABELING_PROJECT_EDITOR_ENABLED=true
+LABELING_EDITOR_ENABLED=true
 LABELING_EDITOR_PROJECTS=明确允许的项目UUID
 LABELING_EDITOR_BASE_URL=http://127.0.0.1:8085
 LABELING_EDITOR_USERNAME=由受控环境提供
@@ -41,9 +41,15 @@ LABELING_EDITOR_TICKET_SECRET=独立随机密钥，至少32字符，仅后端保
 
 默认关闭，项目白名单默认为空。生产不要用测试通配符*。签发密钥用于HMAC一次性票据，不与密码混用；需稳定保管，轮换使未使用入口失效，已建立Cookie会话仍按有效期和业务权限检查。
 
-会话表校验字段保存ticket和Cookie摘要；幂等响应不保存含ticket的editorUrl，重试时由签发密钥重建未使用的有效入口。现有数据库中旧版本response_body可能包含历史短时入口，按保留策略处理，不声称自动完成历史数据清除。
+editor_session保存ticket和Cookie摘要；幂等会话响应不保存含ticket的editorUrl，重试时由签发密钥重建未使用的有效入口。业务idempotency_record保存同步结果响应，不含入口票据。
 
-V5/V6先由业务后端核对迁移编号及现有等价表。保持已执行迁移不变，不在共享库手工重复建表。V6不重新创建项目或上传图片，不生成任务包/领取。
+## 数据库迁移与旧验收库
+
+已整合业务backend提交c26f90182ca2ff49d2b731ce1f09aaacf847d426，保留其V1—V5原文。唯一V5为V5__create_annotation_results.sql，负责annotation_draft及不可变提交。新增V6__create_assignment_editor.sql只建editor_mapping/editor_session、归属外键、唯一约束和应用账号SELECT/INSERT/UPDATE授权，不重复创建草稿/项目/图片。
+
+本分支旧V5__create_editor_drafts.sql和V6__create_project_editor.sql已从生产迁移目录移除，原文件在本机.tools归档，未修改任何既有数据库。此前本地项目直标验收库已执行过这些旧版本，不能直接启动本版服务接管；Flyway会检测历史差异。保留旧库及备份，使用新的隔离库从业务V1—V5和新V6建立验收环境，旧数据迁移另行评审。禁止repair、手改checksum、删历史或用IF NOT EXISTS掩盖不兼容表。
+
+目标环境若只执行了业务V1—V5，可按团队部署流程备份并升级到V6；实际执行前仍须核对flyway_schema_history、实际表和其他分支编号。配置服务的迁移账号执行，运行账号不授DDL或删除提交的权限。现有业务表及数据保留，不生成额外领取。
 
 ## 编辑器静态资源与构建
 
@@ -88,14 +94,18 @@ package-editor-assets.py固定打包顺序、ZIP时间戳和权限元数据；�
 
 ## 网关与前端
 
-前端与/api/labeling/v1/project-editor-ui、editor-assets、项目API应同源。正式环境使用HTTPS，核对后端识别代理HTTPS及Secure Cookie，允许同源窗口/iframe，避免SPA吞掉资源路由。launch查询中的ticket脱敏，禁止记录Token、Cookie和服务密码。
+前端与/api/labeling/v1/editor-ui、editor-assets、assignments API应同源。正式环境使用HTTPS，核对后端识别代理HTTPS及Secure Cookie，允许同源窗口/iframe，避免SPA吞掉资源路由。launch查询中的ticket脱敏，禁止记录Token、Cookie和服务密码。
 
-本地验证可将标注代理指向本机8088，身份代理指向已授权的统一身份服务；不能把本地验收地址当成团队可访问的服务。前端入口使用返回的editorUrl，不直接打开LS完整后台。
+本地验证可将标注代理指向本机8088，身份代理指向已授权的统一身份服务；不能把本地验收地址当成团队可访问的服务。前端入口使用返回的editorUrl，不直接打开LS完整后台。旧项目直标前端功能分支已移除，本次只交付后端接口，正式前端按接入说明增加领取入口后再验收。
 
 ## 备份、回滚与故障
 
-上线前备份业务库、原始图片、LS数据卷及受控配置。先关闭LABELING_PROJECT_EDITOR_ENABLED停止新会话/读写，再按团队流程恢复旧JAR，并验证Flyway对新增迁移的兼容性。保留新增表和数据卷，不通过删表回滚。
+上线前备份业务库、原始图片、LS数据卷及受控配置。先关闭LABELING_EDITOR_ENABLED停止编辑器新会话/读写，再按团队流程恢复旧JAR，并验证Flyway对新增迁移的兼容性。保留新增表和数据卷，不通过删表回滚。
 
-外部导入失败可能留下PENDING映射，需要核对LS任务、图片和规范后对账，不能盲目重建或直接改成READY。外部保存成功而平台落库失败时不显示成功，相同请求可按版本规则重试；异常外部答案需要对账。
+外部导入失败可能留下PENDING映射，需要核对LS任务、图片和规范后对账，不能盲目重建或直接改成READY。外部保存成功而平台落库失败时不显示成功，先GET业务草稿确认，SYNCING操作调用editor-sync读回恢复；不要盲目重复外部写入。权限/版本冲突及异常外部答案需要对账。
 
-共同验收：同源入口、实际账号/项目、分类保存与恢复、暂停/停用、错误提示、备份恢复。权限和数据契约由业务后端共同评审；未完成前只提交功能分支供审查。
+共同验收：同源入口、真实身份及本人领取、冻结规范、分类保存与恢复、N=2独立答案、整包提交后拒绝编辑、暂停/停用、错误提示、备份恢复。权限和数据契约由业务后端共同评审；未完成前只提交功能分支供审查。
+
+## 本地隔离验收启动器
+
+LocalEditorDemoTest是显式启用的测试工具，不进入生产JAR。需要EDITOR_LOCAL_DEMO=true、EDITOR_REAL_IDENTITY_URL、EDITOR_DEMO_LS_USERNAME、EDITOR_DEMO_LS_PASSWORD和独立LABELING_EDITOR_TICKET_SECRET；可设EDITOR_DEMO_DIR选择新的隔离目录。PostgreSQL使用其中assignment-postgres子目录，不打开旧postgres子目录；原始图片放images。启动器不自动创建项目、打包或领取，使用真实接口和本人登录操作。旧脚本和旧数据库不能作为本版已兼容的依据。

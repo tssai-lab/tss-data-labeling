@@ -39,7 +39,7 @@
    config:context.config,interfaces:['panel','controls','side-column'],
    user:{id:1,pk:1,firstName:'当前平台标注员',lastName:''},users:[{id:1,firstName:'当前平台标注员',lastName:''}],
    task:{id:1,data:{image:new URL('image',window.location.href).href},annotations:[],predictions:[]},
-   onLabelStudioLoad:LS=>{store=LS;const annotation=LS.annotationStore.addAnnotation({userGenerate:true});LS.annotationStore.selectAnnotation(annotation.id);if(context.draft.result?.length)annotation.deserializeAnnotation(context.draft.result);snapshot=JSON.stringify(serialized());ready=true;save.disabled=false;status.textContent=context.draft.revision?`已恢复平台分类结果，版本 ${context.draft.revision}`:'请选择一个类别，然后保存。';notify('labeling:ready',{revision:context.draft.revision});},
+   onLabelStudioLoad:LS=>{store=LS;const annotation=LS.annotationStore.addAnnotation({userGenerate:true});LS.annotationStore.selectAnnotation(annotation.id);if(context.editorResult?.length)annotation.deserializeAnnotation(context.editorResult);snapshot=JSON.stringify(serialized());ready=true;save.disabled=false;status.textContent=context.draft.revision?`已恢复平台分类结果，版本 ${context.draft.revision}`:'请选择一个类别，然后保存。';notify('labeling:ready',{revision:context.draft.revision});},
   });
  }catch(error){status.textContent=`加载失败：${error.message}。请从平台重新打开或联系管理员。`;}
 })();
