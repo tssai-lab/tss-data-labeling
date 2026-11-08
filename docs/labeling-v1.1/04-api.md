@@ -222,3 +222,57 @@ scope为ALL_SUBMITTED或SELECTED_SUBMISSIONS；创建时在同一数据库快照
 - 任务推荐算法、领取释放/回收、编辑器、结果提交与集成尚未实现，不能将 CLAIMED 当作已完成。
 
 验证命令：`mvn -f labeling-service/pom.xml verify`。测试覆盖现有图片导入、多人并发争抢、重复领取与重放、跨用户和跨包读图、暂停/停用拒绝访问、同批次防重复发布。
+
+## 草稿与提交首轮实现（2026-11-08，本地实现待部署）
+
+本节替代上文的草稿格式示例，以实际实现为准。新增 V5 迁移，不修改 V1–V4。
+当前仅实现图片单标签分类的标准化平台记录，不接收未经适配的 Label Studio 原始 JSON。
+`resultFormat` 固定为 `image-classification-v1`，`result` 使用规范中的稳定 labelId，不使用显示名称作为主键。
+D 的 Label Studio 适配器需后端回读并校验作者、领取、样本、规范版本后转换成此记录；会话和同步接口仍未实现。不得并行启用未经协调的浏览器直写与编辑器同步写入。
+
+### 草稿保存与刷新读回
+
+`PUT /assignments/{assignmentId}/drafts/{sampleId}`，带统一登录 Bearer Token：
+
+```json
+{"baseRevision":0,"explicitDone":true,"resultFormat":"image-classification-v1","result":{"labelId":"normal"}}
+```
+
+- `normal` 仅是示例，必须使用该领取绑定规范中的标签 id。
+- 首次 baseRevision=0；之后传服务器上次返回的 revision。
+- 返回 200：data 包含 assignmentId、sampleId、revision、savedAt、explicitDone、resultFormat、result。
+- 清空尚未完成的选择可传 result={}、explicitDone=false；完成状态必须有且仅有一个合法标签。
+- 格式、标签不合法为 422 INVALID_RESULT / UNSUPPORTED_FORMAT；旧版本为 409 REVISION_CONFLICT，不静默覆盖。
+- 成功保存使领取进入 IN_PROGRESS。PUT 通过 baseRevision 比较并交换，不使用 Idempotency-Key；若响应丢失，先 GET 读回确认，不盲目重试覆盖。
+- `GET /assignments/{assignmentId}/drafts/{sampleId}` 读回本人草稿；尚无草稿返回 revision=0、explicitDone=false、result={}、savedAt=null。
+- `GET /assignments/{assignmentId}/items` 现在每个样本同时返回 draftRevision、explicitDone、resultFormat、result；无草稿时这些字段为 null。
+
+### 正式提交整包
+
+`POST /assignments/{assignmentId}/submissions`，带独立 Idempotency-Key：
+
+```json
+{"items":[{"sampleId":"样本UUID-1","revision":1},{"sampleId":"样本UUID-2","revision":3}]}
+```
+
+清单必须和包成员完全一致、无重复，所有草稿 explicitDone=true，且 revision 为最新。
+成功返回 201，data：submissionId、assignmentId、status=SUBMITTED、sampleCount。
+服务在同一事务内锁定领取、核验草稿、复制不可变快照并关闭本次领取；多人席位分别提交，不合并答案。
+
+- 缺少、多余、重复样本或未完成：422 INCOMPLETE_PACKAGE / INVALID_RESULT。
+- 草稿版本过期：409 REVISION_CONFLICT。
+- 同幂等键、相同版本清单（顺序可不同）重试：返回第一次提交结果。
+- 同幂等键内容不同：409 IDEMPOTENCY_CONFLICT；换键再次提交已结束领取：409 ASSIGNMENT_CLOSED。
+- SUBMITTED 后不能继续保存、覆盖或撤回；已提交席位不释放。
+- 草稿保存与提交按 actor → project → assignment 顺序加锁，相同领取并发保存/提交串行化。
+
+### 查看已提交结果
+
+- `GET /submissions/{submissionId}`：仅提交人或项目 owner；data 包含 submissionId、assignmentId、packageId、projectId、specVersionId、submittedBy、submittedAt、contentHash、items。
+- items 为冻结结果：sampleId、revision（提交时草稿版本）、resultFormat、result。
+- `GET /projects/{projectId}/submissions?limit=20&cursor=...`：仅 owner，返回 items 和 nextCursor；本轮尚未支持 packageId/actorId 筛选。
+- 暂停或归档后仍允许启用的提交人/owner 读取已提交结果；工作草稿保存和新提交必须项目 OPEN。
+- 他人领取、包外样本和无权限提交返回 404；停用用户返回 403；管理员无项目数据越权特权。
+
+前端显示“草稿已保存”和“任务已提交”必须区分，只有 POST 提交成功才算完成任务。
+仍未实现 Label Studio 会话/同步、任务释放/回收、需求方验收状态及导出文件；本轮没有新增这些假接口。

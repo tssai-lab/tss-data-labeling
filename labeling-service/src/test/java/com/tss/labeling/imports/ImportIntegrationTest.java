@@ -505,4 +505,94 @@ class ImportIntegrationTest {
                 Map.of("batchId", row.get("batch_id"), "specVersionId", row.get("spec_version_id")), 404);
     }
 
+
+    JsonNode resultGet(String path, String user, int expected) throws Exception {
+        String content = mvc.perform(get(API + path).header("Authorization", "Bearer " + user))
+                .andExpect(status().is(expected)).andReturn().getResponse().getContentAsString();
+        return json.readTree(content).path("data");
+    }
+
+    JsonNode saveDraft(String assignment, String sample, String user, long revision, boolean done, String label, int expected) throws Exception {
+        String content = mvc.perform(put(API + "/assignments/" + assignment + "/drafts/" + sample)
+                .header("Authorization", "Bearer " + user).contentType("application/json")
+                .content(json.writeValueAsString(Map.of("baseRevision", revision, "explicitDone", done,
+                        "resultFormat", "image-classification-v1", "result", label == null ? Map.of() : Map.of("labelId", label)))))
+                .andExpect(status().is(expected)).andReturn().getResponse().getContentAsString();
+        return json.readTree(content).path("data");
+    }
+
+    @Test void draftsSubmitWholePackageAndFreezePersonalSnapshots() throws Exception {
+        JsonNode published = publishTask(taskPlan(2));
+        String pkg = published.path("packages").get(0).path("packageId").asText();
+        String first = taskPost("/packages/" + pkg + "/claims", "author-a", UUID.randomUUID().toString(), Map.of(), 201).path("assignmentId").asText();
+        String second = taskPost("/packages/" + pkg + "/claims", "author-b", UUID.randomUUID().toString(), Map.of(), 201).path("assignmentId").asText();
+        JsonNode items = resultGet("/assignments/" + first + "/items", "author-a", 200).path("items");
+        String sample = items.get(0).path("sampleId").asText(), sample2 = items.get(1).path("sampleId").asText();
+        assertEquals(0, resultGet("/assignments/" + first + "/drafts/" + sample, "author-a", 200).path("revision").asInt());
+        saveDraft(first, sample, "author-b", 0, true, "normal", 404);
+        saveDraft(first, UUID.randomUUID().toString(), "author-a", 0, true, "normal", 404);
+        saveDraft(first, sample, "author-a", 0, true, "invalid", 422);
+        assertEquals(1, saveDraft(first, sample, "author-a", 0, true, "normal", 200).path("revision").asInt());
+        saveDraft(first, sample, "author-a", 0, true, "normal", 409);
+        JsonNode restored = resultGet("/assignments/" + first + "/items", "author-a", 200).path("items").get(0);
+        assertEquals(1, restored.path("draftRevision").asInt());
+        assertEquals("normal", restored.path("result").path("labelId").asText());
+        assertEquals(0, resultGet("/assignments/" + second + "/drafts/" + sample, "author-b", 200).path("revision").asInt());
+        taskPost("/assignments/" + first + "/submissions", "author-a", UUID.randomUUID().toString(),
+                Map.of("items", java.util.List.of(Map.of("sampleId", sample, "revision", 1))), 422);
+        saveDraft(first, sample2, "author-a", 0, false, null, 200);
+        var full = Map.of("items", java.util.List.of(Map.of("sampleId", sample, "revision", 1), Map.of("sampleId", sample2, "revision", 1)));
+        taskPost("/assignments/" + first + "/submissions", "author-a", UUID.randomUUID().toString(), full, 422);
+        saveDraft(first, sample2, "author-a", 1, true, "normal", 200);
+        taskPost("/assignments/" + first + "/submissions", "author-a", UUID.randomUUID().toString(), full, 409);
+        var correct = Map.of("items", java.util.List.of(Map.of("sampleId", sample, "revision", 1), Map.of("sampleId", sample2, "revision", 2)));
+        String key = UUID.randomUUID().toString();
+        JsonNode receipt = taskPost("/assignments/" + first + "/submissions", "author-a", key, correct, 201);
+        assertEquals(receipt, taskPost("/assignments/" + first + "/submissions", "author-a", key, correct, 201));
+        taskPost("/assignments/" + first + "/submissions", "author-a", key, full, 409);
+        taskPost("/assignments/" + first + "/submissions", "author-a", UUID.randomUUID().toString(), correct, 409);
+        saveDraft(first, sample, "author-a", 1, true, "normal", 409);
+        String id = receipt.path("submissionId").asText();
+        JsonNode frozen = resultGet("/submissions/" + id, "author-a", 200);
+        assertEquals(2, frozen.path("items").size());
+        assertEquals("normal", frozen.path("items").get(0).path("result").path("labelId").asText());
+        assertEquals(frozen, resultGet("/submissions/" + id, "owner", 200));
+        resultGet("/submissions/" + id, "author-b", 404);
+        assertEquals("CLAIMED", db.queryForObject("SELECT status FROM assignment WHERE id=?", String.class, UUID.fromString(second)));
+        assertEquals(1, db.queryForObject("SELECT count(*) FROM submission WHERE package_id=?", Integer.class, UUID.fromString(pkg)));
+        String projectId = frozen.path("projectId").asText();
+        assertEquals(1, resultGet("/projects/" + projectId + "/submissions", "owner", 200).path("items").size());
+        resultGet("/projects/" + projectId + "/submissions", "author-b", 404);
+        db.update("UPDATE project SET status='PAUSED' WHERE id=?", UUID.fromString(projectId));
+        assertEquals(frozen, resultGet("/submissions/" + id, "owner", 200));
+        resultGet("/assignments/" + first + "/drafts/" + sample, "author-a", 200);
+        saveDraft(second, sample, "author-b", 0, true, "normal", 409);
+        assertThrows(org.springframework.dao.DataAccessException.class, () -> db.update("UPDATE submission_item SET result='{}' WHERE submission_id=?", UUID.fromString(id)));
+    }
+
+    @Test void concurrentDraftSavesUseCompareAndSet() throws Exception {
+        JsonNode published = publishTask(taskPlan(1));
+        String pkg = published.path("packages").get(0).path("packageId").asText();
+        String assignment = taskPost("/packages/" + pkg + "/claims", "draft-race", UUID.randomUUID().toString(), Map.of(), 201).path("assignmentId").asText();
+        String sample = resultGet("/assignments/" + assignment + "/items", "draft-race", 200).path("items").get(0).path("sampleId").asText();
+        var executor = java.util.concurrent.Executors.newFixedThreadPool(2);
+        var start = new java.util.concurrent.CountDownLatch(1);
+        try {
+            java.util.concurrent.Callable<Integer> save = () -> {
+                start.await();
+                return mvc.perform(put(API + "/assignments/" + assignment + "/drafts/" + sample)
+                        .header("Authorization", "Bearer draft-race").contentType("application/json")
+                        .content("{\"baseRevision\":0,\"explicitDone\":true,\"resultFormat\":\"image-classification-v1\",\"result\":{\"labelId\":\"normal\"}}"))
+                        .andReturn().getResponse().getStatus();
+            };
+            var a = executor.submit(save); var b = executor.submit(save); start.countDown();
+            var codes = java.util.List.of(a.get(20, java.util.concurrent.TimeUnit.SECONDS), b.get(20, java.util.concurrent.TimeUnit.SECONDS));
+            assertTrue(codes.contains(200) && codes.contains(409));
+            assertEquals(1, resultGet("/assignments/" + assignment + "/drafts/" + sample, "draft-race", 200).path("revision").asInt());
+            // 验证大于 Long 缓存范围的版本仍按数值比较。
+            db.update("UPDATE annotation_draft SET revision=128 WHERE assignment_id=? AND sample_id=?", UUID.fromString(assignment), UUID.fromString(sample));
+            assertEquals(129, saveDraft(assignment, sample, "draft-race", 128, true, "normal", 200).path("revision").asInt());
+        } finally { executor.shutdownNow(); }
+    }
+
 }
