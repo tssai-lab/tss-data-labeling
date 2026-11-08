@@ -1,0 +1,19 @@
+{
+  "version": "1.23.2",
+  "sourceRevision": "df96d79183156e556d91825d15fa7721f1145e1a",
+  "sourceUrl": "https://github.com/HumanSignal/label-studio/tree/df96d79183156e556d91825d15fa7721f1145e1a",
+  "bundle": "editor-assets-1.23.2.zip",
+  "bundleSha256": "dc332394b0326c559c03ed093e5de261830053cbf4abe5cdeab19a838c36432d",
+  "mainJsSha256": "c1d9298983034dc665b8839624f596967c75d7e477f8c96f2c3edf27e635fb43",
+  "buildEnvironment": {
+    "node": "22.23.4",
+    "yarn": "1.22.22",
+    "NODE_ENV": "production",
+    "MODE": "standalone",
+    "NX_DAEMON": "false",
+    "NODE_OPTIONS": "--max-old-space-size=4096"
+  },
+  "origin": "Previously built and browser-tested standalone editor; this change packages its pinned output. The upstream source is not rebuilt on every Maven invocation.",
+  "selection": "Webpack-emitted runtime JS/CSS, image/font/WASM assets, third-party licenses and upstream LICENSE. Excludes sourcemaps, generated package metadata, lockfile and public playground media.",
+  "rebuild": "bash labeling-service/scripts/rebuild-editor-assets.sh; review regenerated bundle, checksums, licenses and browser behavior before accepting an update."
+}

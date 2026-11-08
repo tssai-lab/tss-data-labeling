@@ -47,29 +47,44 @@ V5/V6先由业务后端核对迁移编号及现有等价表。保持已执行迁
 
 ## 编辑器静态资源与构建
 
-编辑组件不是从公网CDN加载，而是打包到平台JAR。源于上述固定LS源码提交，构建产物放在：
+日常构建只需JDK17和Maven，不需开发机器的.tools、旧target、Node或上游源码。固定资源包约2.7MiB，作为第三方依赖随源码交付：
 
 ```text
-labeling-service/src/main/resources/static/editor-assets/
+labeling-service/third-party/label-studio/editor-assets-1.23.2.zip
+labeling-service/third-party/label-studio/editor-assets-1.23.2.properties
+labeling-service/third-party/label-studio/editor-source.json
 ```
 
-该生成目录不提交Git。完整运行资源须包括main.js、main.css、动态chunk、图片字体等，并保留上游许可证。仅有Java代码或Maven构建成功，不代表编辑器资源齐全。
+这是此前固定源码提交构建并经过浏览器验证的产物，不是任意下载的最新文件。来源JSON记录版本、提交、构建环境和校验值。包中包含运行时JS、CSS、懒加载chunk、图标、字体、许可证及逐文件SHA-256清单；不包含源码映射、演示图片视频、node_modules或用户数据。
 
-从固定上游源码的web目录，用Node22、Yarn1.22.22和上游锁文件构建：
+正常构建：
 
 ```sh
-corepack yarn install --frozen-lockfile
-NODE_ENV=production MODE=standalone NX_DAEMON=false NODE_OPTIONS=--max-old-space-size=4096 corepack yarn nx run editor:build:production
+mvn -B -ntp -f labeling-service/pom.xml clean verify
+python3 labeling-service/scripts/verify-editor-artifact.py labeling-service/target/tss-labeling-service-0.1.0-SNAPSHOT.jar
 ```
 
-将dist/libs/editor完整运行资源及上游LICENSE复制到上述目录，然后：
+Maven在generate-resources阶段校验压缩包SHA-256；不匹配立即失败。校验通过后清理target内的旧编辑器资源并解压到target/generated-editor-resources，再自动加入JAR的BOOT-INF/classes/static/editor-assets。原src/main/resources/static/editor-assets缓存被显式排除，不参与打包，不需要手动复制文件。
+
+资源测试校验固定版本、来源提交、逐文件大小与摘要、必需入口、懒加载chunk及CSS字体引用。部署前的Python检查再次核对最终可执行JAR，缺文件、额外旧文件或摘要错误都会阻止上传。
+
+自动化已接入：
+
+- labeling-editor-build.yml：功能分支及面向backend的PR执行干净构建与JAR检查，无部署步骤。
+- labeling-backend-deploy.yml：原服务器部署流程在上传前增加JAR资源检查；是否合并该部署分支仍需团队审查。
+
+### 维护时从上游源码重建
+
+日常Maven使用已审查资源包；只有升级或重新制作资源时才执行上游构建。Linux/macOS或Git Bash中准备Git、Python3、Node22和Yarn1.22.22：
 
 ```sh
-mvn -f labeling-service/pom.xml clean verify
-mvn -f labeling-service/pom.xml package
+corepack prepare yarn@1.22.22 --activate
+bash labeling-service/scripts/rebuild-editor-assets.sh
 ```
 
-检查JAR内BOOT-INF/classes/static/editor-assets的main.js、main.css及动态资源，且不包含已移除的AssignmentEditorService等旧类。现有自动部署工作流尚未包含上游资源准备，需要在合并部署前落实固定资源制品或CI构建步骤；不得直接合并后依赖开发机器上的缓存。
+脚本在独立临时目录拉取固定提交，核对HEAD，使用上游锁文件安装及构建standalone editor，再重新生成资源包和校验属性。临时源码保留供审查；不会删除工作区。使用脚本不自动推送或部署。
+
+package-editor-assets.py固定打包顺序、ZIP时间戳和权限元数据；上游重新编译产物仍需审查新摘要、许可证和浏览器行为，不能仅因版本号相同就接受。不要手工跳过或改写校验值掩盖损坏。
 
 ## 网关与前端
 

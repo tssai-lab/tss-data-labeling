@@ -34,6 +34,8 @@ jobs:
           cache-dependency-path: labeling-service/pom.xml
       - name: 构建标注服务
         run: mvn -B -ntp -f labeling-service/pom.xml verify
+      - name: 校验可执行包中的固定版本编辑器资源
+        run: python3 labeling-service/scripts/verify-editor-artifact.py labeling-service/target/tss-labeling-service-0.1.0-SNAPSHOT.jar
       - name: 配置 SSH
         env:
           DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
