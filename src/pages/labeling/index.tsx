@@ -16,7 +16,6 @@ import {
   Input,
   Modal,
   Progress,
-  Radio,
   Select,
   Space,
   Spin,
@@ -43,6 +42,9 @@ import {
 } from '@/services/labeling';
 import { hashFile, uploadChunks } from '@/services/labelingUpload.mjs';
 import styles from './index.less';
+import Navigation from './Navigation';
+import ProjectSubmissions from './ProjectSubmissions';
+import PublishPlan from './PublishPlan';
 
 const { Text, Paragraph } = Typography;
 const taskType = 'IMAGE_CLASSIFICATION';
@@ -151,7 +153,6 @@ export default function Labeling() {
   const [sampleCursor, setSampleCursor] = useState<string | null>(null);
   const [sampleBusy, setSampleBusy] = useState(false);
   const [selected, setSelected] = useState<Sample>();
-  const [category, setCategory] = useState('');
   const [uploadBusy, setUploadBusy] = useState(false);
   const [uploadStage, setUploadStage] = useState('');
   const [progress, setProgress] = useState(0);
@@ -242,7 +243,6 @@ export default function Labeling() {
       setSamples([]);
       setSampleCursor(null);
       setSelected(undefined);
-      setCategory('');
       rememberBatch(value);
     } catch (e) {
       if (version === routeVersion.current) setError(errorText(e));
@@ -261,7 +261,6 @@ export default function Labeling() {
     setBatch(undefined);
     setSamples([]);
     setSelected(undefined);
-    setCategory('');
     setError('');
     setUploadBusy(false);
     setBatchInput('');
@@ -359,7 +358,6 @@ export default function Labeling() {
       setSampleCursor(page.nextCursor);
       if (!cursor) {
         setSelected(page.items[0]);
-        setCategory('');
       }
     } catch (e) {
       if (version === routeVersion.current) setError(errorText(e));
@@ -569,6 +567,7 @@ export default function Labeling() {
         <Link to="/label-projects">打开原演示版</Link>
       </header>
       <section className={styles.content}>
+        <Navigation />
         <Link to={projectId ? '/labeling' : '/platforms'}>
           <ArrowLeftOutlined /> {projectId ? '我的项目' : '平台选择'}
         </Link>
@@ -924,6 +923,25 @@ export default function Labeling() {
               </Card>
             )}
             {batch?.status === 'READY' && (
+              <PublishPlan
+                key={`${project.projectId}:${batch.batchId}`}
+                projectId={project.projectId}
+                batchId={batch.batchId}
+                specVersionId={latestSpec?.specVersionId}
+                writable={Boolean(writable)}
+                onPublished={() => {
+                  void labelingJson<Project>(
+                    `/projects/${encodeURIComponent(project.projectId)}`,
+                  )
+                    .then((value) => {
+                      if (currentProjectId.current === value.projectId)
+                        setProject(value);
+                    })
+                    .catch((e: unknown) => setError(errorText(e)));
+                }}
+              />
+            )}
+            {batch?.status === 'READY' && (
               <div className={styles.workspace}>
                 <Card
                   title="3. 图片列表"
@@ -952,7 +970,6 @@ export default function Labeling() {
                             className={styles.sampleButton}
                             onClick={() => {
                               setSelected(item);
-                              setCategory('');
                             }}
                           >
                             {path}
@@ -997,34 +1014,19 @@ export default function Labeling() {
                           projectId={project.projectId}
                         />
                       )}
-                      <div className={styles.classification}>
-                        <Text strong>选择分类</Text>
-                        {latestSpec ? (
-                          <Radio.Group
-                            value={category}
-                            disabled={!writable}
-                            onChange={(e) => setCategory(e.target.value)}
-                            options={latestSpec.labels.map((label) => ({
-                              label: label.name,
-                              value: label.id,
-                            }))}
-                            optionType="button"
-                          />
-                        ) : (
-                          <Text type="secondary">
-                            请先保存分类标签与标注说明。
-                          </Text>
-                        )}
-                        <Alert
-                          type="warning"
-                          showIcon
-                          message="分类保存待接入"
-                          description="当前可预览图片和试选分类，所选内容尚未保存。待领取、分类保存接口及编辑器同步链路接入后，才能保存到平台。"
-                        />
-                        <Button type="primary" disabled>
-                          保存标注（待接入）
-                        </Button>
-                      </div>
+                      <Alert
+                        style={{ marginTop: 20 }}
+                        type="info"
+                        showIcon
+                        message="此处是需求方图片预览"
+                        description={
+                          <span>
+                            保存分类需要先发布任务包并领取，进入
+                            <Link to="/labeling/assignments">我的任务</Link>
+                            完成逐张草稿保存与整包提交。
+                          </span>
+                        }
+                      />
                     </>
                   ) : (
                     <Empty description="此批次暂无图片" />
@@ -1032,6 +1034,10 @@ export default function Labeling() {
                 </Card>
               </div>
             )}
+            <ProjectSubmissions
+              key={project.projectId}
+              projectId={project.projectId}
+            />
           </>
         )}
       </section>

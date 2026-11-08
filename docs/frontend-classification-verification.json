@@ -1,0 +1,20 @@
+{
+  "environment": "http://47.111.225.144:8001",
+  "testedAt": "2026-11-08T07:01:02Z",
+  "checks": [
+    "two synthetic PNGs imported",
+    "both accounts fetched all sample pages and authenticated image bytes",
+    "draft readback and stale revision conflicts",
+    "different labelId results persisted independently",
+    "same-key reversed-manifest replay returned same submissionId",
+    "submitted assignments reject further saves",
+    "other annotator cannot read owner submission",
+    "owner can list and read both independent submissions"
+  ],
+  "projectId": "b0730688-b95a-432a-bd1e-c50a0b317dfd",
+  "batchId": "8fff1878-c1ef-46ad-a6c0-ca32888f3dbf",
+  "submissionIds": [
+    "015ff1d9-5b84-403c-9018-5b343725d479",
+    "9dd48a9b-e8b3-4800-a646-4b66cae5d04f"
+  ]
+}

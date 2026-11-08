@@ -146,3 +146,21 @@ export async function sampleBlob(
   }
   return res.blob();
 }
+
+export async function assignmentSampleBlob(
+  assignmentId: string,
+  sampleId: string,
+  signal: AbortSignal,
+): Promise<Blob> {
+  const res = await response(
+    `/assignments/${encodeURIComponent(assignmentId)}/samples/${encodeURIComponent(sampleId)}/file`,
+    { signal },
+  );
+  if (
+    !['image/jpeg', 'image/png'].includes(
+      (res.headers.get('Content-Type') ?? '').split(';')[0],
+    )
+  )
+    throw new Error('图片接口未返回 JPEG/PNG');
+  return res.blob();
+}
