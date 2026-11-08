@@ -93,11 +93,6 @@ export default function TaskList() {
       <section className={styles.content}>
         <Navigation />
         <h1>{mine ? '我的标注任务' : '任务广场'}</h1>
-        <Typography.Paragraph type="secondary">
-          {mine
-            ? '草稿保存和整包提交分别记录；已提交任务只读。'
-            : '领取一个任务包，按冻结的分类规范标注包内全部图片。每人的结果独立保存。'}
-        </Typography.Paragraph>
         {error && (
           <Alert
             type="error"

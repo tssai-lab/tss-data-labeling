@@ -1,5 +1,4 @@
 import {
-  ArrowLeftOutlined,
   CloudUploadOutlined,
   PlusOutlined,
   ReloadOutlined,
@@ -560,25 +559,14 @@ export default function Labeling() {
 
   return (
     <main className={styles.page}>
-      <header className={styles.header}>
-        <Link to="/platforms" className={styles.brand}>
-          TSS <span>/</span> <small>DATA ANNOTATION</small>
-        </Link>
-        <Link to="/label-projects">打开原演示版</Link>
-      </header>
       <section className={styles.content}>
         <Navigation />
-        <Link to={projectId ? '/labeling' : '/platforms'}>
-          <ArrowLeftOutlined /> {projectId ? '我的项目' : '平台选择'}
-        </Link>
         <div className={styles.heading}>
           <div>
-            <Text type="secondary">图片分类 · 工作空间</Text>
             <h1>{project?.name || '数据标注平台'}</h1>
-            <Paragraph type="secondary">
-              {project?.description ||
-                '创建项目，导入图片，组织分类标签与标注说明。'}
-            </Paragraph>
+            {project?.description && (
+              <Paragraph type="secondary">{project.description}</Paragraph>
+            )}
           </div>
           {project && (
             <Tag>{statusNames[project.status] || project.status}</Tag>

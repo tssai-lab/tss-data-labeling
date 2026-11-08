@@ -1,7 +1,12 @@
 .page { min-height: 100vh; background: #f4f7fb; color: #172b4d; }
-.header { min-height: 76px; padding: 20px 5%; background: #fff; border-bottom: 1px solid #e5ebf3; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.workspaceHeader { min-height: 64px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 0 0 18px; border-bottom: 1px solid #e5ebf3; }
 .brand { font-size: 24px; font-weight: 800; color: #172b4d; span { color: #2875ed; } small { font-size: 11px; letter-spacing: 2px; font-weight: 600; } }
+.account { min-width: 100px; padding: 9px 16px; border: 1px solid #d9e3ef; border-radius: 22px; background: #fff; color: #25476e; cursor: pointer; font: inherit; }
 .content { max-width: 1440px; margin: auto; padding: 28px 4% 64px; > :global(.ant-alert), > :global(.ant-card) { margin-bottom: 20px; } }
+.navigation { display: flex; align-items: center; gap: 16px; margin: 12px 0 28px; border-bottom: 1px solid #dce5ef; }
+.navTabs { display: flex; flex-wrap: wrap; gap: 8px; }
+.navTab { display: inline-flex; align-items: center; min-height: 44px; padding: 0 18px; border-bottom: 3px solid transparent; color: #62758d; font-size: 15px; font-weight: 600; transition: color .18s, border-color .18s, background .18s; &:hover { color: #1c5aa5; background: #edf4fc; } }
+.navTabActive { border-bottom-color: #2875ed; color: #174b85; }
 .heading { display: flex; justify-content: space-between; align-items: center; gap: 20px; margin: 24px 0; h1 { margin: 8px 0; font-size: 30px; } }
 .setup { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px; }
 .workspace { display: grid; grid-template-columns: minmax(320px, 0.8fr) minmax(0, 1.2fr); gap: 20px; margin-top: 20px; }
@@ -12,4 +17,4 @@
 .more { margin-top: 16px; }
 .sampleButton { white-space: normal; height: auto; text-align: left; word-break: break-word; padding-left: 0; }
 .selectedRow { background: #eaf2ff; }
-@media (max-width: 900px) { .setup, .workspace { grid-template-columns: 1fr; } .header { flex-wrap: wrap; } .brand small { display: none; } }
+@media (max-width: 900px) { .setup, .workspace { grid-template-columns: 1fr; } .workspaceHeader { flex-wrap: wrap; } .brand small { display: none; } .navTabs { width: 100%; gap: 0; } .navTab { flex: 1; justify-content: center; padding: 0 8px; font-size: 14px; } }
