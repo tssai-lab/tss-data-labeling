@@ -1,4 +1,8 @@
 export default [
+  { path: '/labeling/tasks', component: './labeling/taskList', layout: false, hideInMenu: true },
+  { path: '/labeling/assignments', component: './labeling/taskList', layout: false, hideInMenu: true },
+  { path: '/labeling/assignments/:assignmentId', component: './labeling/assignment', layout: false, hideInMenu: true },
+  { path: '/labeling/submissions/:submissionId', component: './labeling/submission', layout: false, hideInMenu: true },
   { path: '/labeling', component: './labeling', layout: false, hideInMenu: true },
   { path: '/labeling/projects/:projectId', component: './labeling', layout: false, hideInMenu: true },
   { path: '/label-projects', component: './label-projects', layout: false, hideInMenu: true },
