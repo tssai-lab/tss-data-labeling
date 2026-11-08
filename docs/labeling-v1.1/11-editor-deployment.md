@@ -6,11 +6,25 @@
 
 2026-11-08已补充真实本地联调：Docker恢复，已有LS 1.23.2在本机8085运行，新增隔离业务库应用V1—V6。真实身份完成领取、分类保存/修改/恢复及整包提交；另完成双真实账号N=2独立答案、交叉越权拒绝和独立提交验证。此次没有部署服务器，正式前端和线上验收仍待实施，详见[验证记录](12-editor-verification.md)。
 
+## 服务器部署准备记录（2026-11-08）
+
+已完成准备，尚未合并或部署新版本：
+
+- 当前服务为tss-labeling.service，JAR位于/opt/tss-labeling-service/tss-labeling-service.jar，工作目录/opt/tss-labeling-service，运行端口8083，健康检查UP；已部署提交仍为c26f90182ca2ff49d2b731ce1f09aaacf847d426。
+- 配置从/etc/tss-labeling-service.env与/etc/tss-labeling-identity.conf加载。已在前者补齐编辑器连接、服务账号、独立随机票据密钥及验收白名单，文件权限0600。服务账号及密码与现有LS一致，已只读校验账号启用及密码匹配，不在文档中保存凭据。
+- LABELING_EDITOR_ENABLED保持false；没有重启服务。配置会在后续服务启动时加载，部署并检查迁移/健康后再单独启用，不把准备等同于功能已上线。
+- 经用户确认，首批验收项目为“前端分类联调 20261108-150107”，UUID b0730688-b95a-432a-bd1e-c50a0b317dfd，状态OPEN，有两张图片；不使用本地验收ID，不改变现有领取及结果。
+- 私有备份目录/opt/tss-demo-backups/labeling-editor-20261108T115349Z，权限0700；包含标注库自定义格式备份、角色备份、原图、LS数据与SQLite一致性快照、原配置和旧JAR，以及manifest和演练报告。数据库备份已实际恢复验证，LS SQLite完整性检查通过。此目录含凭据，不复制到仓库或聊天。
+- 生产Flyway V1—V5均成功，校验值与当前源码一致，editor_mapping/editor_session不存在冲突。已把备份恢复至独立临时库并执行V6 SQL演练，原有业务计数不变、应用账号权限正确；临时库已删除。生产库未执行V6，也没有修改迁移历史。
+- 现有8001前端的/api/labeling/v1路径可转发到标注服务；80端口没有这条路由。后续验收使用http://47.111.225.144:8001同源入口；旧JAR不含新资源接口，因此部署前资源路径404属于预期，不代表新接口已验收。
+
+下一步：确认合并前没有新增迁移冲突，若发布前仍有新业务数据则补做最新备份；合并后由既有流程部署新JAR并执行Flyway，检查V6和8083健康后启用指定项目的编辑器，再做真实账号及正式前端验收。当前未新增HTTPS网关配置，正式发布仍按下文要求复验HTTPS、Secure Cookie和同源嵌入。
+
 ## 版本与既有服务器记录
 
 Label Studio Community镜像标签1.23.2，源码提交df96d79183156e556d91825d15fa7721f1145e1a。官方镜像索引摘要sha256:afcc516a22775a39d0d66f4c2ddc95d01be3e3d3862b21fcf4f9de34b4ad4e12。内部Python元数据1.23.0是已核实的上游标记差异，按镜像摘要和源码提交识别。
 
-此前服务器47.111.225.144部署目录/opt/tss-label-studio，容器tss-label-studio-editor-1，数据卷tss-label-studio_data，映射127.0.0.1:8085到容器8080。本次未复核其当前运行状态，也未更换该实例。
+服务器47.111.225.144部署目录/opt/tss-label-studio，容器tss-label-studio-editor-1，数据卷tss-label-studio_data，映射127.0.0.1:8085到容器8080。部署准备时已复核实例正在运行、现有账号有效；未更换实例或数据卷。
 
 ```text
 服务器程序 → 127.0.0.1:8085 → Docker映射 → LS容器8080
