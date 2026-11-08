@@ -65,7 +65,7 @@ mvn test
 mvn package
 ```
 
-集成测试自行启动临时 PostgreSQL 和身份服务桩，不连接现有业务数据库。Linux 必须以普通用户运行。正式联调仍需用真实统一登录和选定的数据集复验。领取、Label Studio、草稿提交与导出仍未实现；导入通过不能代表标注全链路已经完成。
+集成测试自行启动临时 PostgreSQL 和身份服务桩，不连接现有业务数据库。Linux 必须以普通用户运行。正式联调仍需用真实统一登录和选定的数据集复验。领取、平台分类草稿与提交已有本地实现；Label Studio 和导出仍未实现，导入通过不能代表标注全链路已经完成。
 
 ## 任务包与领取（本地已实现，需部署 V4）
 
@@ -79,4 +79,16 @@ mvn package
 - `GET /api/labeling/v1/assignments/{assignmentId}/samples/{sampleId}/file`：授权读取包内图片。
 
 POST 均需 Idempotency-Key。完整字段、上限和错误码见 `../docs/labeling-v1.1/04-api.md` 的任务包首轮实现。
-本轮不包含放弃/回收领取、Label Studio、标注结果保存或导出。
+任务包阶段不包含结果保存；后续 V5 已补上平台草稿与提交，见下一节。放弃/回收领取、Label Studio 和导出仍未实现。
+
+## 草稿与正式提交（V5，本地实现）
+
+- `PUT /api/labeling/v1/assignments/{assignmentId}/drafts/{sampleId}`：版本校验后保存本人图片分类草稿。
+- `GET /api/labeling/v1/assignments/{assignmentId}/drafts/{sampleId}`：刷新后读回；包内 items 也带草稿。
+- `POST /api/labeling/v1/assignments/{assignmentId}/submissions`：携带幂等键与整包样本版本清单，冻结个人提交。
+- `GET /api/labeling/v1/submissions/{submissionId}`：提交人/owner 查看冻结结果。
+- `GET /api/labeling/v1/projects/{projectId}/submissions`：owner 分页查看提交。
+
+当前 resultFormat 为 image-classification-v1，结果为 {"labelId":"规范标签ID"}。
+Label Studio 原始 JSON 需适配器校验转换，尚未接入 editor-sync；导出与验收尚未实现。
+调用示例、冲突处理和权限边界见接口文档末尾“草稿与提交首轮实现”。
