@@ -29,8 +29,7 @@ server:
 labeling:
   project-editor:
     enabled: ${LABELING_PROJECT_EDITOR_ENABLED:false}
-  assignment-editor:
-    enabled: ${LABELING_ASSIGNMENT_EDITOR_ENABLED:false}
+    ticket-secret: ${LABELING_EDITOR_TICKET_SECRET:}
   editor:
     projects: ${LABELING_EDITOR_PROJECTS:}
     base-url: ${LABELING_EDITOR_BASE_URL:http://127.0.0.1:8085}

@@ -24,6 +24,7 @@ class ProjectEditorIntegrationTest {
     static {try{LS=new FakeLabelStudio();}catch(Exception e){throw new ExceptionInInitializerError(e);}}
     @DynamicPropertySource static void properties(DynamicPropertyRegistry p){
         ImportIntegrationTest.properties(p);p.add("labeling.project-editor.enabled",()->true);p.add("labeling.editor.projects",()->"*");
+        p.add("labeling.project-editor.ticket-secret",()->"test-only-project-editor-signing-key-32-plus");
         p.add("labeling.editor.base-url",()->LS.baseUrl());p.add("labeling.editor.username",()->"fixture@example.invalid");p.add("labeling.editor.password",()->"fixture-password");
     }
     @Autowired MockMvc mvc;@Autowired ObjectMapper json;@Autowired JdbcTemplate db;@Autowired ApplicationContext context;
@@ -84,11 +85,21 @@ class ProjectEditorIntegrationTest {
     @Test void idempotencySpecVersionsAndExpiryCannotMixResults()throws Exception {
         Project p=prepare();String key=UUID.randomUUID().toString();var a=f.taskPost("/projects/"+p.project+"/editor-sessions","owner",key,Map.of("sampleId",p.sample),200);
         var b=f.taskPost("/projects/"+p.project+"/editor-sessions","owner",key,Map.of("sampleId",p.sample),200);assertEquals(a,b);
+        String stored=db.queryForObject("SELECT response_body::text FROM project_editor_session WHERE id=?",String.class,UUID.fromString(a.path("editorSessionId").asText()));
+        assertFalse(stored.contains("editorUrl"));assertFalse(stored.contains("ticket="));
+        String ticket=a.path("editorUrl").asText().split("ticket=",2)[1];assertFalse(stored.contains(ticket));
         String other=db.queryForObject("SELECT id::text FROM sample WHERE project_id=? AND id<>?",String.class,UUID.fromString(p.project),UUID.fromString(p.sample));
         f.taskPost("/projects/"+p.project+"/editor-sessions","owner",key,Map.of("sampleId",other),409);
         String session=a.path("editorSessionId").asText();save(p,"owner",session,0,"正常",200);
         String newer=spec(p.project);save(p,"owner",session,1,"破损",409);var fresh=open(p);assertEquals(newer,fresh.path("specVersionId").asText());assertEquals(0,fresh.path("draft").path("revision").asInt());
         assertEquals(1,db.queryForObject("SELECT count(*) FROM project_annotation WHERE project_id=? AND spec_version_id=?",Integer.class,UUID.fromString(p.project),UUID.fromString(p.spec)));
         db.update("UPDATE project_editor_session SET expires_at=CURRENT_TIMESTAMP-interval '1 second' WHERE id=?",UUID.fromString(fresh.path("editorSessionId").asText()));save(p,"owner",fresh.path("editorSessionId").asText(),0,"正常",409);
+    }
+    @Test void usedEntryCannotReplayItsTicket()throws Exception {
+        Project p=prepare();String key=UUID.randomUUID().toString();
+        var a=f.taskPost("/projects/"+p.project+"/editor-sessions","owner",key,Map.of("sampleId",p.sample),200);
+        mvc.perform(get(a.path("editorUrl").asText())).andExpect(status().isSeeOther());
+        f.taskPost("/projects/"+p.project+"/editor-sessions","owner",key,Map.of("sampleId",p.sample),409);
+        var fresh=open(p);assertNotEquals(a.path("editorSessionId"),fresh.path("editorSessionId"));
     }
 }

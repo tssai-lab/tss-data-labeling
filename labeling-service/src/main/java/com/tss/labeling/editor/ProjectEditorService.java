@@ -25,11 +25,15 @@ public class ProjectEditorService {
     private final TransactionTemplate tx;
     private final boolean enabled;
     private final Set<String> projects;
+    private final byte[] ticketKey;
     public ProjectEditorService(JdbcTemplate db,ObjectMapper json,ImportService imports,LabelStudioClient ls,
             PlatformTransactionManager manager,@Value("${labeling.project-editor.enabled:false}") boolean enabled,
-            @Value("${labeling.editor.projects:}") String allowed) {
+            @Value("${labeling.editor.projects:}") String allowed,
+            @Value("${labeling.project-editor.ticket-secret:}") String ticketSecret) {
         this.db=db;this.json=json;this.imports=imports;this.ls=ls;this.tx=new TransactionTemplate(manager);this.enabled=enabled;
         this.projects=new HashSet<>();for(String id:allowed.split(","))projects.add(id.trim());
+        if(enabled&&ticketSecret.length()<32)throw new IllegalArgumentException("Project editor requires LABELING_EDITOR_TICKET_SECRET with at least 32 characters");
+        this.ticketKey=ticketSecret.getBytes(StandardCharsets.UTF_8);
     }
     public record Result(String projectId,String sampleId,String actorId,String specVersionId,long revision,
                          boolean explicitDone,String resultFormat,JsonNode result,String savedAt) {}
@@ -66,10 +70,15 @@ public class ProjectEditorService {
     }
     public Result get(ActorContext actor,UUID project,UUID sample){return tx.execute(s->{var c=guard(actor,project,sample,null);return result(project,sample,actor.actorId(),(UUID)c.get("id"));});}
     private Session replay(ActorContext actor,UUID project,UUID sample,UUID spec,String requestKey){
-        var rows=db.queryForList("SELECT sample_id,spec_version_id,response_body::text AS body FROM project_editor_session WHERE actor_id=? AND project_id=? AND request_key=?",actor.actorId(),project,requestKey);
+        var rows=db.queryForList("SELECT sample_id,spec_version_id,consumed,launch_expires_at,launch_hash,response_body::text AS body FROM project_editor_session WHERE actor_id=? AND project_id=? AND request_key=?",actor.actorId(),project,requestKey);
         if(rows.isEmpty())return null;var r=rows.get(0);
         if(!sample.equals(r.get("sample_id"))||!spec.equals(r.get("spec_version_id")))throw fail(409,"IDEMPOTENCY_CONFLICT","同一幂等键不能用于不同图片或规范");
-        try{return json.treeToValue(read(r.get("body")),Session.class);}catch(Exception e){throw fail(503,"INVALID_STATE","会话记录异常");}
+        if(Boolean.TRUE.equals(r.get("consumed"))||!((java.sql.Timestamp)r.get("launch_expires_at")).toInstant().isAfter(Instant.now()))throw fail(409,"EDITOR_ENTRY_EXPIRED","入口已使用或过期，请以新操作重新打开");
+        try{
+            var prior=json.treeToValue(read(r.get("body")),Session.class);String ticket=ticket(UUID.fromString(prior.editorSessionId()));
+            if(!hash(ticket.getBytes(StandardCharsets.UTF_8)).equals(r.get("launch_hash")))throw fail(409,"EDITOR_ENTRY_EXPIRED","签发密钥已变化，请以新操作重新打开");
+            return new Session(prior.editorSessionId(),prior.projectId(),prior.sampleId(),prior.actorId(),prior.specVersionId(),prior.mode(),entry(prior.editorSessionId(),ticket),prior.launchExpiresAt(),prior.expiresAt(),prior.config(),prior.draft());
+        }catch(BusinessException e){throw e;}catch(Exception e){throw fail(503,"INVALID_STATE","会话记录异常");}
     }
     public synchronized Session open(ActorContext actor,UUID project,UUID sample,String requestKey){
         key(requestKey);
@@ -94,9 +103,10 @@ public class ProjectEditorService {
             var again=replay(actor,project,sample,spec,requestKey);if(again!=null)return again;
             var m=mapping(project,sample,actor.actorId(),spec);
             if(!List.of("READY","SAVED").contains(m.get("sync_status")))throw fail(409,"EDITOR_RECONCILIATION_REQUIRED","外部导入状态待核对，请管理员处理后重试");
-            UUID id=UUID.randomUUID();String ticket=secret();Instant launch=Instant.now().plusSeconds(60),expires=Instant.now().plusSeconds(1800);
+            UUID id=UUID.randomUUID();String ticket=ticket(id);Instant launch=Instant.now().plusSeconds(60),expires=Instant.now().plusSeconds(1800);
             var response=new Session(id.toString(),project.toString(),sample.toString(),actor.actorId().toString(),spec.toString(),"PROJECT_IMAGE_CLASSIFICATION","/api/labeling/v1/project-editor-ui/"+id+"/launch?ticket="+ticket,launch.toString(),expires.toString(),config,result(project,sample,actor.actorId(),spec));
-            db.update("INSERT INTO project_editor_session(id,project_id,sample_id,actor_id,spec_version_id,expires_at,launch_hash,launch_expires_at,request_key,response_body) VALUES (?,?,?,?,?,?,?,?,?,?::jsonb)",id,project,sample,actor.actorId(),spec,java.sql.Timestamp.from(expires),hash(ticket.getBytes(StandardCharsets.UTF_8)),java.sql.Timestamp.from(launch),requestKey,json.valueToTree(response).toString());return response;
+            var stored=(com.fasterxml.jackson.databind.node.ObjectNode)json.valueToTree(response);stored.remove("editorUrl");
+            db.update("INSERT INTO project_editor_session(id,project_id,sample_id,actor_id,spec_version_id,expires_at,launch_hash,launch_expires_at,request_key,response_body) VALUES (?,?,?,?,?,?,?,?,?,?::jsonb)",id,project,sample,actor.actorId(),spec,java.sql.Timestamp.from(expires),hash(ticket.getBytes(StandardCharsets.UTF_8)),java.sql.Timestamp.from(launch),requestKey,stored.toString());return response;
         });
     }
     public String launch(UUID session,String ticket){
@@ -119,7 +129,7 @@ public class ProjectEditorService {
             var sessions=db.queryForList("SELECT spec_version_id FROM project_editor_session WHERE id=? AND project_id=? AND sample_id=? AND actor_id=? AND expires_at>CURRENT_TIMESTAMP",session,project,sample,actor.actorId());
             if(sessions.isEmpty())throw fail(409,"EDITOR_SESSION_EXPIRED","会话失效或不属于当前用户和图片");UUID spec=(UUID)sessions.get(0).get("spec_version_id");
             var c=guard(actor,project,sample,spec);var m=mapping(project,sample,actor.actorId(),spec);
-            var canonical=AssignmentEditorService.canonical(incoming,read(c.get("labels")));var current=result(project,sample,actor.actorId(),spec);
+            var canonical=ClassificationResultValidator.canonical(incoming,read(c.get("labels")));var current=result(project,sample,actor.actorId(),spec);
             if(current.revision()==baseRevision+1&&current.result().equals(canonical))return current;
             if(current.revision()!=baseRevision)throw fail(409,"REVISION_CONFLICT","结果已更新，请重新读取后保存");
             if(!List.of("READY","SAVED").contains(m.get("sync_status")))throw fail(503,"EDITOR_UNAVAILABLE","编辑器尚未就绪");
@@ -129,7 +139,7 @@ public class ProjectEditorService {
                 if(existing.size()==1){verify(existing.get(0),task,author);annotation=LabelStudioClient.numeric(existing.get(0).path("id").asText());}}
             var saved=client.call(annotation==null?"POST":"PATCH",annotation==null?"/api/tasks/"+task+"/annotations/":"/api/annotations/"+annotation+"/",Map.of("result",canonical,"was_cancelled",false));
             String annotationId=LabelStudioClient.numeric(saved.path("id").asText());var external=client.call("GET","/api/annotations/"+annotationId+"/",null);verify(external,task,author);
-            var back=AssignmentEditorService.canonical(external.path("result"),read(c.get("labels")));
+            var back=ClassificationResultValidator.canonical(external.path("result"),read(c.get("labels")));
             if(!back.equals(canonical))throw fail(409,"EDITOR_CONFLICT","外部结果不一致，未确认平台保存成功");
             db.update("INSERT INTO project_annotation(project_id,sample_id,actor_id,spec_version_id,result,revision) VALUES (?,?,?,?,?::jsonb,?) ON CONFLICT(project_id,sample_id,actor_id,spec_version_id) DO UPDATE SET result=EXCLUDED.result,revision=EXCLUDED.revision,saved_at=CURRENT_TIMESTAMP",project,sample,actor.actorId(),spec,back.toString(),baseRevision+1);
             db.update("UPDATE project_editor_mapping SET external_annotation_id=?,result_hash=?,sync_status='SAVED' WHERE project_id=? AND sample_id=? AND actor_id=? AND spec_version_id=?",annotationId,hash(back.toString().getBytes(StandardCharsets.UTF_8)),project,sample,actor.actorId(),spec);
@@ -142,4 +152,6 @@ public class ProjectEditorService {
     private JsonNode read(Object value){try{return json.readTree(value.toString());}catch(Exception e){throw fail(503,"INVALID_STATE","数据格式异常");}}
     private static String hash(byte[] bytes){try{return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));}catch(Exception e){throw new IllegalStateException(e);}}
     private static String secret(){byte[] bytes=new byte[32];new SecureRandom().nextBytes(bytes);return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);}
+    private String ticket(UUID id){try{var mac=javax.crypto.Mac.getInstance("HmacSHA256");mac.init(new javax.crypto.spec.SecretKeySpec(ticketKey,"HmacSHA256"));return Base64.getUrlEncoder().withoutPadding().encodeToString(mac.doFinal(("project-editor:"+id).getBytes(StandardCharsets.UTF_8)));}catch(Exception e){throw new IllegalStateException("Cannot sign editor entry",e);}}
+    private static String entry(String id,String ticket){return "/api/labeling/v1/project-editor-ui/"+id+"/launch?ticket="+ticket;}
 }

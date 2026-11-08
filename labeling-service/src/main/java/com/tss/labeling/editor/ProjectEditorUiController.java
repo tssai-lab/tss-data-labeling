@@ -16,8 +16,8 @@ import java.util.*;
 @RestController
 @RequestMapping("/api/labeling/v1/project-editor-ui/{sessionId}")
 public class ProjectEditorUiController {
-    private final ProjectEditorService editor;private final ImportService tasks;
-    public ProjectEditorUiController(ProjectEditorService editor,ImportService tasks){this.editor=editor;this.tasks=tasks;}
+    private final ProjectEditorService editor;private final ImportService imports;
+    public ProjectEditorUiController(ProjectEditorService editor,ImportService imports){this.editor=editor;this.imports=imports;}
     @GetMapping("/launch")
     public ResponseEntity<Void> launch(@PathVariable UUID sessionId,@RequestParam String ticket,HttpServletRequest request){
         String cookie=editor.launch(sessionId,ticket);
@@ -52,7 +52,7 @@ public class ProjectEditorUiController {
     }
     @GetMapping("/image")
     public ResponseEntity<org.springframework.core.io.Resource> image(@PathVariable UUID sessionId,@CookieValue(value="editor_session",required=false) String cookie){
-        var s=check(sessionId,cookie);var f=tasks.file(s.actor(),s.project().toString(),s.sample().toString());
+        var s=check(sessionId,cookie);var f=imports.file(s.actor(),s.project().toString(),s.sample().toString());
         return ResponseEntity.ok().contentType(MediaType.parseMediaType(f.mediaType())).contentLength(f.sizeBytes()).header("Cache-Control","private,no-store").header("X-Content-Type-Options","nosniff").body(f.resource());
     }
     @PutMapping("/result")
