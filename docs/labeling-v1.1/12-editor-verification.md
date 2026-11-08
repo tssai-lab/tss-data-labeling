@@ -63,3 +63,5 @@
 | 辅助脚本与配置 | Python编译、Bash语法、Maven XML及工作流YAML结构检查通过 |
 
 本轮未执行上游全量源码重编译、真实LS浏览器或服务器部署；固定包沿用此前已构建并验证的上游输出。GitHub Linux工作流的执行状态以功能分支提交的Checks为准，不用本地成功冒充远程CI成功。其他原有业务接口、数据库及服务器配置未在本专项修改。
+
+远程验证补充：代码提交`f151bd3dd35a08421b5eef001c1bb6c21d949bdb`的GitHub Linux构建工作流已完成且结论为success，包含干净构建及JAR资源检查。[查看CI记录](https://github.com/tssai-lab/tss-data-labeling/actions/runs/42444679554)。此工作流没有部署步骤，不代表服务器已更新。
