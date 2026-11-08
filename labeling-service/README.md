@@ -65,7 +65,7 @@ mvn test
 mvn package
 ```
 
-集成测试自行启动临时 PostgreSQL 和身份服务桩，不连接现有业务数据库。Linux 必须以普通用户运行。正式联调仍需用真实统一登录和选定的数据集复验。领取、平台分类草稿与提交已有本地实现；Label Studio 和导出仍未实现，导入通过不能代表标注全链路已经完成。
+集成测试自行启动临时 PostgreSQL 和身份服务桩，不连接现有业务数据库。Linux 必须以普通用户运行。正式联调仍需用真实统一登录和选定的数据集复验。领取、平台分类草稿与提交已有本地实现；Label Studio适配见下文，导出仍未实现，导入通过不能代表标注全链路已经完成。
 
 ## 任务包与领取（本地已实现，需部署 V4）
 
@@ -79,7 +79,7 @@ mvn package
 - `GET /api/labeling/v1/assignments/{assignmentId}/samples/{sampleId}/file`：授权读取包内图片。
 
 POST 均需 Idempotency-Key。完整字段、上限和错误码见 `../docs/labeling-v1.1/04-api.md` 的任务包首轮实现。
-任务包阶段不包含结果保存；后续 V5 已补上平台草稿与提交，见下一节。放弃/回收领取、Label Studio 和导出仍未实现。
+任务包阶段不包含结果保存；后续 V5 已补上平台草稿与提交，见下一节。放弃/回收领取和导出仍未实现，Label Studio适配见下文。
 
 ## 草稿与正式提交（V5，本地实现）
 
@@ -90,5 +90,11 @@ POST 均需 Idempotency-Key。完整字段、上限和错误码见 `../docs/labe
 - `GET /api/labeling/v1/projects/{projectId}/submissions`：owner 分页查看提交。
 
 当前 resultFormat 为 image-classification-v1，结果为 {"labelId":"规范标签ID"}。
-Label Studio 原始 JSON 需适配器校验转换，尚未接入 editor-sync；导出与验收尚未实现。
+Label Studio原始JSON由领取适配器回读校验转换，见下方说明；导出与服务器验收尚未实现。
 调用示例、冲突处理和权限边界见接口文档末尾“草稿与提交首轮实现”。
+
+## Label Studio领取适配（V6，本地功能分支）
+
+新增POST /assignments/{id}/editor-sessions及POST /assignments/{id}/editor-sync；只授权本人有效领取和包内图片，使用冻结规范。复用ResultService保存image-classification-v1草稿，不创建另一套业务结果表。受控编辑器在后端JAR内提供，正式前端按[接入说明](../docs/labeling-v1.1/10-editor-integration.md)调用；本轮不修改前端。
+
+原本地旧编辑器V5/项目V6已退出迁移主线；已执行旧迁移的验收库保持备份另建库，不能直接接管或repair。部署配置、迁移和资源构建见[部署说明](../docs/labeling-v1.1/11-editor-deployment.md)，测试范围见[验证记录](../docs/labeling-v1.1/12-editor-verification.md)。未上线。

@@ -417,3 +417,9 @@ D 的 Label Studio 适配器需后端回读并校验作者、领取、样本、�
 
 前端显示“草稿已保存”和“任务已提交”必须区分，只有 POST 提交成功才算完成任务。
 仍未实现 Label Studio 会话/同步、任务释放/回收、需求方验收状态及导出文件；本轮没有新增这些假接口。
+
+## Label Studio领取适配（2026-11-08，当前功能分支，未部署）
+
+在上述业务V5基础上新增V6映射与会话；不替换业务草稿/提交。POST /assignments/{id}/editor-sessions和POST /assignments/{id}/editor-sync均需统一登录、Idempotency-Key及{sampleId}。适配器在事务外写入/回读LS，校验后转为image-classification-v1，由同一ResultService保存本人领取草稿；同步回写前再次核验权限及原baseRevision，迟到结果不能覆盖新草稿。浏览器直接保存与编辑器同步不能未经协调并行启用。
+
+受控入口及消息、错误、恢复和完整调用示例见[领取编辑器接入说明](10-editor-integration.md)。此节为当前本地功能分支实现说明，不表示远程backend或服务器已部署；原先“会话/同步未实现”的历史记录以本节所述分支范围区分。

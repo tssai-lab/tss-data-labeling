@@ -70,7 +70,43 @@
     </dependencies>
 
     <build>
+        <resources>
+            <resource>
+                <directory>src/main/resources</directory>
+                <excludes><exclude>static/editor-assets/**</exclude></excludes>
+            </resource>
+            <resource>
+                <directory>${project.build.directory}/generated-editor-resources</directory>
+            </resource>
+        </resources>
         <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-antrun-plugin</artifactId>
+                <version>3.1.0</version>
+                <executions>
+                    <execution>
+                        <id>prepare-fixed-editor-resources</id>
+                        <phase>generate-resources</phase>
+                        <goals><goal>run</goal></goals>
+                        <configuration>
+                            <target>
+                                <property file="${project.basedir}/third-party/label-studio/editor-assets-1.23.2.properties"/>
+                                <checksum file="${project.basedir}/third-party/label-studio/editor-assets-1.23.2.zip"
+                                          algorithm="SHA-256" property="editor.actual.sha256"/>
+                                <fail message="Editor bundle SHA-256 mismatch; do not deploy unreviewed assets.">
+                                    <condition><not><equals arg1="${editor.actual.sha256}" arg2="${editor.bundle.sha256}"/></not></condition>
+                                </fail>
+                                <delete dir="${project.build.directory}/generated-editor-resources"/>
+                                <delete dir="${project.build.outputDirectory}/static/editor-assets"/>
+                                <mkdir dir="${project.build.directory}/generated-editor-resources/static/editor-assets"/>
+                                <unzip src="${project.basedir}/third-party/label-studio/editor-assets-1.23.2.zip"
+                                       dest="${project.build.directory}/generated-editor-resources/static/editor-assets"/>
+                            </target>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>

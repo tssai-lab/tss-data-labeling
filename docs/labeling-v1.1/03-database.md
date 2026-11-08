@@ -196,3 +196,11 @@ submission_item 复制提交时的版本和分类结果，通过 submission/pack
 业务角色对快照表只有 SELECT/INSERT，无 UPDATE/DELETE；不会覆盖第二人的结果。
 整包完整性和当前版本由提交事务校验；原草稿仍保留，但提交接口返回和导出后续应以冻结快照为准。
 该补充是本轮实际建表范围，尚未创建编辑器映射、验收、结果集成或导出表。
+
+## 领取编辑器V6（2026-11-08，当前功能分支未部署）
+
+业务V1—V5保持不变；新增V6__create_assignment_editor.sql，只创建editor_mapping与editor_session。映射主键为(assignment_id,sample_id,provider)，组合外键绑定领取/包/作者及包成员，另存冻结规范、图片摘要和外部任务/技术作者。会话复合外键绑定映射与actor，保存入口/Cookie摘要，不持久化含票据的URL。
+
+实际状态为PENDING（外部导入未确认）、READY（可编辑）、SYNCING（持久化待保存操作）、SAVED（已同步业务草稿）、FAILED（保留故障状态）。SYNCING记录operation_id、base_revision、pending_result及result_hash；成功后记录synced_revision。外部请求在事务外，回写前短事务重查领取权限与原草稿版本，复用ResultService保存，不重新创建annotation_draft。SAVED不代表SUBMITTED。
+
+已执行旧本地编辑器V5/项目V6的库不可直接升级；保留备份另建验收库，详见[部署说明](11-editor-deployment.md)。接口、状态恢复及限制见[领取接入说明](10-editor-integration.md)，本节不表示服务器已迁移。
