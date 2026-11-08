@@ -14,7 +14,7 @@
 → POST assignments/{id}/editor-sessions
 → 同源新窗口或iframe加载返回的editorUrl
 → 受控HTML加载固定LS官方编辑组件、当前图片及本人草稿
-→ 标注员选择类别并点击保存
+→ 标注员选择类别并点击LS原生Submit/Update（或由宿主消息触发保存）
 → 后端在短事务中检查权限/revision并记录SYNCING操作
 → 事务外写入LS并GET读回，核对技术作者、外部任务及分类
 → 短事务重查领取权限/revision，按冻结规范转换成labelId
@@ -24,6 +24,16 @@
 ```
 
 每张图片一条LS任务；同样本不同领取具有独立映射和答案。当前每个领取＋图片建立一个外部LS项目/任务。一个会话只显示一张图片；图片列表、上一张/下一张、返回和整包提交由平台前端组织。会话不是整包提交，也不打开LS完整管理后台。
+
+## 原生编辑器与前端职责
+
+组件承载页只加载LS，不提供自定义业务顶部、用户/图片信息栏、自定义保存/重读按钮或业务状态文案。保留固定版本原生图片和分类控件、缩放、底部工具栏及撤销/重做、右侧详情/历史与结果区域面板、Submit/Update。模板中的规范说明由LS Header标签渲染，不属于新增业务顶部。
+
+原生Submit/Update通过onSubmitAnnotation/onUpdateAnnotation进入同一套平台保存链路，Promise在平台确认落库后才成功，失败时向SDK抛出错误供原生提示，同时通知宿主。首次可保存显示Submit，已有草稿恢复及保存后显示Update。
+
+当前固定版本启用panel、topbar、controls、edit-history、side-column、submit、update及annotations:deny-empty；工具栏和布局来自官方资源包，没有重新实现保存按钮。只启用已有适配能力，任务包切换和正式提交继续由平台控制。
+
+**这里的LS Submit仅保存当前图片的业务草稿，不调用整包submissions，不代表任务已正式提交。** 前端负责“我的任务”入口、任务/用户信息、图片列表和切换、平台保存状态、错误处理及整包提交按钮。前端通常直接复用编辑器内原生保存按钮，不必再做一套图片分类保存UI；如需“保存并下一张”，可使用下文宿主消息接口。
 
 ## 接口清单
 
@@ -72,7 +82,7 @@
 
 ### 保存与恢复
 
-编辑器页面内部调用`PUT /editor-ui/{sessionId}/result`，携带会话Cookie，正文为`{baseRevision,result}`，result为LS单选choices数组。这是受控编辑器内部接口，正式前端不直接构造LS结果。
+原生Submit/Update和宿主labeling:save共用编辑器页面内部`PUT /editor-ui/{sessionId}/result`，携带会话Cookie，正文为`{baseRevision,result}`，result为LS单选choices数组。这是受控编辑器内部接口，正式前端不直接构造LS结果，也不直接调用LS原生保存API。
 
 适配器回读校验后，平台草稿保存为：
 
@@ -110,9 +120,58 @@ if (url.origin !== location.origin ||
 // 将url赋给预先打开的新窗口，或同源iframe；勿输出到日志。
 ```
 
-编辑器向同源parent/opener发送`labeling:ready`、`labeling:saved`、`labeling:save-failed`，含editorSessionId、assignmentId、projectId、sampleId、actorId、specVersionId；保存成功还含revision。接收必须检查event.origin、event.source和全部上下文ID，然后GET drafts确认，不能只凭postMessage显示成功。
+### 宿主消息协议
 
-宿主可发送`labeling:save`、`labeling:request-state`、`labeling:discard`，带editorSessionId及唯一requestId；回复saved/save-failed、state、discarded。state含ready/saving/dirty。切图前处理未保存修改，保存失败或保存期间产生新修改时不自动切图。
+iframe嵌入或window.open时保留同源parent/opener，先注册接收监听器，再加载editorUrl；不采用无opener的独立标签页作为需要回传的接入方式。不要给iframe配置会使origin变为null或阻断脚本/Cookie的sandbox。账户切换/退出时销毁旧编辑器及会话引用，不复用旧账号的窗口。
+
+| 方向 | type | 参数或结果 |
+|---|---|---|
+| 编辑器→前端 | labeling:ready | 初始化完成，revision；全部业务上下文ID |
+| 编辑器→前端 | labeling:load-failed | 加载失败，code/message及可用时的HTTP status；至少带editorSessionId，context未加载成功时没有其余业务ID |
+| 前端→编辑器 | labeling:request-state | editorSessionId、非空唯一requestId（最多200字符） |
+| 编辑器→前端 | labeling:state | 原requestId、ready/saving/dirty/revision；加载失败时附error，初始化前revision为null |
+| 前端→编辑器 | labeling:save | editorSessionId、唯一requestId；可选，用于宿主保存/保存后切图 |
+| 编辑器→前端 | labeling:saved | revision、dirty；宿主触发时带原requestId，原生按钮触发时不带requestId |
+| 编辑器→前端 | labeling:save-failed | code/message、可用时的HTTP status；宿主触发时带原requestId，原生按钮触发时不带requestId |
+| 前端→编辑器 | labeling:discard | editorSessionId、唯一requestId；仅在用户确认放弃当前修改后发送 |
+| 编辑器→前端 | labeling:discarded | 原requestId；未保存内容不落库，宿主收到后应关闭或替换编辑器，不把它当成恢复已保存选项 |
+
+所有消息都带editorSessionId；context加载后还带assignmentId、projectId、sampleId、actorId、specVersionId。接收必须检查event.origin、event.source、editorSessionId；对ready/saved及已就绪state进一步检查全部业务ID。load-failed/未就绪state可能没有业务ID，只能用来显示加载状态/错误，不能更新结果。保存通知后再GET本人drafts确认数据，不能只凭postMessage显示成功。
+
+前端嵌入示例（省略页面布局，变量session来自上述会话接口）：
+
+```javascript
+const frame = document.createElement('iframe');
+frame.title = 'Label Studio 标注编辑器';
+const keys = ['assignmentId', 'projectId', 'sampleId', 'actorId', 'specVersionId'];
+async function receive(event) {
+  if (event.origin !== location.origin || event.source !== frame.contentWindow) return;
+  const data = event.data;
+  if (!data || data.editorSessionId !== session.editorSessionId) return;
+  if (data.type === 'labeling:load-failed') { showError(data.message); return; }
+  if (data.type === 'labeling:state' && !data.ready) {
+    if (data.error) showError(data.error.message);
+    return;
+  }
+  if (keys.some(key => data[key] !== session[key])) return;
+  if (data.type === 'labeling:save-failed') showError(data.message);
+  if (data.type === 'labeling:saved') {
+    // 使用现有鉴权请求函数GET草稿，确认assignmentId/sampleId/revision后更新状态。
+    await refreshDraft(session.assignmentId, session.sampleId);
+    // data.dirty=true表示保存期间又有新修改，不能自动切到下一张。
+  }
+}
+window.addEventListener('message', receive);
+frame.src = url.href; // url须通过前面示例的同源、路径和业务ID检查。
+container.appendChild(frame);
+// 可选宿主保存：必须等ready=true，每次使用新的requestId，并等待对应saved回执。
+function saveFromHost(requestId) {
+  frame.contentWindow.postMessage({type:'labeling:save', editorSessionId:session.editorSessionId, requestId}, location.origin);
+}
+// 组件卸载时removeEventListener并移除frame，清空会话及待处理请求。
+```
+
+showError、refreshDraft和container由正式前端实现。加载器/错误展示属于宿主；用request-state握手补查状态，避免因晚注册监听而漏掉ready。切图前检查saving/dirty；保存失败、仍在保存或saved.dirty=true时不能自动切图。收到discarded后立即离开当前编辑器，不继续使用已放弃的内存选择。
 
 Node18+命令示例，私有环境提供LABELING_API_BASE（含/api/labeling/v1）、LABELING_TOKEN、LABELING_ASSIGNMENT_ID、LABELING_SAMPLE_ID：
 

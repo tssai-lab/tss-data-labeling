@@ -4,6 +4,8 @@
 
 本文件是部署操作说明，不代表此次已执行服务器部署。本地回归与服务器正式验收分开。源码推送到功能分支不应直接触发业务环境迁移。
 
+2026-11-08已补充真实本地联调：Docker恢复，已有LS 1.23.2在本机8085运行，新增隔离业务库应用V1—V6。真实身份完成领取、分类保存/修改/恢复及整包提交；另完成双真实账号N=2独立答案、交叉越权拒绝和独立提交验证。此次没有部署服务器，正式前端和线上验收仍待实施，详见[验证记录](12-editor-verification.md)。
+
 ## 版本与既有服务器记录
 
 Label Studio Community镜像标签1.23.2，源码提交df96d79183156e556d91825d15fa7721f1145e1a。官方镜像索引摘要sha256:afcc516a22775a39d0d66f4c2ddc95d01be3e3d3862b21fcf4f9de34b4ad4e12。内部Python元数据1.23.0是已核实的上游标记差异，按镜像摘要和源码提交识别。
@@ -93,6 +95,8 @@ bash labeling-service/scripts/rebuild-editor-assets.sh
 package-editor-assets.py固定打包顺序、ZIP时间戳和权限元数据；上游重新编译产物仍需审查新摘要、许可证和浏览器行为，不能仅因版本号相同就接受。不要手工跳过或改写校验值掩盖损坏。
 
 ## 网关与前端
+
+组件承载页已移除自定义业务顶部和保存/重读按钮，保留LS原生Submit/Update、编辑工具栏和侧面板；原生回调与可选宿主消息共用平台保存接口。宿主负责加载状态、异常展示、图片切换和整包提交，具体HTTP和消息契约见[前端接入说明](10-editor-integration.md)。这次资源页面调整不新增数据库迁移或后端HTTP路径，也不修改正式前端源码。
 
 前端与/api/labeling/v1/editor-ui、editor-assets、assignments API应同源。正式环境使用HTTPS，核对后端识别代理HTTPS及Secure Cookie，允许同源窗口/iframe，避免SPA吞掉资源路由。launch查询中的ticket脱敏，禁止记录Token、Cookie和服务密码。
 
