@@ -169,11 +169,18 @@ public class TaskService {
         Map<String,Object> a=assignment(actor,assignment);pageLimit(limit);
         List<Map<String,Object>> rows=db.queryForList("""
                 SELECT s.id AS "sampleId", s.source_path AS "sourcePath", s.media_type AS "mediaType",
-                  s.content_sha256 AS "contentSha256", i.ordinal
-                FROM package_item i JOIN sample s ON s.id=i.sample_id WHERE i.package_id=? AND s.id>?
+                  s.content_sha256 AS "contentSha256", i.ordinal,
+                  d.revision AS "draftRevision", d.explicit_done AS "explicitDone",
+                  d.result_format AS "resultFormat", d.result::text AS result
+                FROM package_item i JOIN sample s ON s.id=i.sample_id
+                LEFT JOIN annotation_draft d ON d.assignment_id=? AND d.sample_id=s.id
+                WHERE i.package_id=? AND s.id>?
                 ORDER BY s.id LIMIT ?
-                """,a.get("package_id"),cursor(cursor),limit+1);
-        for(var row:rows)row.put("fileUrl","/api/labeling/v1/assignments/"+assignment+"/samples/"+row.get("sampleId")+"/file");
+                """,assignment,a.get("package_id"),cursor(cursor),limit+1);
+        for(var row:rows) {
+            if(row.get("result")!=null)row.put("result",read((String)row.get("result")));
+            row.put("fileUrl","/api/labeling/v1/assignments/"+assignment+"/samples/"+row.get("sampleId")+"/file");
+        }
         var response=(com.fasterxml.jackson.databind.node.ObjectNode)page(rows,limit,"sampleId");
         Map<String,Object> spec = one("""
                 SELECT s.id AS "specVersionId", s.labels::text AS labels, s.instructions, s.editor_config::text AS "editorConfig"
