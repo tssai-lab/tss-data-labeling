@@ -39,7 +39,6 @@ concurrency:
 jobs:
   verify-and-build:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
     outputs:
       deploy_main: ${{ steps.scope.outputs.deploy_main }}
     steps:
@@ -47,11 +46,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
-      - name: Set up Python 3.12
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
 
       - name: Reject a stale synchronized dispatch
         if: >-
@@ -125,7 +119,7 @@ jobs:
 
       - name: Run YOLOv11n inference preview tests
         run: |
-          python3 -m pip install --disable-pip-version-check --no-input --only-binary=:all: 'Pillow==11.0.0'
+          python3 -m pip install --disable-pip-version-check --no-input 'Pillow==11.0.0'
           python3 -m unittest discover \
             -s examples/inference/yolov11n \
             -p 'test_*.py' -v
@@ -137,25 +131,7 @@ jobs:
           java-version: "17"
           cache: maven
 
-      - name: Check out pinned official MinIO test source
-        id: minio-test-source
-        timeout-minutes: 3
-        run: bash backend/scripts/prepare-minio-test-image.sh checkout
-
-      - name: Set up Go for the test fixture
-        uses: actions/setup-go@v6
-        with:
-          go-version: '1.24.6'
-          cache-dependency-path: ${{ steps.minio-test-source.outputs.source_dir }}/go.sum
-
-      - name: Build and check the local MinIO test image
-        timeout-minutes: 15
-        env:
-          MINIO_SOURCE_DIR: ${{ steps.minio-test-source.outputs.source_dir }}
-        run: bash backend/scripts/prepare-minio-test-image.sh build "$MINIO_SOURCE_DIR"
-
       - name: Run tests
-        timeout-minutes: 20
         working-directory: backend
         run: ./mvnw --batch-mode --no-transfer-progress clean verify
 

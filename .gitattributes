@@ -1,6 +1,4 @@
 /.github/workflows/*.yml text eol=lf
-/labeling-service/scripts/*.sh text eol=lf
-/labeling-service/third-party/label-studio/*.zip binary
 /backend/.dockerignore text eol=lf
 /backend/Dockerfile text eol=lf
 /backend/**/*.sh text eol=lf
