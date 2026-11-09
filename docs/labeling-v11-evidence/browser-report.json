@@ -1,0 +1,277 @@
+{
+  "data": "Synthetic browser fixtures; no real accounts or service writes",
+  "widths": [
+    {
+      "page": "project",
+      "viewport": 1280,
+      "document": 1280,
+      "tables": [
+        {
+          "client": 1128,
+          "scroll": 1128
+        },
+        {
+          "client": 1128,
+          "scroll": 1128
+        },
+        {
+          "client": 1128,
+          "scroll": 1128
+        }
+      ]
+    },
+    {
+      "page": "task-pool",
+      "viewport": 1280,
+      "document": 1280,
+      "tables": [
+        {
+          "client": 1128,
+          "scroll": 1128
+        }
+      ]
+    },
+    {
+      "page": "assignment",
+      "viewport": 1280,
+      "document": 1280,
+      "tables": []
+    },
+    {
+      "page": "submission",
+      "viewport": 1280,
+      "document": 1280,
+      "tables": [
+        {
+          "client": 1128,
+          "scroll": 1128
+        }
+      ]
+    },
+    {
+      "page": "admin-users",
+      "viewport": 1280,
+      "document": 1280,
+      "tables": [
+        {
+          "client": 1128,
+          "scroll": 1128
+        }
+      ]
+    },
+    {
+      "page": "admin-modal",
+      "viewport": 1280,
+      "document": 1280,
+      "tables": [
+        {
+          "client": 1128,
+          "scroll": 1128
+        }
+      ]
+    },
+    {
+      "page": "project",
+      "viewport": 768,
+      "document": 768,
+      "tables": [
+        {
+          "client": 657,
+          "scroll": 657
+        },
+        {
+          "client": 657,
+          "scroll": 657
+        },
+        {
+          "client": 657,
+          "scroll": 657
+        }
+      ]
+    },
+    {
+      "page": "task-pool",
+      "viewport": 768,
+      "document": 768,
+      "tables": [
+        {
+          "client": 657,
+          "scroll": 700
+        }
+      ]
+    },
+    {
+      "page": "assignment",
+      "viewport": 768,
+      "document": 768,
+      "tables": []
+    },
+    {
+      "page": "submission",
+      "viewport": 768,
+      "document": 768,
+      "tables": [
+        {
+          "client": 657,
+          "scroll": 2705
+        }
+      ]
+    },
+    {
+      "page": "admin-users",
+      "viewport": 768,
+      "document": 768,
+      "tables": [
+        {
+          "client": 657,
+          "scroll": 872
+        }
+      ]
+    },
+    {
+      "page": "admin-modal",
+      "viewport": 768,
+      "document": 768,
+      "tables": [
+        {
+          "client": 657,
+          "scroll": 872
+        }
+      ]
+    },
+    {
+      "page": "project",
+      "viewport": 390,
+      "document": 390,
+      "tables": [
+        {
+          "client": 332,
+          "scroll": 450
+        },
+        {
+          "client": 332,
+          "scroll": 650
+        },
+        {
+          "client": 332,
+          "scroll": 650
+        }
+      ]
+    },
+    {
+      "page": "task-pool",
+      "viewport": 390,
+      "document": 390,
+      "tables": [
+        {
+          "client": 332,
+          "scroll": 700
+        }
+      ]
+    },
+    {
+      "page": "assignment",
+      "viewport": 390,
+      "document": 390,
+      "tables": []
+    },
+    {
+      "page": "submission",
+      "viewport": 390,
+      "document": 390,
+      "tables": [
+        {
+          "client": 332,
+          "scroll": 2705
+        }
+      ]
+    },
+    {
+      "page": "admin-users",
+      "viewport": 390,
+      "document": 390,
+      "tables": [
+        {
+          "client": 332,
+          "scroll": 872
+        }
+      ]
+    },
+    {
+      "page": "admin-modal",
+      "viewport": 390,
+      "document": 390,
+      "tables": [
+        {
+          "client": 332,
+          "scroll": 872
+        }
+      ]
+    },
+    {
+      "page": "editor-conflict",
+      "viewport": 1280,
+      "document": 1280,
+      "tables": []
+    },
+    {
+      "page": "permission-error",
+      "viewport": 390,
+      "document": 390,
+      "tables": []
+    },
+    {
+      "page": "empty-pool",
+      "viewport": 390,
+      "document": 390,
+      "tables": [
+        {
+          "client": 332,
+          "scroll": 700
+        }
+      ]
+    },
+    {
+      "page": "gap-demo",
+      "viewport": 1280,
+      "document": 1280,
+      "tables": [
+        {
+          "client": 1128,
+          "scroll": 1128
+        },
+        {
+          "client": 1128,
+          "scroll": 1128
+        },
+        {
+          "client": 1128,
+          "scroll": 1128
+        },
+        {
+          "client": 1128,
+          "scroll": 1128
+        },
+        {
+          "client": 1128,
+          "scroll": 1128
+        }
+      ]
+    }
+  ],
+  "checks": [
+    "Five core pages and admin modal at 1280 / 768 / 390; page overflow asserted; table scroll stays local; long filenames / instructions / wide editor fixture",
+    "Dirty editor blocks full submission; route guard cancels leaving; native editor save requires real client GET draft readback",
+    "409 shown; editor-sync calls GET readback and opens a fresh session",
+    "Full package submission freezes work as read-only and removes editor",
+    "Lost receipt remains replayable with original revision manifest even when reloaded work is read-only",
+    "Ordinary user directly visiting admin route is denied; self mutation button disabled",
+    "403 preserves login token, displays code and requestId",
+    "Clone / rename / reorder specification keeps label IDs and verifies real-client project readback",
+    "Admin reason form confirms PATCH data:null successfully; self-disable/revoke entry disabled",
+    "UI mock export queue/running/success and downloadable ZIP containing independent N=2 results",
+    "Standalone synthetic demo works without a login or backend and performs no HTTP requests"
+  ],
+  "pageErrors": [],
+  "unexpectedRequests": []
+}

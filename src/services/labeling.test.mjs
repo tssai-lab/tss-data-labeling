@@ -100,6 +100,20 @@ test('expired session clears token and redirects instead of pretending to load p
   assert.equal(state.redirected, true);
 });
 
+test('403 retains token, code and requestId; only the explicit admin mutation permits data:null', async () => {
+  const denied = client(async () => Response.json({ error: { code: 'FORBIDDEN', message: '无权限' }, requestId: 'permission-check' }, { status: 403 }));
+  await assert.rejects(denied.api.labelingJson('/admin/users'), e => e.status === 403 && e.requestId === 'permission-check');
+  assert.equal(denied.state.removed, false); assert.equal(denied.state.redirected, false);
+  const empty = client(async () => Response.json({ data: null }));
+  assert.equal(await empty.api.labelingJson('/admin/users/actor', { method: 'PATCH' }, true), null);
+  await assert.rejects(empty.api.labelingJson('/projects'));
+  const list = client(async () => Response.json({ data: [] }));
+  assert.equal((await list.api.labelingJson('/admin/users')).length, 0);
+  for (const data of ['text', 1, false]) {
+    await assert.rejects(client(async () => Response.json({ data })).api.labelingJson('/projects'));
+  }
+});
+
 test('preview authenticates without putting token into URL and rejects gateway HTML', async () => {
   const { api } = client(async (path, init) => {
     assert.equal(path, '/api/labeling/v1/projects/project/samples/sample/file');

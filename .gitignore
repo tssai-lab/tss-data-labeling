@@ -5,3 +5,5 @@ coverage/
 .env.local
 .env.*.local
 *.log
+
+.qa/

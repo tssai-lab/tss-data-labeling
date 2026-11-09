@@ -8,7 +8,17 @@ import {
   Table,
   Typography,
 } from 'antd';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import {
+  describeLabelingError,
+  labelingJson,
+  type Page,
+  type Project,
+  pageQuery,
+  type Sample,
+  type SpecVersion,
+  sampleBlob,
+} from '@/services/labeling';
 import type { Submission } from '@/services/labelingTasks';
 import { tasks } from '@/services/labelingTasks';
 import styles from './index.less';
@@ -16,24 +26,113 @@ import Navigation from './Navigation';
 
 export default function SubmissionView() {
   const { submissionId = '' } = useParams<{ submissionId: string }>();
+  const [spec, setSpec] = useState<SpecVersion>();
+  const [samples, setSamples] = useState<Sample[]>([]);
+  const [mappingNote, setMappingNote] = useState('');
+  const imageAbort = useRef<AbortController | undefined>(undefined);
+  const [preview, setPreview] = useState('');
+  const [imageError, setImageError] = useState('');
   const [value, setValue] = useState<Submission>();
   const [error, setError] = useState('');
   const [retry, setRetry] = useState(0);
   useEffect(() => {
     const abort = new AbortController();
     setValue(undefined);
+    setSpec(undefined);
+    setSamples([]);
+    setMappingNote('');
+    setPreview('');
+    setImageError('');
+    imageAbort.current?.abort();
     setError('');
     tasks
       .submission(submissionId, abort.signal)
-      .then((result) => {
-        if (!abort.signal.aborted) setValue(result);
+      .then(async (result) => {
+        if (abort.signal.aborted) return;
+        setValue(result);
+        try {
+          const project = await labelingJson<Project>(
+            `/projects/${encodeURIComponent(result.projectId)}`,
+            { signal: abort.signal },
+          );
+          if (abort.signal.aborted) return;
+          setSpec(
+            project.specVersions?.find(
+              (s) => s.specVersionId === result.specVersionId,
+            ),
+          );
+          const me = await tasks.me(abort.signal);
+          const key = `labeling:last-batch:${me.actorId}:${result.projectId}`;
+          const parsed = JSON.parse(
+            localStorage.getItem(`${key}:known`) || '[]',
+          );
+          const ids = [
+            ...new Set(
+              [
+                localStorage.getItem(key),
+                ...(Array.isArray(parsed) ? parsed : []),
+              ].filter(
+                (id): id is string => typeof id === 'string' && Boolean(id),
+              ),
+            ),
+          ];
+          const found: Sample[] = [];
+          for (const id of ids) {
+            let cursor: string | null = null;
+            const seen = new Set<string>();
+            do {
+              const page: Page<Sample> = await labelingJson<Page<Sample>>(
+                `/imports/${encodeURIComponent(id)}/samples?${pageQuery(cursor)}`,
+                { signal: abort.signal },
+              );
+              if (abort.signal.aborted) return;
+              found.push(...page.items);
+              cursor = page.nextCursor;
+              if (cursor && seen.has(cursor))
+                throw new Error('样本分页游标重复');
+              if (cursor) seen.add(cursor);
+            } while (cursor);
+          }
+          if (!abort.signal.aborted) {
+            setSamples(found);
+            setMappingNote(
+              '文件名仅匹配本机已知批次的真实样本；未匹配项保留真实 ID。标签名称来自提交冻结规范。',
+            );
+          }
+        } catch (e) {
+          if (!abort.signal.aborted)
+            setMappingNote(
+              `来源映射不可用，保留真实样本与标签 ID。${describeLabelingError(e)}`,
+            );
+        }
       })
       .catch((e: unknown) => {
-        if (!abort.signal.aborted)
-          setError(e instanceof Error ? e.message : '提交读取失败');
+        if (!abort.signal.aborted) setError(describeLabelingError(e));
       });
-    return () => abort.abort();
+    return () => {
+      abort.abort();
+      imageAbort.current?.abort();
+    };
   }, [submissionId, retry]);
+  useEffect(
+    () => () => {
+      if (preview) URL.revokeObjectURL(preview);
+    },
+    [preview],
+  );
+  async function showImage(sampleId: string) {
+    if (!value) return;
+    setImageError('');
+    imageAbort.current?.abort();
+    const abort = new AbortController();
+    imageAbort.current = abort;
+    try {
+      const blob = await sampleBlob(value.projectId, sampleId, abort.signal);
+      if (!abort.signal.aborted) setPreview(URL.createObjectURL(blob));
+    } catch (e) {
+      if (!abort.signal.aborted) setImageError(describeLabelingError(e));
+    }
+  }
   return (
     <main className={styles.page}>
       <section className={styles.content}>
@@ -57,6 +156,19 @@ export default function SubmissionView() {
               description="标签以该提交绑定规范的稳定 ID 显示，不使用之后修改的分类名称替换历史答案。"
               style={{ marginBottom: 24 }}
             />
+            {mappingNote && <Alert type="info" message={mappingNote} />}
+            {imageError && <Alert type="error" message={imageError} />}
+            {preview && (
+              <img
+                src={preview}
+                alt="授权原图预览"
+                style={{
+                  maxWidth: '100%',
+                  maxHeight: 400,
+                  objectFit: 'contain',
+                }}
+              />
+            )}
             <Descriptions
               column={1}
               items={[
@@ -92,12 +204,29 @@ export default function SubmissionView() {
               dataSource={value.items}
               scroll={{ x: 550 }}
               columns={[
-                { title: '图片编号', dataIndex: 'sampleId' },
+                {
+                  title: '图片路径 / 真实编号',
+                  render: (_, item) =>
+                    samples.find((s) => s.sampleId === item.sampleId)
+                      ?.sourcePath || item.sampleId,
+                },
                 {
                   title: '分类标签 ID',
-                  render: (_, item) => item.result.labelId || '—',
+                  render: (_, item) =>
+                    spec?.labels.find((l) => l.id === item.result.labelId)
+                      ?.name ||
+                    item.result.labelId ||
+                    '—',
                 },
                 { title: '已提交草稿版本', dataIndex: 'revision' },
+                {
+                  title: '原图',
+                  render: (_, item) => (
+                    <Button onClick={() => void showImage(item.sampleId)}>
+                      授权读取
+                    </Button>
+                  ),
+                },
               ]}
             />
           </Card>

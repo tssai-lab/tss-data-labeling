@@ -23,14 +23,7 @@ import {
   Typography,
 } from 'antd';
 import { useEffect, useRef, useState } from 'react';
-import type {
-  Batch,
-  Label,
-  Page,
-  Project,
-  Sample,
-  SpecVersion,
-} from '@/services/labeling';
+import type { Batch, Page, Project, Sample } from '@/services/labeling';
 import {
   LabelingError,
   labelingJson,
@@ -40,10 +33,12 @@ import {
   sampleBlob,
 } from '@/services/labeling';
 import { hashFile, uploadChunks } from '@/services/labelingUpload.mjs';
+import { CapabilitiesNotice } from './gapDemo';
 import styles from './index.less';
 import Navigation from './Navigation';
 import ProjectSubmissions from './ProjectSubmissions';
 import PublishPlan from './PublishPlan';
+import SpecVersions from './SpecVersions';
 
 const { Text, Paragraph } = Typography;
 const taskType = 'IMAGE_CLASSIFICATION';
@@ -140,12 +135,9 @@ export default function Labeling() {
   const createAttempt = useRef<{ payload: string; key: string } | undefined>(
     undefined,
   );
-  const [specForm] = Form.useForm<{ labels: string; instructions: string }>();
-  const [specBusy, setSpecBusy] = useState(false);
-  const specAttempt = useRef<{ payload: string; key: string } | undefined>(
-    undefined,
-  );
+  const [selectedSpecId, setSelectedSpecId] = useState<string>();
   const [batch, setBatch] = useState<Batch>();
+  const [knownBatchIds, setKnownBatchIds] = useState<string[]>([]);
   const [batchInput, setBatchInput] = useState('');
   const [batchBusy, setBatchBusy] = useState(false);
   const [samples, setSamples] = useState<Sample[]>([]);
@@ -163,13 +155,6 @@ export default function Labeling() {
   const sampleRequest = useRef(0);
   const currentProjectId = useRef(projectId);
   currentProjectId.current = projectId;
-  const latestSpec: SpecVersion | undefined = project?.specVersions?.reduce<
-    SpecVersion | undefined
-  >(
-    (latest, spec) =>
-      !latest || spec.versionNo > latest.versionNo ? spec : latest,
-    undefined,
-  );
   const writable = project?.status === 'DRAFT' || project?.status === 'OPEN';
   const bookmarkKey =
     identity && projectId
@@ -214,6 +199,18 @@ export default function Labeling() {
     if (bookmarkKey) {
       try {
         localStorage.setItem(bookmarkKey, value.batchId);
+        const historyKey = `${bookmarkKey}:known`;
+        const parsed = JSON.parse(localStorage.getItem(historyKey) || '[]');
+        const ids = [
+          ...new Set([
+            value.batchId,
+            ...(Array.isArray(parsed)
+              ? parsed.filter((id): id is string => typeof id === 'string')
+              : []),
+          ]),
+        ].slice(0, 100);
+        localStorage.setItem(historyKey, JSON.stringify(ids));
+        setKnownBatchIds(ids);
       } catch {
         /* URL remains shareable without local storage. */
       }
@@ -258,6 +255,7 @@ export default function Labeling() {
     uploadController.current?.abort();
     setProject(undefined);
     setBatch(undefined);
+    setKnownBatchIds([]);
     setSamples([]);
     setSelected(undefined);
     setError('');
@@ -265,9 +263,8 @@ export default function Labeling() {
     setBatchInput('');
     setBatchBusy(false);
     setSampleBusy(false);
-    specAttempt.current = undefined;
     uploadAttempt.current = undefined;
-    specForm.resetFields();
+    setSelectedSpecId(undefined);
     if (!identity) return;
     if (!projectId) {
       void listProjects();
@@ -287,6 +284,16 @@ export default function Labeling() {
         if (!id && bookmarkKey) {
           try {
             id = localStorage.getItem(bookmarkKey);
+            const known = JSON.parse(
+              localStorage.getItem(`${bookmarkKey}:known`) || '[]',
+            );
+            setKnownBatchIds(
+              Array.isArray(known)
+                ? known.filter(
+                    (value): value is string => typeof value === 'string',
+                  )
+                : [],
+            );
           } catch {
             /* No saved batch. */
           }
@@ -395,54 +402,6 @@ export default function Labeling() {
       message.error(errorText(e));
     } finally {
       setCreateBusy(false);
-    }
-  }
-
-  async function saveSpec() {
-    if (!projectId) return;
-    const values = await specForm.validateFields().catch(() => null);
-    if (!values) return;
-    const names = values.labels
-      .split(/\r?\n/)
-      .map((name: string) => name.trim())
-      .filter(Boolean);
-    if (new Set(names).size !== names.length) {
-      message.error('分类名称不能重复');
-      return;
-    }
-    const labels: Label[] = names.map((name: string, index: number) => ({
-      id: `category-${index + 1}`,
-      name,
-    }));
-    const body = {
-      taskType,
-      labels,
-      instructions: values.instructions?.trim() || '',
-      editorConfig: {},
-      schemaVersion: '1.0',
-    };
-    const payload = JSON.stringify({ projectId, body });
-    if (specAttempt.current?.payload !== payload)
-      specAttempt.current = { payload, key: operationKey() };
-    setSpecBusy(true);
-    try {
-      await post(
-        `/projects/${encodeURIComponent(projectId)}/spec-versions`,
-        body,
-        specAttempt.current.key,
-      );
-      const next = await labelingJson<Project>(
-        `/projects/${encodeURIComponent(projectId)}`,
-      );
-      if (currentProjectId.current !== projectId) return;
-      setProject(next);
-      specForm.resetFields();
-      specAttempt.current = undefined;
-      message.success('分类标签与标注说明已保存');
-    } catch (e) {
-      message.error(errorText(e));
-    } finally {
-      setSpecBusy(false);
     }
   }
 
@@ -709,66 +668,14 @@ export default function Labeling() {
               />
             )}
             <div className={styles.setup}>
-              <Card title="1. 分类标签与标注说明">
-                {latestSpec ? (
-                  <>
-                    <Space wrap>
-                      {latestSpec.labels.map((label) => (
-                        <Tag key={label.id} color="blue">
-                          {label.name}
-                        </Tag>
-                      ))}
-                    </Space>
-                    <Paragraph className={styles.instructions}>
-                      {latestSpec.instructions || '暂无标注说明'}
-                    </Paragraph>
-                    <Text type="secondary">
-                      规范版本 {latestSpec.versionNo} · 已保存到平台
-                    </Text>
-                  </>
-                ) : (
-                  <Form
-                    form={specForm}
-                    layout="vertical"
-                    onFinish={() => void saveSpec()}
-                  >
-                    <Form.Item
-                      name="labels"
-                      label="分类名称（每行一类）"
-                      rules={[
-                        {
-                          required: true,
-                          whitespace: true,
-                          message: '请至少输入一个分类',
-                        },
-                      ]}
-                    >
-                      <Input.TextArea
-                        rows={4}
-                        maxLength={4000}
-                        placeholder={'正常\n划痕\n破损'}
-                        disabled={!writable}
-                      />
-                    </Form.Item>
-                    <Form.Item name="instructions" label="标注说明">
-                      <Input.TextArea
-                        rows={3}
-                        maxLength={10000}
-                        placeholder="说明分类依据与容易混淆的情况"
-                        disabled={!writable}
-                      />
-                    </Form.Item>
-                    <Button
-                      type="primary"
-                      htmlType="submit"
-                      loading={specBusy}
-                      disabled={!writable}
-                    >
-                      保存分类规范
-                    </Button>
-                  </Form>
-                )}
-              </Card>
+              <SpecVersions
+                key={project.projectId}
+                project={project}
+                writable={Boolean(writable)}
+                selectedId={selectedSpecId}
+                onSelect={setSelectedSpecId}
+                onUpdated={setProject}
+              />
               <Card title="2. 导入图片">
                 <Paragraph>
                   上传包含 JPEG / PNG 图片的 ZIP
@@ -810,6 +717,23 @@ export default function Labeling() {
                 <Paragraph className={styles.hint} type="secondary">
                   上传异常后重新选择同一文件可继续当前上传。刷新页面后可用批次编号找回已上传的图片。
                 </Paragraph>
+                <Typography.Paragraph type="secondary">
+                  完整批次历史待后端接入；下列仅为本机已知批次，点击后查询真实详情。
+                </Typography.Paragraph>
+                <Select
+                  aria-label="本机已知批次"
+                  placeholder="选择本机已知批次"
+                  style={{ width: '100%', marginBottom: 16 }}
+                  value={
+                    knownBatchIds.includes(batchInput) ? batchInput : undefined
+                  }
+                  disabled={uploadBusy || batchBusy}
+                  onChange={(id) => void restoreBatch(id)}
+                  options={knownBatchIds.map((value) => ({
+                    value,
+                    label: value,
+                  }))}
+                />
                 <Space.Compact block>
                   <Input
                     aria-label="导入批次编号"
@@ -911,25 +835,6 @@ export default function Labeling() {
               </Card>
             )}
             {batch?.status === 'READY' && (
-              <PublishPlan
-                key={`${project.projectId}:${batch.batchId}`}
-                projectId={project.projectId}
-                batchId={batch.batchId}
-                specVersionId={latestSpec?.specVersionId}
-                writable={Boolean(writable)}
-                onPublished={() => {
-                  void labelingJson<Project>(
-                    `/projects/${encodeURIComponent(project.projectId)}`,
-                  )
-                    .then((value) => {
-                      if (currentProjectId.current === value.projectId)
-                        setProject(value);
-                    })
-                    .catch((e: unknown) => setError(errorText(e)));
-                }}
-              />
-            )}
-            {batch?.status === 'READY' && (
               <div className={styles.workspace}>
                 <Card
                   title="3. 图片列表"
@@ -987,7 +892,7 @@ export default function Labeling() {
                     </Button>
                   )}
                 </Card>
-                <Card title="4. 图片预览与分类选择">
+                <Card title="图片预览">
                   {selected ? (
                     <>
                       <Paragraph ellipsis={{ tooltip: selected.sourcePath }}>
@@ -1022,6 +927,28 @@ export default function Labeling() {
                 </Card>
               </div>
             )}
+            {batch?.status === 'READY' && (
+              <PublishPlan
+                key={`${project.projectId}:${batch.batchId}`}
+                projectId={project.projectId}
+                batchId={batch.batchId}
+                specVersionId={
+                  selectedSpecId || project.specVersions?.[0]?.specVersionId
+                }
+                writable={Boolean(writable)}
+                onPublished={() => {
+                  void labelingJson<Project>(
+                    `/projects/${encodeURIComponent(project.projectId)}`,
+                  )
+                    .then((value) => {
+                      if (currentProjectId.current === value.projectId)
+                        setProject(value);
+                    })
+                    .catch((e: unknown) => setError(errorText(e)));
+                }}
+              />
+            )}
+            <CapabilitiesNotice />
             <ProjectSubmissions
               key={project.projectId}
               projectId={project.projectId}

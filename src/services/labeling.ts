@@ -53,6 +53,14 @@ export class LabelingError extends Error {
   }
 }
 
+export function describeLabelingError(error: unknown): string {
+  return error instanceof LabelingError
+    ? `${error.status === 403 ? '标注身份或权限不足：' : ''}${error.message}${error.code ? `（${error.code}）` : ''}${error.requestId ? ` · 请求编号 ${error.requestId}` : ''}`
+    : error instanceof Error
+      ? error.message
+      : '操作失败';
+}
+
 const prefix = '/api/labeling/v1';
 export function operationKey(): string {
   // getRandomValues also works on the existing HTTP deployment.
@@ -99,13 +107,20 @@ async function response(
 export async function labelingJson<T>(
   path: string,
   init?: RequestInit,
+  allowNull = false,
 ): Promise<T> {
   const res = await response(path, init);
   const body = await res.json();
-  if (!body || !Object.hasOwn(body, 'data') || body.data === null) {
+  if (
+    !body ||
+    !Object.hasOwn(body, 'data') ||
+    (!allowNull && (body.data === null || typeof body.data !== 'object'))
+  ) {
     throw new LabelingError(
       '接口响应格式异常，请检查标注服务的转发配置',
       res.status,
+      undefined,
+      body?.requestId,
     );
   }
   return body.data as T;
