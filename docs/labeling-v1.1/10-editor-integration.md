@@ -1,10 +1,10 @@
 # 编辑器与 AI 接入｜人工编辑、自动标注及结果流转
 
-更新：2026-11-09。负责人：D 实现编辑器和 AI 模型适配，C 接入统一前端及需求方工作台，A 管理执行授权、结果与审核，B 提供样本、结果筛选与统计。本文件替代原服务式接入说明；是待实施契约，不表示当前代码已经完成替换。
+更新：2026-11-10。新增时序任务插件见[任务插件、标注格式与工业能耗验收设计](14-task-plugins-and-energy-acceptance.md)；下文ClassificationEditorProps是图片模板已有约定，不能直接代表所有任务。负责人：D 实现编辑器和 AI 模型适配，C 接入统一前端及需求方工作台，A 管理执行授权、结果与审核，B 提供样本、结果筛选与统计。本文件替代原服务式接入说明；是待实施契约，不表示当前代码已经完成替换。
 
 ## 1. 边界与现有代码差距
 
-仅复用适合图片分类的 Label Studio 编辑器代码、控件和必要样式，作为统一前端中的组件构建与发布。禁止为新版部署启动完整 Label Studio 服务；不创建外部项目/任务，不访问其数据库，不通过 /api/projects 或 /api/tasks 保存标注，不向浏览器发送共享管理员 Token。
+仅复用适合当前任务的 Label Studio 编辑器代码、控件和必要样式，作为统一前端中的组件构建与发布。禁止为新版部署启动完整 Label Studio 服务；不创建外部项目/任务，不访问其数据库，不通过 /api/projects 或 /api/tasks 保存标注，不向浏览器发送共享管理员 Token。
 
 旧备份中的 AssignmentEditorService/LabelStudioClient、editor-sessions/editor-sync 和 V6 editor_mapping/editor_session 依赖外部 LS 服务；这些试验实现未合入当前 backend 分支，不能仅更名便认为满足新要求。当前前端已有自己的分类选择与草稿接口，新版应替换为统一编辑器适配，避免两个控件争写同一答案。
 
@@ -286,3 +286,13 @@ D交付裁剪组件、版本来源与许可清单、结果转换说明、事件/
 - 取消、超时、重试和重复回调不重复采纳结果；模型标签不兼容有明确错误，Mock不代替真实模型验收。
 
 文档、组件存在不等于以上场景已通过；验证证据记录环境、代码版本、输入、操作和结果。接口及权限以 [04-api.md](04-api.md) 和 [03-database.md](03-database.md) 为准。
+
+## 10. 任务插件与时序编辑器增补
+
+平台按templateId/version和editorKey选编辑器；公共宿主提供输入、草稿、参考、只读状态与保存回调。图片模板继续ClassificationEditorProps，时序模板使用inputFormat/schemaId/inputHash及结构化payload；两者复用dirty/saving/valid、baseRevision和完整提交约定。
+
+时序输入由受限data接口返回，不下载整份共享CSV后在浏览器筛站点。小时桶为kWh、北京时间；点定位原始时间，区间[start,end)。主标签/附加标签/点/区间进入14的类型化结果草案，真实标签体系须专家确认。D负责适配器转换和字段校验规则，A负责后端独立校验。
+
+AI读同一冻结输入和规范，输出同样payload；规则命中依据不伪造成confidence。不存在可用历史基线时返回明确原因。owner修订另走owner接口，不借用人工assignment。
+
+禁止通过新插件重新引入完整LS服务。Label Studio格式仅作结构借鉴；固定版本与逐类型往返转换尚待核验，不能将本平台timeseries_point/labelIds等字段宣传成LS原生格式。历史图片格式保留兼容。
