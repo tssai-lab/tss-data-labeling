@@ -83,7 +83,7 @@ export default function ProjectSubmissions({
   const packages = plans.flatMap((p) => p.packages);
   return (
     <Card
-      title="项目已提交结果"
+      title="人工包已交回结果 · 尚无需求方审核记录"
       style={{ marginTop: 20 }}
       extra={
         <Button loading={busy} onClick={() => void load()}>

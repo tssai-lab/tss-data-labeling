@@ -28,6 +28,8 @@ export default function PublishPlan({
   onPublished: () => void;
 }) {
   const [plan, setPlan] = useState<Plan>();
+  const incompatibleDraft =
+    plan?.status === 'DRAFT' && plan.totalWorkload !== plan.sampleCount;
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [form] = Form.useForm<{
@@ -126,6 +128,10 @@ export default function PublishPlan({
         当前选择规范：{specVersionId || '尚未选择'}
         。已生成的预览及已发布任务包保留创建时的冻结规范；换版本请先调整打包参数重新预览。
       </Typography.Paragraph>
+      <Alert
+        type="info"
+        message="新计划每包1名人工，自行领取；历史包沿用冻结人数。默认10张，尾包保留，其他包未完成不阻塞本包。跨范围选样和再次发布待后端轮次接口。"
+      />
       {!plan && (
         <Form
           form={form}
@@ -147,15 +153,10 @@ export default function PublishPlan({
           </Form.Item>
           <Form.Item
             name="annotatorsPerSample"
-            label="每包标注人数"
+            label="本轮每包人工人数"
             rules={[{ required: true }]}
           >
-            <InputNumber
-              min={1}
-              max={10}
-              precision={0}
-              disabled={busy || !writable}
-            />
+            <InputNumber min={1} max={1} precision={0} disabled />
           </Form.Item>
           <Button
             htmlType="submit"
@@ -165,6 +166,12 @@ export default function PublishPlan({
             生成打包预览
           </Button>
         </Form>
+      )}
+      {incompatibleDraft && (
+        <Alert
+          type="warning"
+          message="本机旧预览不是本轮每包1人的规则，请先调整参数重新生成。"
+        />
       )}
       {plan && (
         <>
@@ -199,7 +206,7 @@ export default function PublishPlan({
               <Button
                 type="primary"
                 loading={busy}
-                disabled={!writable}
+                disabled={!writable || incompatibleDraft}
                 onClick={() => void publish()}
               >
                 确认发布此预览

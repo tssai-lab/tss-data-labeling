@@ -207,7 +207,7 @@ export default function TaskList() {
                             {
                               CLAIMED: '已领取',
                               IN_PROGRESS: '标注中',
-                              SUBMITTED: '已提交',
+                              SUBMITTED: '已交回 · 待需求方审核',
                             } as Record<string, string>
                           )[value] || value}
                         </Tag>
@@ -224,7 +224,9 @@ export default function TaskList() {
                             )
                           }
                         >
-                          {row.status === 'SUBMITTED' ? '查看任务' : '进入标注'}
+                          {row.status === 'SUBMITTED'
+                            ? '查看已交回包'
+                            : '进入标注'}
                         </Button>
                       ),
                     },

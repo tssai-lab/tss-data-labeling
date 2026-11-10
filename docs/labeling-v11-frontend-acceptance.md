@@ -1,67 +1,82 @@
-# 图片单标签分类前端交付与验收
+# 图片分类前端 · 新版需求更新与验收
 
-本次功能分支：`feat/labeling-v11-frontend-gap`。只推送功能分支，等待用户本地验收并同意后才向 `frontend` 开 PR；不合并、不部署。
+更新日期：2026-11-10。实际功能分支 `feat/labeling-v11-frontend-gap`，本次在上一交付 `085fbb6b69a43e8df3770f7b8a5e38f0e3f3800e` 上继续修改。仍然只提交、推送此分支；等用户本地验收并明确同意后再向 frontend 创建 PR，不合并、不部署。
 
-## 基线与范围
+## 需求依据与实际后端
 
-2026-11-09 重新 fetch 后核对：
+本次读取用户提供的六份 2026-11-09 更新文档：01-product、02-architecture、03-database、04-api、10-editor-integration、13-team-work-plan。文件 SHA-256 记录在 `docs/labeling-v11-update-evidence/requirement-sources.json`。文档中的团队操作指令不替代用户授权；本次不执行部署、迁移、停止外部服务或创建 PR。
 
-- `origin/frontend`: `2e1560203329d8afe90179c3e01182dcc9b27fb6`
-- `origin/backend`: `012157c09325fce8e39828e6aa16ac108b80385b`
+重新 fetch 后的实际基线：
+
+- origin/frontend：`2e1560203329d8afe90179c3e01182dcc9b27fb6`
+- origin/backend：`e55bf6e5707b2c7a1a30499b3ea3313ba9af592d`
+- 功能分支更新前远端：`085fbb6b69a43e8df3770f7b8a5e38f0e3f3800e`
 - origin：`https://github.com/tssai-lab/tss-data-labeling.git`
-- 开发检出：`D:\ASUS\Documents\codex\tssai\labeling-v11`。从最新 frontend 创建，未修改旧版验收目录 `D:\code\GitHub\tssai\frontend` 的现有工作。
 
-审计依据为 backend 的 `docs/labeling-v1.1/{README,01-product,04-api,08-image-import-api,10-editor-integration}.md` 及 Project、Import、Task、Result、ActorAdmin、AssignmentEditor 的 Controller/Service。文档中早期“尚未实现”不覆盖当前代码证据；仓库存在实现也不代表部署可用。
+实际 backend 已撤销外部 LS 编辑器代码。现有身份、项目/规范、ZIP导入、旧 batch 打包、领取、本人草稿、逐包完整提交和提交读取仍在；新版选择快照、round、AI、审核、集成、成果与导出未实现。按当前代码事实区分能力，不把文档中的接口样例视为已部署。
 
-沿用 Umi Max、React、TypeScript、Ant Design、统一登录 Bearer、幂等键、revision。保留训练平台、统一登录、内部 Demo 路由和资源；客户平台选择页仅列训练平台和正式标注入口，内部 Demo 仍可直接访问 `/#/label-projects`。
+## 本次前端改动
 
-## 真实接口与页面
+| 范围 | 当前交付 | 依赖 / 限制 |
+| --- | --- | --- |
+| 同页面人工编辑 | `ClassificationEditorAdapter` 采用10-editor-integration的身份、draft、reference、onStateChange、onSave、onError契约；宿主授权读图、PUT草稿并GET持久化读回。无iframe，不调用旧editor-sessions/editor-sync/editor-ui/editor-assets，不需要LS服务或凭据。 | 当前渲染器是平台已有原生分类控件，不冒充裁剪LS。D的裁剪组件、固定版本与许可清单尚未提供；公共适配边界已准备，届时替换渲染器即可。 |
+| 草稿与参考 | 本人草稿revision>0优先，保存过的空答案保持空；只有revision=0可显示本轮固定参考。参考不自动explicitDone；点击确认/修改并保存才完成。单次在途保存，保存/回读中禁切图和提交，409保留选择并要求重新读。 | 当前backend没有轮次参考字段；前端可消费未来items的reference字段，已用合成HTTP夹具验证。没有伪造结果引用查询他人答案。 |
+| 逐包提交 | 提交前重新读取当前assignment的所有items分页和版本；锁住编辑再确认；只提交该包，不等待其他已领包。保留原幂等清单与丢失回执恢复。 | 6/10不可提交、10/10可独立交回。服务端仍做最终完整性/CAS鉴权。 |
+| 状态口径 | 区分草稿已保存、人工包已交回、AI批次已交回、需求方确认和范围成果；历史人工提交显示“待需求方审核”，不显示审核通过。 | 没有真实审核接口，不补造已确认状态。旧N=2包继续按真实冻结信息展示；本轮新发布仅开放每包1人。 |
+| 项目与真实工作台 | 保留已有规范、导入、授权图片、提交查询和用户管理；新增项目级“需求方结果工作台”入口。ZIP说明只导入未标注图片，外部标签不采用，未支持项由批次错误明细报告。 | 真实新流程按钮显示待后端接入且禁用，不向缺失接口自动发请求，不因403/404/409/503降级成模拟成功。 |
+| 新API调用层 | `labelingWorkflow.ts`集中定义项目级结果、选择、AI执行/重试/取消、阈值、review、owner修订、人工选样计划、集成、finalSnapshot和导出。ZIP真实下载复用认证响应层，Bearer不进URL。 | `workflowBackendReady=false`。待A/B实现并联调后再接入真实工作流；当前真实页面只调用已有接口。真实规范、项目/执行标识和分页仍须接线，不能把demo标识替换成真实UUID后直接开启。 |
+| 需求方完整交互 | 独立合成演示覆盖范围预览/排除、人工/AI选择、包10+2、部分成功/失败、手动分档、明确审核/修订、来源历史、严格多数建议、成果及CSV导出。 | 所有模型输出和分数均是合成测试数据，没有真实模型执行或工作队列，不计为真实AI验收。 |
 
-统一前缀 `/api/labeling/v1`。真实服务失败不会切换为 mock 成功，403 保留令牌并提示权限，401 才按统一规则清除令牌；展示服务错误码和 requestId。
+保留统一登录、训练入口、内部Demo路由及运行资源。未修改后端、数据库迁移、模型、密钥或部署配置。
 
-| 范围 | 实际行为 |
-| --- | --- |
-| 领取工作台 | POST editor-sessions，同源 iframe；先监听再加载；校验 URL origin、准确会话路径、有效期、assignment/sample/actor/冻结 spec ID，校验可用 project ID。消息校验 origin、source、session 及业务 ID，旧会话卸载后不再处理。 |
-| 保存与恢复 | LS 原生保存后必须 GET 本人草稿确认 revision。异常提供 editor-sync 后 GET，409 提供重新读取平台草稿；不把消息本身当保存成功。脏状态或保存进行中不允许直接整包提交；已提交但丢失回执的领取仍可用原幂等请求确认，切图/离开需握手，放弃需确认并等待 discarded。 |
-| 原生表单 | 与 LS 互斥切换。必须先确认未决保存和未保存选择，再关闭当前编辑器；生产保留原生能力。已提交任务只读，不启动编辑会话。 |
-| 用户管理 | `/#/labeling/admin/users`；入口及直接访问均 GET /me 核对 labelingAdmin。GET /admin/users 的 data 为数组，PATCH 专门允许 data:null。提交需原因及确认，禁止本人停用/撤权；不依赖训练角色。 |
-| 规范 | 项目详情查看历史，从现有版本克隆；改名/上移保留标签 ID，新增生成独立 ID；创建后 GET 项目比对标签与 instructions。打包使用所选版本，既有预览/任务包保持原规范。 |
-| 结果与进度 | 按真实提交游标加载，包/标注人筛选明确限已加载数据。已知计划通过真实 GET 确认 requiredCount；只在读完本次分页后显示该范围的提交人数，不声称全项目分母。 |
-| 结果详情 | 使用提交的冻结 specVersionId 匹配真实规范；只从本机已知批次真实分页匹配 sourcePath，否则保留真实 ID。原图通过 owner 授权接口读取，拒绝时展示错误，不绕过权限。 |
-| 本人历史 | 本人领取列表有已加载状态筛选及已知 submissionId 查询入口。没有本人提交历史/由 assignment 查 submissionId 的后端接口，不能恢复未知或跨设备回执。 |
-| 批次 | 保留 ZIP 分片/续传、complete/retry、分页与授权图片；本机已知批次最多记录 100 个 ID，点击后读取真实详情，不宣称完整历史。 |
+## 新版合成工作流
 
-首期只提供 `labels[{id,name}]` 和规范整体 instructions，没有新增未经真实服务验证的标签说明/示例 JSON 字段，也不宣称服务端验证此类展示元数据。空选择表示未完成；业务“无目标”须作为合法稳定标签。已验证合成提交与导出中的 `none`，真实环境还须验证该业务类别。
+入口 `/#/labeling/demo`，通过 `npm run dev:labeling-demo` 显式启用。默认关闭；生产构建即使设置 LABELING_GAP_MOCK=true 也关闭。无需真实登录，页面不请求后端、模型或旧编辑器。
 
-长说明可展开，长文件名两行显示且可查看完整文本；双栏小屏改为单栏，图片/iframe 不撑开页面，表格横滚在容器内。工作台提供上一张/下一张、当前分类及 revision、切换表单和整包提交。导航有焦点和当前项，并提供“切换平台”。
+`labelingWorkflowMock.mjs`是独立adapter：不导入HTTP客户端、不拦截fetch，不接受真实项目ID。合成需求方为demo-owner；demo-admin/demo-outsider被拒绝项目数据及审核权限。只存在于内存；“重置合成种子”同时重置数据、过滤/排除、选择、阈值及执行状态，重载页面也恢复。
 
-## 缺失能力的开发适配器
+种子：12个样本，固定规范demo-spec-v1；已有AI PARTIAL快照6成功/2失败、2项没有答案、2份人工候选，初始均未审核。AI成功分数为0、0.59、0.6、0.899、0.9、null，方便人工输入0.6/0.9后验证边界；这两个阈值**没有默认生效**。原始图不在演示中，宽图属于HTTP浏览器测试夹具，不冒充用户原图。
 
-`src/services/labelingGapMock.mjs` 不导入认证 HTTP 客户端，不拦截 fetch；真实 API 从不被它接管。只有独立 `/#/labeling/demo` 显式调用它。默认关闭，且配置和 adapter 双重拒绝生产启用。真实页面上的缺失操作显示“待后端接入”并禁用。
+操作建议：
 
-只有合成 `demo-*` 身份和资源可操作；真实 UUID/未知路径被拒绝。用户权限管理始终走真实接口，没有 mock 用户启停或授权。合成页面不要求真实账号，不请求登录、/me 或后端；切回真实平台后照常走统一登录。
+1. 在结果区勾选已加载的明确项，或用“固定全部筛选结果”由adapter生成快照；可逐行填sampleId排除。用途选择REVIEW/PUBLISH/AGGREGATE/FINALIZE，预览确认count和reviewRevision。改筛选/排除须重新固定范围。
+2. 查看种子PARTIAL批次，先看结果/失败/模型分数，再手动输入L/H保存策略。低c<L，中L≤c<H，高c≥H，null单列未知；失败无答案不混入未知。改变输入框但未保存不会改已保存策略的分档。
+3. 点分档筛选，固定REVIEW范围并排除个别样本，再点击“明确确认所选结果”。保存阈值、AI结束、生成建议都不会自动审核。标记待修正需原因；任何过期reviewRevision整体拒绝。
+4. owner修改调用owner修订契约，生成新OWNER候选且confidence=null，原AI结果保留。来源历史可明确采用固定版本；新AI/人工候选不按时间自动覆盖已有选定答案。
+5. 选择PUBLISH范围，人工每包10、1人，预览12张为10+2，再明确发布。参考NONE不泄漏参考，SELECTED固定参考resultId；已确认样本重发须显式勾选失效影响，预览不撤销确认，发布成功才撤销。活动样本禁选并由adapter再次校验。
+6. “模拟本包全部完成并交回”是显式合成测试控制，**不是未来HTTP接口**、不进行真实领取/保存；一次只结束该包，其他包继续活动，新结果仍待审核。真实人工保存/完整提交走现有接口。
+7. AI按PUBLISH固定样本范围直接排队，无packageId/assignmentId。手动查询推进QUEUED→RUNNING→SUCCEEDED/PARTIAL/FAILED；运行中不可审核，终结后固定成功/失败清单。失败重试创建新execution，旧快照不改；取消不再接受该执行写入。合成Agent不支持参考，SELECTED明确报错，不静默换模式。
+8. 打开sample-1的来源历史，选择AI、人A、人B的固定独立版本，可得到2/3严格多数。两票分歧无共识，一票输入不足，同作者重复或派生来源拒绝。voteSupport不是confidence；采用必须owner再次确认。
+9. 固定FINALIZE范围，全部有有效已确认答案且无活动处理才形成成果；有缺项整体拒绝，不自动剔除。成果按固定范围计数，不把部分范围称为全项目完成。
+10. 仅选择finalSnapshotIds创建classification-csv-zip。旧ALL_SUBMITTED/submissionIds输入已移除。下载ZIP为classifications.csv＋manifest.json；包含原路径、样本/结果/规范、来源、模型和审核映射。AI-only无人工包也可导出。原图选项当前明确422，不静默忽略。
 
-种子为 `demo-project`、12 个图片元数据、10+2 分包、N=2。首包有 Alice/Bob 两份独立提交（正常 / 无目标），末包有一条未完成领取及一个未提交席位。没有合成原图文件；checksum 是明确标识的占位值，不冒充真实文件校验。页面内切换合成身份保留内存，重载页面或“重置种子”恢复。
+模拟POST全部校验幂等键；同键不同体409。选择5分钟过期410，导出60秒过期410；可注入导出FAILED/过期。下载未完成409。错误保留code、status、requestId。演示项目暂停/恢复/归档也有reason、revision和活动范围约束；不是持久化管理系统。
 
-| 模拟接口 | 请求 / 响应 / 限制 |
-| --- | --- |
-| POST /projects/{id}/exports | format=`native-json`、scope=`ALL_SUBMITTED`/`SELECTED_SUBMISSIONS`、submissionIds、includeOriginals=false；冻结提交清单，返回 exportId/status=QUEUED。`native-json` 是本地演示格式编码，真实服务需确认最终枚举。 |
-| GET /exports/{id} | 手动查询推进 RUNNING，再 SUCCEEDED；可注入 FAILED，error.code/message。无后台队列、无持久化。 |
-| GET /exports/{id}/download | 未完成409、过期410 EXPORT_EXPIRED、成功返回合成文件集合，由 UI 用 fflate 打包 ZIP。包含 results.json、mapping.csv、manifest.json、labels.json。映射 project/batch/sample/package/assignment/actor/submission/spec/sourcePath/checksum；两人结果不合并。60秒过期，可注入过期。 |
-| POST /projects/{id}/pause,resume,archive | owner 或合成管理员，baseRevision；pause/archive 需1–500字 reason。暂停阻止工作访问，恢复至 OPEN；有有效领取不能归档，已归档不可恢复。 |
-| POST /assignments/{id}/release | 本人、baseRevision、reason；只允许有效领取，变为 RELEASED。 |
-| POST /admin/assignments/{id}/revoke | 合成管理员、baseRevision、reason；只允许有效领取，变为 REVOKED。释放/回收后工作访问被拒绝，历史提交保留。 |
-| GET /admin/audit-events | 仅合成管理员，items/nextCursor=null；不是读取真实服务日志。 |
-| GET /admin/projects, /admin/assignments | 仅合成管理员，q 为合成 JSON 字符串搜索；无真实管理查询、无原数据授权。 |
-| GET /projects/{id}/imports | 仅合成 owner；READY/FAILED 完整合成批次列表。真实服务没有此 GET。 |
+## 接口替换与当前限制
 
-所有模拟 POST 校验幂等键，同键不同体409；状态操作校验 revision，失败保留错误码及合成 requestId。缺项目/提交/权限分别返回错误，不产生成功文件。演示故障注入属于本地测试控制，不是将来的 HTTP 契约字段。
+- `/projects/{id}/results`、`result-statistics`、`result-selections`及选择预览依赖B；筛选和快照数量须以服务端为准，不能抓分页猜“全部”。
+- 新selectionId人工计划、再次发布、round及sample占用依赖A；旧batch接口仍只支持整批一次发布，未靠重新上传/伪造batch规避。
+- `/agents`、`ai-executions`、cancel/retries及可信模型输出依赖A/D；前端不持模型密钥、不直接执行模型、不把硬编码合成结果当真实自动标注。
+- confidence policy、reviews、owner revisions、final snapshots依赖A/B；集成算法和CSV导出依赖B。新接口未做真实请求验证。
+- 裁剪LS组件与许可依赖D，当前原生渲染器已明确标注。本次不下载完整LS服务、不引入其数据库或外部项目/任务接口，也不停止/删除他人资源。
+- pause/resume/archive、release/revoke、管理项目/领取查询、真实审计、完整导入历史、本人未知submissionId历史仍缺后端接口。真实入口禁用；当前演示重点是新版owner流程，不宣称已补齐这些管理服务。
+- `WorkflowCall`是JSON调用接口；真实导出二进制使用`downloadClassificationExport`/`labelingZip`。演示download返回文件集合仅用于本地fflate打包，不能照搬为服务器下载契约。
 
-替换点：真实后端提供并确认接口后，为缺失能力增加独立真实 service 方法、保持同样权限/幂等/revision/错误处理，再将真实页面禁用入口接到该方法。不要让 adapter 在真实请求 403/404/409/503 或网络错误后自动执行模拟写入。
+## 验证与证据
 
-## 本地启动（PowerShell）
+本次检查通过：TypeScript、290/290测试、服务类型治理检查、生产构建、31张浏览器截图（1280/768/390）。默认开发模式关闭演示；生产构建在显式设置演示变量后仍关闭演示。治理检查保留仓库原有5条提示，无新增警告。具体命令及结果见validation.json。
 
-先使用已有仓库 fetch 功能分支。不要覆盖现有改动：
+最新证据放在 `docs/labeling-v11-update-evidence/`：browser-report.json、PNG、confirmed-classification-export.zip、requirement-sources.json及validation.json。浏览器为本机Chrome，测试数据全部合成，未使用真实账号。1280/768/390检查项目、任务广场、同页面人工页、只读结果、真实待接入工作台、管理与弹窗、owner演示；断言页面整体不横向溢出，表格容器内横滚。长路径/说明折叠可查看，PNG夹具真实宽度3000px。
+
+已覆盖：6/10禁提交；参考不自动完成；清空后刷新不恢复参考；保存中禁切图；409保留选择；10项完整分页提交且另一包未完成不阻塞；已交回只读及丢失回执重放；阈值不自动审核；分档排除后明确审核；严格多数仅建议；已确认范围CSV＋manifest下载。单元测试另覆盖选择过期、审核原子冲突、owner修订不继承分数、重开确认、AI部分失败/新执行重试/取消、无人工包成果、导出冲突/过期/失败和生产隔离。
+
+上一版 `docs/labeling-v11-evidence/` 属历史归档，含旧iframe和未审核提交导出，**不得作为新版验收**。当前脚本已改为新版同页面与成果快照流程。
+
+用户此前确认无隔离后端/账号，本次未获得新的环境，因此真实端到端仍待联调：上传→新范围/人工包→逐包交回→owner审核→成果→下载；真实AI模型与失败重试；权限/CAS并发、暂停/取消后的迟到写入、原图/下载越权，以及D裁剪组件。设计、Mock和客户端测试不能替代这些证据。
+
+## Windows PowerShell 拉取与启动
+
+复用旧仓库fetch，不覆盖现有改动：
 
 ```powershell
 Set-Location -LiteralPath 'D:\code\GitHub\tssai\frontend' -ErrorAction Stop
@@ -73,37 +88,20 @@ git fetch origin "refs/heads/${branch}:refs/remotes/origin/${branch}"
 if ($LASTEXITCODE -ne 0) { throw '拉取功能分支失败' }
 ```
 
-工作区干净且首次检出：
+工作区干净且首次检出可用`git switch --track "origin/$branch"`；已有同名本地分支可`git switch $branch`后`git pull --ff-only origin $branch`。每步检查退出码；无法快进或有改动时用独立worktree：
 
 ```powershell
-git switch --track "origin/$branch"
-if ($LASTEXITCODE -ne 0) { throw '切换功能分支失败' }
-git rev-parse HEAD
-```
-
-已有同名本地分支且工作区干净：
-
-```powershell
-git switch $branch
-if ($LASTEXITCODE -ne 0) { throw '切换功能分支失败' }
-git pull --ff-only origin $branch
-if ($LASTEXITCODE -ne 0) { throw '无法快进，请用独立 worktree 验收' }
-git rev-parse HEAD
-```
-
-有现有改动、无法快进或需保留旧版时，使用 detach worktree，不占用同名分支：
-
-```powershell
-$reviewDir = 'D:\code\GitHub\tssai\frontend-v11-review'
+$reviewDir = 'D:\code\GitHub\tssai\frontend-v11-review-20261110'
 git worktree list
-if (Test-Path -LiteralPath $reviewDir) { throw '验收目录已存在，请核对并复用已有 worktree 或改用空目录' }
+if (Test-Path -LiteralPath $reviewDir) { throw '请核对并复用已有验收目录，或改用空目录' }
 git worktree add --detach "$reviewDir" "origin/$branch"
 if ($LASTEXITCODE -ne 0) { throw '创建验收工作区失败' }
-Set-Location -LiteralPath "$reviewDir" -ErrorAction Stop
+Set-Location -LiteralPath $reviewDir -ErrorAction Stop
 git rev-parse HEAD
+# 与本次交付的最新完整 SHA 对照；不要继续使用上一版085fbb6。
 ```
 
-核对 HEAD 与本次交付 SHA 一致，使用 Node.js 20+（本次22.11.0）：
+Node.js20+，本次22.11.0。锁文件未变且依赖已安装可跳过npm ci：
 
 ```powershell
 npm ci
@@ -114,69 +112,26 @@ Remove-Item Env:LABELING_GAP_MOCK -ErrorAction SilentlyContinue
 npm run dev:local
 ```
 
-入口：[平台选择](http://127.0.0.1:8001/#/platforms)、[标注平台](http://127.0.0.1:8001/#/labeling)。统一登录连接 DEV_API_TARGET；所有 `/api/labeling/`（含 editor-ui、editor-assets）连接 DEV_LABELING_TARGET。dev:local 不再覆盖调用者显式配置的两个代理目标。此处没有提供远程联调网关或账号：用户本次确认无隔离环境，不能声称真实链路已验收。
-
-缺失能力的独立演示：停止当前开发实例后，在同一工作目录执行：
+真实入口`http://127.0.0.1:8001/#/platforms`和`/#/labeling`，使用已有统一登录与标注服务。停止当前开发实例后可独立演示，无后端和账号也可运行：
 
 ```powershell
 npm run dev:labeling-demo
-# 浏览器直接访问 http://127.0.0.1:8001/#/labeling/demo
-# 不需要真实后端/账号；真实业务页面仍须真实登录与服务。
+# http://127.0.0.1:8001/#/labeling/demo
 ```
 
-8001 被旧实例占用时，保留旧实例并用8002（默认关闭演示）：
+8001占用时可设置HOST=127.0.0.1、PORT=8002后运行`npm run start:dev`；开发演示还需显式设置LABELING_GAP_MOCK=true。默认不连接外部服务器，不启动完整LS服务。
 
-```powershell
-$env:HOST = '127.0.0.1'
-$env:PORT = '8002'
-Remove-Item Env:LABELING_GAP_MOCK -ErrorAction SilentlyContinue
-npm run start:dev
-# 如需在独立端口启用演示，先设 $env:LABELING_GAP_MOCK = 'true'，然后运行 start:dev。
-```
-
-## 网关与编辑器联调
-
-开发代理保持 editor-ui/editor-assets 原路径，不做前缀剥离；Cookie domain 改为同源 host。预览网关 `scripts/serve-dist.cjs` 也先转发 `/api/labeling` 到 DEV_LABELING_TARGET，再匹配训练 `/api`。生产使用仓库现有部署工作流，需在真实同源网关配置等价规则，例如：
-
-```nginx
-location ^~ /api/labeling/ {
-    proxy_pass http://labeling_service; # 不追加会剥离原始路径的 URI
-    proxy_set_header Host $host;
-    proxy_set_header X-Forwarded-Proto $scheme;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-}
-```
-
-实际域名、TLS、上游名沿用获准环境；不用此示例直接部署。需验证一次性 ticket 在60秒内跳转、第二次入口拒绝、HttpOnly/SameSite=Strict/会话路径 Cookie、生效期及 editor-assets；不要在代理 access log 记录 editor-ui launch 查询串。前端不打印、不持久化 editorUrl/ticket/token，也不向 iframe 发令牌。真实网关的日志配置及 Cookie 行为本次未验证。
-
-## 验证证据与待联调
-
-最终 `npm run tsc`、`npm test`（279/279）、`npm run build` 均通过；构建时显式设置 LABELING_GAP_MOCK=true，仍通过生产关闭检查。`validation.json`、`default-off-report.json`、`production-forced-flag-report.json` 保存结果。构建刷新的 Swagger UI 和 npm 安装刷新的 Husky 文件均已恢复，不纳入提交。
-
-`docs/labeling-v11-evidence/browser-report.json` 及同目录 PNG：项目详情、任务广场、领取编辑、结果、管理与弹窗的1280/768/390截图，另有空态、403、409和合成演示。检查页面整体宽度、表格容器滚动、长文件名、长说明、宽图、分页与弹窗。浏览器使用本机 Chrome，HTTP 夹具仅属于测试脚本，**截图中的编辑器是合成受控页面，不是真实 Label Studio**。
-
-`synthetic-export.zip` 是浏览器下载后打开检查的合成结果，包含两份独立提交、20条结果、正常/无目标两个合法标签；末包未完成列于 manifest。`proxy-report.json` 和 `dev-proxy-report.json` 分别记录预览及 Umi 开发代理通过本机合成 HTTP 上游的跳转/Cookie/assets 转发，不代表真实 LS 或联调网关通过。
-
-可复核命令：
+验证命令：
 
 ```powershell
 npm run tsc
 npm test
 npm run build
-# 浏览器测试依赖只安装到忽略的 .qa，不修改项目 package-lock：
 npm install --prefix .qa --no-save --package-lock=false playwright
-# 独立启动 dev:labeling-demo 后，在另一终端运行：
+# dev:labeling-demo独立运行后，在另一终端执行：
 node scripts/qa/labeling-v11.browser.mjs
-# 独立启动默认关闭的 dev:local 后：
+# 默认关闭的dev:local或生产预览：
 node scripts/qa/labeling-v11-mode.browser.mjs
-# build 产物存在时，用临时本机 HTTP 上游检查预览代理：
-node scripts/qa/labeling-v11-proxy.mjs
-# dev:local 或 dev:labeling-demo 在8001运行且本机8082空闲时，可检查开发代理：
-node scripts/qa/labeling-v11-proxy.mjs --dev
 ```
 
-不要同时在同一检出目录运行 Umi build 和 dev：二者会刷新相同的 Umi 生成配置；切换构建模式后重新启动开发服务器。
-
-本次无可用隔离后端/账号，以下必须待真实联调，不记为通过：创建项目→规范读回→ZIP分片/续传/解析→默认10张保留末包→N=2发布→两人领取、LS独立保存与整包提交→需求方看两份结果；第三人超领、本人重复领取、越权原图、草稿竞争/刷新回读、整包幂等重放、暂停/回收迟到访问、普通用户直达管理、自停用/自撤权后端409、真实 /me403/401及 LS 禁用/白名单/票据过期/外部不可用。已有功能的客户端单元测试及本次 UI 夹具不替代这些验证。
-
-完整批次历史、全项目分母、本人提交历史查询、管理员项目/领取查询、导出和生命周期接口仍依赖后端。缺失能力只在独立合成演示可用；没有浏览器可读真实审计接口。交付后请先本地验收，再确认允许创建 base=`frontend` 的 PR。
+不要在同一检出中同时运行Umi dev和build，二者会刷新相同生成配置；切换模式请重启开发进程。构建刷新Swagger UI时恢复其生成修改，只提交本任务前端文件。用户验收通过前不创建PR，部署继续走原仓库工作流。

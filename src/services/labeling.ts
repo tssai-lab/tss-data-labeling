@@ -54,11 +54,12 @@ export class LabelingError extends Error {
 }
 
 export function describeLabelingError(error: unknown): string {
-  return error instanceof LabelingError
-    ? `${error.status === 403 ? '标注身份或权限不足：' : ''}${error.message}${error.code ? `（${error.code}）` : ''}${error.requestId ? ` · 请求编号 ${error.requestId}` : ''}`
-    : error instanceof Error
-      ? error.message
-      : '操作失败';
+  if (error instanceof LabelingError || error instanceof Error) {
+    const e = error as Error &
+      Partial<{ status: number; code: string; requestId: string }>;
+    return `${e.status === 403 ? '标注身份或权限不足：' : ''}${e.message}${typeof e.code === 'string' ? `（${e.code}）` : ''}${typeof e.requestId === 'string' ? ` · 请求编号 ${e.requestId}` : ''}`;
+  }
+  return '操作失败';
 }
 
 const prefix = '/api/labeling/v1';
@@ -141,6 +142,25 @@ export function pageQuery(cursor?: string | null): string {
   const query = new URLSearchParams({ limit: '20' });
   if (cursor) query.set('cursor', cursor);
   return query.toString();
+}
+
+/** Authorized file response for the future final-snapshot export route; never puts tokens in URLs. */
+export async function labelingZip(
+  path: string,
+  signal?: AbortSignal,
+): Promise<Blob> {
+  const res = await response(path, { signal });
+  const type = (res.headers.get('Content-Type') || '').split(';')[0];
+  if (
+    ![
+      'application/zip',
+      'application/octet-stream',
+      'application/x-zip-compressed',
+    ].includes(type)
+  ) {
+    throw new LabelingError('导出接口未返回 ZIP，请检查服务或网关', res.status);
+  }
+  return res.blob();
 }
 
 export async function sampleBlob(

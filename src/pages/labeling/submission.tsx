@@ -137,7 +137,7 @@ export default function SubmissionView() {
     <main className={styles.page}>
       <section className={styles.content}>
         <Navigation />
-        <h1>已提交分类结果</h1>
+        <h1>已交回的人工包结果</h1>
         {error && (
           <Alert
             type="error"
@@ -152,8 +152,8 @@ export default function SubmissionView() {
             <Alert
               type="success"
               showIcon
-              message="这是整包提交时冻结的结果，只读保存"
-              description="标签以该提交绑定规范的稳定 ID 显示，不使用之后修改的分类名称替换历史答案。"
+              message="本包人工结果已交回并冻结，只读待需求方审核"
+              description="人工提交不表示审核通过或整个任务完成。标签使用提交绑定的冻结规范，不使用之后的分类名称覆盖历史。"
               style={{ marginBottom: 24 }}
             />
             {mappingNote && <Alert type="info" message={mappingNote} />}

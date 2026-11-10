@@ -127,3 +127,14 @@ test('preview authenticates without putting token into URL and rejects gateway H
     /未返回 JPEG\/PNG/,
   );
 });
+
+test('future export download retains bearer authorization and rejects gateway HTML', async () => {
+  const { api } = client(async (path, init) => {
+    assert.equal(path, '/api/labeling/v1/exports/fixed/download');
+    assert.equal(init.headers.get('Authorization'), 'Bearer test-token');
+    return new Response('zip-bytes', { headers: { 'Content-Type': 'application/zip' } });
+  });
+  assert.equal((await api.labelingZip('/exports/fixed/download')).type, 'application/zip');
+  const gateway = client(async () => new Response('<html/>', { headers: { 'Content-Type': 'text/html' } }));
+  await assert.rejects(gateway.api.labelingZip('/exports/fixed/download'), /未返回 ZIP/);
+});

@@ -1,5 +1,11 @@
 export default [
   {
+    path: '/labeling/projects/:projectId/workbench',
+    component: './labeling/ProjectWorkflow',
+    layout: false,
+    hideInMenu: true,
+  },
+  {
     path: '/labeling/admin/users',
     component: './labeling/admin',
     layout: false,

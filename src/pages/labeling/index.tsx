@@ -678,8 +678,9 @@ export default function Labeling() {
               />
               <Card title="2. 导入图片">
                 <Paragraph>
-                  上传包含 JPEG / PNG 图片的 ZIP
-                  压缩包。上传后由服务器解析，部分图片失败时可查看明细。
+                  仅导入未标注的 JPEG / PNG
+                  图片；压缩包内已有标签不会采用。非支持文件由批次错误明细报告未导入。上传
+                  ZIP 压缩包。上传后由服务器解析，部分图片失败时可查看明细。
                 </Paragraph>
                 <input
                   ref={fileInput}
@@ -948,6 +949,11 @@ export default function Labeling() {
                 }}
               />
             )}
+            <Link
+              to={`/labeling/projects/${encodeURIComponent(project.projectId)}/workbench`}
+            >
+              进入需求方结果工作台
+            </Link>
             <CapabilitiesNotice />
             <ProjectSubmissions
               key={project.projectId}

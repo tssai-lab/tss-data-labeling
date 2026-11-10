@@ -6,14 +6,13 @@ import {
   Card,
   Image,
   Progress,
-  Radio,
   Space,
   Spin,
   Table,
   Tag,
   Typography,
 } from 'antd';
-import { useEffect, useRef, useState } from 'react';
+import { type ReactNode, useEffect, useRef, useState } from 'react';
 import {
   assignmentSampleBlob,
   LabelingError,
@@ -32,7 +31,11 @@ import type {
   WorkSample,
 } from '@/services/labelingTasks';
 import { allWorkItems, tasks } from '@/services/labelingTasks';
-import AssignmentEditor, { type EditorHandle } from './AssignmentEditor';
+import ClassificationEditorAdapter, {
+  type ClassificationEditorHandle,
+  type EditorState,
+  type SaveInput,
+} from './ClassificationEditorAdapter';
 import styles from './index.less';
 import Navigation from './Navigation';
 
@@ -48,9 +51,11 @@ function describe(error: unknown): string {
 function WorkImage({
   assignmentId,
   sample,
+  render,
 }: {
   assignmentId: string;
   sample: WorkSample;
+  render?: (url: string) => ReactNode;
 }) {
   const [url, setUrl] = useState('');
   const [error, setError] = useState('');
@@ -84,6 +89,7 @@ function WorkImage({
         action={<Button onClick={() => setRetry(retry + 1)}>重试</Button>}
       />
     );
+  if (url && render) return <>{render(url)}</>;
   return (
     <div className={styles.preview}>
       {url ? (
@@ -104,20 +110,20 @@ function WorkImage({
 export default function ClassificationAssignment() {
   const { assignmentId = '' } = useParams<{ assignmentId: string }>();
   const { message, modal } = App.useApp();
-  const editorRef = useRef<EditorHandle>(null);
-  const [mode, setMode] = useState<'editor' | 'native'>('editor');
-  const [editorBlocked, setEditorBlocked] = useState(true);
+  const editorRef = useRef<ClassificationEditorHandle>(null);
+  const [editorState, setEditorState] = useState<EditorState>();
   const [work, setWork] = useState<WorkPage>();
   const [identity, setIdentity] = useState<LabelingIdentity>();
   const [selectedId, setSelectedId] = useState('');
   const [draft, setDraft] = useState<Draft>();
-  const [labelId, setLabelId] = useState('');
   const [error, setError] = useState('');
   const [draftError, setDraftError] = useState('');
   const [loading, setLoading] = useState(false);
   const [draftLoading, setDraftLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [preparing, setPreparing] = useState(false);
+  const preparingLock = useRef(false);
   const [needsReadback, setNeedsReadback] = useState(false);
   const [needsRefresh, setNeedsRefresh] = useState(false);
   const [pending, setPending] = useState<PendingSubmission>();
@@ -131,7 +137,7 @@ export default function ClassificationAssignment() {
   const selected = work?.items.find((item) => item.sampleId === selectedId);
   const readOnly =
     work?.readOnly || work?.status === 'SUBMITTED' || Boolean(receiptId);
-  const dirty = Boolean(draft && labelId !== (draft.result.labelId || ''));
+  const dirty = Boolean(editorState?.dirty);
   const pendingKey = identity
     ? `labeling:pending-submission:${identity.actorId}:${assignmentId}`
     : '';
@@ -150,17 +156,18 @@ export default function ClassificationAssignment() {
   }
 
   async function canLeave() {
-    if (saving || submitting) {
+    if (saving || submitting || preparingLock.current) {
       message.info('请求进行中，请等待结果');
       return false;
     }
-    if (
-      mode === 'editor' &&
-      editorRef.current &&
-      !(await editorRef.current.leave())
-    )
+    const state = editorRef.current?.getState();
+    if (state?.saving) {
+      message.info('保存中，请等待平台回读');
       return false;
-    return !dirty || window.confirm('当前分类尚未保存，确定离开吗？');
+    }
+    return (
+      !state?.dirty || window.confirm('当前分类尚未保存，确定放弃并离开吗？')
+    );
   }
 
   const leaveRef = useRef(canLeave);
@@ -185,7 +192,6 @@ export default function ClassificationAssignment() {
     setIdentity(undefined);
     setSelectedId('');
     setDraft(undefined);
-    setLabelId('');
     setPending(undefined);
     setReceiptId('');
     setError('');
@@ -235,7 +241,6 @@ export default function ClassificationAssignment() {
 
   useEffect(() => {
     setDraft(undefined);
-    setLabelId('');
     setDraftError('');
     setNeedsReadback(false);
     if (!selectedId || !work) return;
@@ -247,7 +252,6 @@ export default function ClassificationAssignment() {
         if (abort.signal.aborted) return;
         const next = confirmedDraft(value, assignmentId, selectedId);
         setDraft(next);
-        setLabelId(next.result.labelId || '');
         setWork((previous) =>
           previous
             ? {
@@ -277,18 +281,17 @@ export default function ClassificationAssignment() {
   }, [assignmentId, selectedId, draftRetry, Boolean(work)]);
 
   useEffect(() => {
-    if (!dirty && !saving && !submitting) return;
+    if (!dirty && !saving && !submitting && !preparing) return;
     const warn = (event: BeforeUnloadEvent) => {
       event.preventDefault();
       event.returnValue = '';
     };
     window.addEventListener('beforeunload', warn);
     return () => window.removeEventListener('beforeunload', warn);
-  }, [dirty, saving, submitting]);
+  }, [dirty, saving, submitting, preparing]);
 
-  async function save() {
+  async function save(input: SaveInput): Promise<Draft> {
     if (
-      mode !== 'native' ||
       !draft ||
       !work ||
       !selected ||
@@ -299,38 +302,45 @@ export default function ClassificationAssignment() {
       recoveryError ||
       needsRefresh
     )
-      return;
+      throw new Error('当前任务不能保存，请重新读取状态');
     const current = requestVersion.current;
+    const sampleId = selected.sampleId;
     savingLock.current = true;
     setSaving(true);
     setDraftError('');
     try {
-      const value = confirmedDraft(
+      const response = confirmedDraft(
         await tasks.save(
           assignmentId,
-          selected.sampleId,
-          draft.revision,
-          labelId,
+          sampleId,
+          input.baseRevision,
+          input.result.labelId || '',
         ),
         assignmentId,
-        selected.sampleId,
+        sampleId,
       );
-      if (current !== requestVersion.current) return;
+      const value = confirmedDraft(
+        await tasks.draft(assignmentId, sampleId),
+        assignmentId,
+        sampleId,
+      );
+      if (current !== requestVersion.current)
+        throw new Error('视图已变化，忽略旧保存响应');
       if (
-        value.revision <= draft.revision ||
-        value.result.labelId !== (labelId || undefined) ||
-        value.explicitDone !== Boolean(labelId)
+        value.revision !== response.revision ||
+        value.revision <= input.baseRevision ||
+        value.result.labelId !== input.result.labelId ||
+        value.explicitDone !== input.explicitDone
       )
-        throw new Error('保存回执与本次选择不一致，请重新读取草稿');
+        throw new Error('保存与持久化回读不一致，请重新读取核对');
       setDraft(value);
-      setLabelId(value.result.labelId || '');
       setWork((previous) =>
         previous
           ? {
               ...previous,
               status: 'IN_PROGRESS',
               items: previous.items.map((item) =>
-                item.sampleId === value.sampleId
+                item.sampleId === sampleId
                   ? {
                       ...item,
                       draftRevision: value.revision,
@@ -345,16 +355,16 @@ export default function ClassificationAssignment() {
       );
       message.success(
         value.explicitDone
-          ? '草稿已保存，尚未提交整包'
-          : '选择已清空，该图片恢复为未完成',
+          ? '当前图片草稿已保存并读回，尚未交回该包'
+          : '已保存未完成草稿',
       );
+      return value;
     } catch (e) {
       if (current === requestVersion.current) {
         setNeedsReadback(true);
-        setDraftError(
-          `${describe(e)}。本次保存结果需先重新读取确认，不能直接覆盖重试。`,
-        );
+        setDraftError(`${describe(e)}。请重新读取平台草稿；不自动重放或覆盖。`);
       }
+      throw e;
     } finally {
       if (current === requestVersion.current) {
         savingLock.current = false;
@@ -402,7 +412,7 @@ export default function ClassificationAssignment() {
       } catch {
         /* The successful response is already shown and editing is locked. */
       }
-      message.success('整包已提交，结果已冻结为只读');
+      message.success('本包人工结果已交回，冻结只读；等待需求方审核');
     } catch (e) {
       if (current !== requestVersion.current) return;
       if (
@@ -432,46 +442,63 @@ export default function ClassificationAssignment() {
 
   async function submit() {
     if (
-      mode === 'editor' &&
-      !pending &&
-      !readOnly &&
-      editorRef.current &&
-      !(await editorRef.current.canSubmit())
-    )
-      return;
-    if (
+      preparingLock.current ||
+      submittingLock.current ||
+      editorRef.current?.getState().dirty ||
+      editorRef.current?.getState().saving ||
       !work ||
       !identity ||
       dirty ||
-      (mode === 'editor' && !pending && !readOnly && editorBlocked) ||
       needsReadback ||
       needsRefresh ||
       recoveryError
     )
       return;
+    preparingLock.current = true;
+    setPreparing(true);
+    const version = requestVersion.current;
+    const unlock = () => {
+      preparingLock.current = false;
+      setPreparing(false);
+    };
     try {
+      const fresh = pending ? work : await allWorkItems(assignmentId);
+      if (version !== requestVersion.current) {
+        unlock();
+        return;
+      }
       const attempt = pending || {
         actorId: identity.actorId,
         assignmentId,
         key: operationKey(),
-        items: submissionManifest(work.items, work.specification.labels),
+        items: submissionManifest(fresh.items, fresh.specification.labels),
       };
       modal.confirm({
-        title: pending ? '确认上一次整包提交结果' : '提交整个任务包？',
+        title: pending ? '确认上一次整包提交结果' : '提交当前领取包？',
         content: pending
-          ? '将使用相同版本清单和同一请求编号确认，不会创建第二份提交。'
-          : `将提交全部 ${attempt.items.length} 张图片的已保存分类，提交后不能修改或撤回。`,
+          ? '重放原幂等键和版本清单，不创建第二份提交。'
+          : `已从服务器读取本包全部 ${attempt.items.length} 张图片的保存版本。仅交回本包，其他包不等待；交回不代表需求方审核通过。`,
         okText: pending ? '确认本次提交' : '确认提交',
         cancelText: '取消',
-        onOk: () => sendSubmission(attempt),
+        onCancel: unlock,
+        onOk: async () => {
+          try {
+            if (version !== requestVersion.current)
+              throw new Error('视图已变化，请重新读取');
+            await sendSubmission(attempt);
+          } finally {
+            unlock();
+          }
+        },
       });
     } catch (e) {
       setError(describe(e));
+      unlock();
     }
   }
 
   const editingDisabled =
-    mode === 'editor' ||
+    preparing ||
     readOnly ||
     saving ||
     submitting ||
@@ -495,7 +522,7 @@ export default function ClassificationAssignment() {
             style={{ marginBottom: 16 }}
           />
         )}
-        {mode === 'editor' && draftError && (
+        {draftError && (
           <Alert
             type="error"
             showIcon
@@ -510,7 +537,7 @@ export default function ClassificationAssignment() {
             }
           />
         )}
-        {mode === 'editor' && draftLoading && (
+        {draftLoading && (
           <Spin tip="正在读取当前图片的平台草稿">
             <div style={{ height: 60 }} />
           </Spin>
@@ -528,7 +555,7 @@ export default function ClassificationAssignment() {
             <Card style={{ marginBottom: 20 }}>
               <Space wrap>
                 <Tag color={readOnly ? 'green' : 'blue'}>
-                  {readOnly ? '已提交 · 只读' : '标注中'}
+                  {readOnly ? '已交回 · 待需求方审核 · 只读' : '标注中'}
                 </Tag>
                 <Text>
                   草稿已完成 {completed} / {work.items.length} 张
@@ -570,13 +597,10 @@ export default function ClassificationAssignment() {
               {(!readOnly || pending) && (
                 <Button
                   type="primary"
-                  loading={submitting}
+                  loading={submitting || preparing}
                   disabled={
                     saving ||
-                    (mode === 'editor' &&
-                      !pending &&
-                      !readOnly &&
-                      editorBlocked) ||
+                    preparing ||
                     loading ||
                     dirty ||
                     needsReadback ||
@@ -688,163 +712,61 @@ export default function ClassificationAssignment() {
                         ) + 1}{' '}
                         / {work.items.length} 张
                       </Text>
+                      <Button
+                        disabled={saving || submitting || draftLoading}
+                        onClick={() => {
+                          if (
+                            !editorRef.current?.getState().dirty ||
+                            window.confirm(
+                              '重新读取将替换未保存选择，是否继续？',
+                            )
+                          )
+                            setDraftRetry((n) => n + 1);
+                        }}
+                      >
+                        重新读取草稿
+                      </Button>
                     </Space>
-                    {!readOnly && (
-                      <Space wrap style={{ marginBottom: 16 }}>
-                        <Tag>
-                          {mode === 'editor'
-                            ? 'Label Studio 编辑器'
-                            : '原生分类表单'}
-                        </Tag>
-                        <Button
-                          disabled={
-                            saving ||
-                            submitting ||
-                            draftLoading ||
-                            needsReadback ||
-                            needsRefresh ||
-                            Boolean(pending) ||
-                            recoveryError ||
-                            (mode === 'editor' && editorBlocked)
-                          }
-                          onClick={async () => {
-                            if (await canLeave()) {
-                              setMode(mode === 'editor' ? 'native' : 'editor');
-                              setDraftRetry((n) => n + 1);
-                            }
-                          }}
-                        >
-                          切换为
-                          {mode === 'editor' ? '原生分类' : 'Label Studio'}
-                        </Button>
-                      </Space>
-                    )}
-                    {mode === 'editor' &&
-                      !readOnly &&
-                      !pending &&
-                      !needsRefresh &&
-                      !recoveryError &&
-                      identity?.canAnnotate &&
-                      ['CLAIMED', 'IN_PROGRESS'].includes(work.status) &&
-                      !draftLoading &&
-                      draft?.sampleId === selected.sampleId && (
-                        <AssignmentEditor
-                          key={`${assignmentId}:${selected.sampleId}`}
-                          ref={editorRef}
-                          context={{
-                            assignmentId,
-                            sampleId: selected.sampleId,
-                            actorId: identity.actorId,
-                            specVersionId: work.specification.specVersionId,
-                          }}
-                          onBlocked={setEditorBlocked}
-                          onDraft={(value) => {
-                            setDraft(value);
-                            setLabelId(value.result.labelId || '');
-                            setNeedsReadback(false);
-                            setWork((previous) =>
-                              previous
-                                ? {
-                                    ...previous,
-                                    items: previous.items.map((item) =>
-                                      item.sampleId === value.sampleId
-                                        ? {
-                                            ...item,
-                                            draftRevision: value.revision,
-                                            explicitDone: value.explicitDone,
-                                            resultFormat: value.resultFormat,
-                                            result: value.result,
-                                          }
-                                        : item,
-                                    ),
-                                  }
-                                : previous,
-                            );
-                          }}
-                        />
-                      )}
-                    {(mode === 'native' || readOnly) && (
+                    {draft?.sampleId === selected.sampleId && !draftLoading && (
                       <WorkImage
                         key={`${assignmentId}:${selected.sampleId}`}
                         assignmentId={assignmentId}
                         sample={selected}
+                        render={(url) => (
+                          <ClassificationEditorAdapter
+                            key={`${assignmentId}:${selected.sampleId}:${work.specification.specVersionId}`}
+                            ref={editorRef}
+                            assignmentId={assignmentId}
+                            sampleId={selected.sampleId}
+                            specVersionId={work.specification.specVersionId}
+                            imageUrl={url}
+                            labels={work.specification.labels}
+                            instructions={work.specification.instructions}
+                            draft={draft}
+                            reference={
+                              selected.referenceResult &&
+                              selected.referenceResultId &&
+                              selected.sourceKind
+                                ? {
+                                    resultId: selected.referenceResultId,
+                                    result: selected.referenceResult,
+                                    sourceKind: selected.sourceKind,
+                                    modelVersion: selected.modelVersion,
+                                    confidence: selected.confidence,
+                                  }
+                                : null
+                            }
+                            readOnly={Boolean(readOnly)}
+                            disabled={editingDisabled}
+                            onStateChange={setEditorState}
+                            onSave={save}
+                            onError={(value) => {
+                              setNeedsReadback(true);
+                              setDraftError(value.message);
+                            }}
+                          />
+                        )}
                       />
-                    )}
-                    {mode === 'editor' && !readOnly && (
-                      <Paragraph style={{ marginTop: 16 }}>
-                        平台已保存分类：
-                        {work.specification.labels.find(
-                          (l) => l.id === draft?.result.labelId,
-                        )?.name || '未完成'}{' '}
-                        · revision {draft?.revision ?? '待读取'}。编辑器中的
-                        Submit / Update 只保存当前图片。
-                      </Paragraph>
-                    )}
-                    {(mode === 'native' || readOnly) && (
-                      <div className={styles.classification}>
-                        {draftError && (
-                          <Alert type="error" showIcon message={draftError} />
-                        )}
-                        <Space>
-                          <Text strong>分类</Text>
-                          {draftLoading && <Spin size="small" />}
-                          {dirty && <Tag color="orange">当前选择尚未保存</Tag>}
-                        </Space>
-                        <Radio.Group
-                          value={labelId}
-                          disabled={editingDisabled}
-                          onChange={(event) => setLabelId(event.target.value)}
-                          optionType="button"
-                          options={work.specification.labels.map((label) => ({
-                            value: label.id,
-                            label: label.name,
-                          }))}
-                        />
-                        {draft?.savedAt && (
-                          <Text type="secondary">
-                            草稿保存时间：
-                            {new Date(draft.savedAt).toLocaleString('zh-CN')}
-                            ；整包提交状态以上方为准。
-                          </Text>
-                        )}
-                        {!readOnly && (
-                          <Space wrap>
-                            <Button
-                              type="primary"
-                              loading={saving}
-                              disabled={editingDisabled || !dirty}
-                              onClick={() => void save()}
-                            >
-                              保存分类草稿
-                            </Button>
-                            <Button
-                              disabled={editingDisabled || !labelId}
-                              onClick={() => setLabelId('')}
-                            >
-                              清空选择
-                            </Button>
-                            <Button
-                              disabled={
-                                saving ||
-                                submitting ||
-                                draftLoading ||
-                                mode === 'editor'
-                              }
-                              onClick={() => {
-                                if (
-                                  !dirty ||
-                                  window.confirm(
-                                    '重新读取会替换当前未保存选择，是否继续？',
-                                  )
-                                )
-                                  setDraftRetry(draftRetry + 1);
-                              }}
-                            >
-                              重新读取草稿
-                            </Button>
-                          </Space>
-                        )}
-                      </div>
                     )}
                   </>
                 )}

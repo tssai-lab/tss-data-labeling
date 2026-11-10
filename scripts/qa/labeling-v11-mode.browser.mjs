@@ -44,7 +44,7 @@ try {
     .getByText('开发演示默认关闭，生产构建不可开启', { exact: false })
     .waitFor();
   assert.equal(
-    await page.getByRole('button', { name: '创建演示导出' }).count(),
+    await page.getByRole('button', { name: '创建成果导出' }).count(),
     0,
   );
   await page.goto(`${base}/#/labeling`);
@@ -67,7 +67,7 @@ try {
   };
   await writeFile(
     new URL(
-      `../../docs/labeling-v11-evidence/${result.mode}-report.json`,
+      `../../docs/labeling-v11-update-evidence/${result.mode}-report.json`,
       import.meta.url,
     ),
     JSON.stringify(result, null, 2),

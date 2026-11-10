@@ -2,6 +2,7 @@
 // npm install --prefix .qa --no-save --package-lock=false playwright
 // node scripts/qa/labeling-v11.browser.mjs   (dev:labeling-demo must be running)
 import assert from 'node:assert/strict';
+import { deflateSync } from 'node:zlib';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
@@ -9,7 +10,7 @@ const require = createRequire(import.meta.url);
 const { chromium } = require('../../.qa/node_modules/playwright');
 const base = process.env.LABELING_UI_BASE || 'http://127.0.0.1:8001';
 const output = fileURLToPath(
-  new URL('../../docs/labeling-v11-evidence/', import.meta.url),
+  new URL('../../docs/labeling-v11-update-evidence/', import.meta.url),
 );
 await mkdir(output, { recursive: true });
 const browser = await chromium.launch({ channel: 'chrome', headless: true });
@@ -38,7 +39,7 @@ let isAdmin = true,
   denied = false,
   submitted = false,
   revisionConflict = false,
-  sessionNo = 0;
+  saveDelay = 0;
 const labels = [
   { id: 'normal', name: '正常' },
   { id: 'none', name: '无目标' },
@@ -53,15 +54,15 @@ const samples = Array.from({ length: 12 }, (_, i) => ({
   metadata: { width: 3000, height: 500, sizeBytes: 1000 },
 }));
 const drafts = Object.fromEntries(
-  samples.map((s) => [
+  samples.map((s, i) => [
     s.sampleId,
     {
       assignmentId: aid,
       sampleId: s.sampleId,
-      revision: 1,
-      explicitDone: true,
+      revision: i < 6 ? 1 : 0,
+      explicitDone: i < 6,
       resultFormat: 'image-classification-v1',
-      result: { labelId: 'none' },
+      result: i < 6 ? { labelId: 'none' } : {},
       savedAt: '2026-11-09T01:00:00Z',
     },
   ]),
@@ -89,10 +90,10 @@ const plan = {
   selectionHash: 'synthetic',
   sampleCount: 12,
   packageSampleCounts: [10, 2],
-  totalWorkload: 24,
+  totalWorkload: 12,
   packages: [
-    { packageId, sequenceNo: 1, sampleCount: 10, requiredCount: 2 },
-    { packageId: id(8), sequenceNo: 2, sampleCount: 2, requiredCount: 2 },
+    { packageId, sequenceNo: 1, sampleCount: 10, requiredCount: 1 },
+    { packageId: id(8), sequenceNo: 2, sampleCount: 2, requiredCount: 1 },
   ],
 };
 const summaries = [0, 1].map((i) => ({
@@ -114,6 +115,38 @@ await context.addInitScript(
   },
   { pid, bid, planId },
 );
+function pngChunk(type, data) {
+  const name = Buffer.from(type),
+    size = Buffer.alloc(4),
+    checksum = Buffer.alloc(4);
+  size.writeUInt32BE(data.length);
+  let crc = 0xffffffff;
+  for (const byte of Buffer.concat([name, data])) {
+    crc ^= byte;
+    for (let i = 0; i < 8; i++) crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0);
+  }
+  checksum.writeUInt32BE((crc ^ 0xffffffff) >>> 0);
+  return Buffer.concat([size, name, data, checksum]);
+}
+const imageHeader = Buffer.alloc(13);
+imageHeader.writeUInt32BE(3000, 0);
+imageHeader.writeUInt32BE(200, 4);
+imageHeader[8] = 8;
+imageHeader[9] = 2;
+const imageRaw = Buffer.alloc((3000 * 3 + 1) * 200);
+for (let y = 0; y < 200; y++)
+  for (let x = 0; x < 3000; x++) {
+    const i = y * 9001 + 1 + x * 3;
+    imageRaw[i] = x < 1500 ? 68 : 38;
+    imageRaw[i + 1] = x < 1500 ? 130 : 174;
+    imageRaw[i + 2] = 210;
+  }
+const wideImage = Buffer.concat([
+  Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+  pngChunk('IHDR', imageHeader),
+  pngChunk('IDAT', deflateSync(imageRaw)),
+  pngChunk('IEND', Buffer.alloc(0)),
+]);
 await page.route('**/api/**', async (route) => {
   const request = route.request(),
     url = new URL(request.url()),
@@ -218,7 +251,7 @@ await page.route('**/api/**', async (route) => {
       ...summaries[0],
       specVersionId: specId,
       contentHash: 'synthetic',
-      items: samples.map((s) => ({
+      items: samples.slice(0, 10).map((s) => ({
         sampleId: s.sampleId,
         revision: 1,
         resultFormat: 'image-classification-v1',
@@ -234,7 +267,7 @@ await page.route('**/api/**', async (route) => {
               ...plan.packages[0],
               projectId: pid,
               projectName: project.name,
-              remainingSlots: 2,
+              remainingSlots: 1,
               taskType: project.taskType,
             },
           ],
@@ -250,6 +283,13 @@ await page.route('**/api/**', async (route) => {
           status: submitted ? 'SUBMITTED' : 'IN_PROGRESS',
           revision: 2,
         },
+        {
+          assignmentId: id(99),
+          packageId: id(8),
+          slotNo: 1,
+          status: 'IN_PROGRESS',
+          revision: 1,
+        },
       ],
       nextCursor: null,
     });
@@ -262,19 +302,35 @@ await page.route('**/api/**', async (route) => {
       specification: project.specVersions.find(
         (s) => s.specVersionId === specId,
       ),
-      items: samples.map((s) => ({
+      items: (url.searchParams.has('cursor')
+        ? samples.slice(5, 10)
+        : samples.slice(0, 5)
+      ).map((s, i) => ({
         ...s,
-        draftRevision: drafts[s.sampleId].revision,
-        explicitDone: true,
+        draftRevision: drafts[s.sampleId].revision || null,
+        explicitDone: drafts[s.sampleId].revision
+          ? drafts[s.sampleId].explicitDone
+          : null,
         resultFormat: 'image-classification-v1',
         result: drafts[s.sampleId].result,
+        ...(s.sampleId === samples[6].sampleId
+          ? {
+              referenceResultId: 'fixture-fixed-ai-result',
+              referenceResult: { labelId: 'normal' },
+              sourceKind: 'AI',
+              modelVersion: 'fixture-model-v1',
+              confidence: 0.72,
+            }
+          : {}),
       })),
-      nextCursor: null,
+      nextCursor: url.searchParams.has('cursor') ? null : 'second-half',
     });
   if (path.includes('/drafts/')) {
     const sampleId = path.split('/').at(-1);
     if (request.method() === 'PUT') {
       const body = request.postDataJSON();
+      if (saveDelay)
+        await new Promise((resolve) => setTimeout(resolve, saveDelay));
       if (revisionConflict || body.baseRevision !== drafts[sampleId].revision)
         return error(409, 'REVISION_CONFLICT');
       drafts[sampleId] = {
@@ -285,48 +341,23 @@ await page.route('**/api/**', async (route) => {
     }
     return json(drafts[sampleId]);
   }
-  if (path.endsWith('/editor-sessions')) {
-    const sampleId = request.postDataJSON().sampleId;
-    const editorSessionId = `fixture-session-${++sessionNo}`;
-    return json({
-      editorSessionId,
-      assignmentId: aid,
-      projectId: pid,
-      sampleId,
-      actorId: actor,
-      specVersionId: specId,
-      mode: 'ASSIGNMENT_IMAGE_CLASSIFICATION',
-      editorUrl: `/api/labeling/v1/editor-ui/${editorSessionId}/launch?ticket=synthetic-one-time`,
-      launchExpiresAt: new Date(Date.now() + 60000).toISOString(),
-      expiresAt: new Date(Date.now() + 1800000).toISOString(),
-      draft: drafts[sampleId],
-    });
+  if (/editor-sessions|editor-sync|editor-ui|editor-assets/.test(path)) {
+    report.unexpectedRequests.push(`LEGACY ${path}`);
+    return error(410, 'LEGACY_EDITOR_DISABLED');
   }
-  if (path.includes('/editor-ui/')) {
-    const sid = path.split('/')[2];
-    const ctx = {
-      editorSessionId: sid,
-      assignmentId: aid,
-      projectId: pid,
-      sampleId: samples[0].sampleId,
-      actorId: actor,
-      specVersionId: specId,
-    };
-    return route.fulfill({
-      contentType: 'text/html',
-      body: `<!doctype html><html lang="zh"><meta charset="utf-8"><style>body{font:16px sans-serif;margin:16px;overflow-wrap:anywhere}img{max-width:100%;height:auto}button{margin:8px;padding:10px}:focus{outline:3px solid blue}</style><h2>合成受控编辑器夹具（非 Label Studio）</h2><p>测试同源消息握手、脏状态、原生保存通知和平台草稿回读。</p><img alt="宽图夹具" width="3000" height="500" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='3000' height='500'%3E%3Crect width='3000' height='500' fill='%23dce8f8'/%3E%3C/svg%3E"><button id="dirty">修改分类（未保存）</button><button id="save">Submit / Update 草稿</button><script>const ctx=${JSON.stringify(ctx)};let dirty=false,saving=false,revision=1;const send=(type,extra={})=>parent.postMessage({...ctx,type,...extra},location.origin);window.addEventListener('message',e=>{if(e.source!==parent||e.origin!==location.origin||e.data.editorSessionId!==ctx.editorSessionId)return;const requestId=e.data.requestId;if(e.data.type==='labeling:request-state')send('labeling:state',{requestId,ready:true,saving,dirty,revision});if(e.data.type==='labeling:discard'){dirty=false;send('labeling:discarded',{requestId});}});document.querySelector('#dirty').onclick=()=>dirty=true;document.querySelector('#save').onclick=async()=>{saving=true;const r=await fetch('/api/labeling/v1/assignments/'+ctx.assignmentId+'/drafts/'+ctx.sampleId,{method:'PUT',body:JSON.stringify({baseRevision:revision,explicitDone:true,resultFormat:'image-classification-v1',result:{labelId:'normal'}})});const b=await r.json();saving=false;if(!r.ok){send('labeling:save-failed',{code:b.error.code,message:b.error.message,status:r.status});return;}revision=b.data.revision;dirty=false;send('labeling:saved',{revision,dirty});};send('labeling:ready',{revision});</script></html>`,
-    });
-  }
-  if (path.endsWith('/editor-sync'))
-    return json(drafts[request.postDataJSON().sampleId]);
   if (path.endsWith('/submissions') && request.method() === 'POST') {
+    assert.equal(request.postDataJSON().items.length, 10);
+    assert.deepEqual(
+      new Set(request.postDataJSON().items.map((i) => i.sampleId)),
+      new Set(samples.slice(0, 10).map((s) => s.sampleId)),
+    );
     submitted = true;
     return json(
       {
         submissionId: summaries[0].submissionId,
         assignmentId: aid,
         status: 'SUBMITTED',
-        sampleCount: 12,
+        sampleCount: 10,
       },
       201,
     );
@@ -334,17 +365,24 @@ await page.route('**/api/**', async (route) => {
   if (path.endsWith('/file'))
     return route.fulfill({
       contentType: 'image/png',
-      body: Buffer.from(
-        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jh8kAAAAASUVORK5CYII=',
-        'base64',
-      ),
+      body: wideImage,
     });
   report.unexpectedRequests.push(`${request.method()} ${path}`);
   return error(404, 'FIXTURE_NOT_IMPLEMENTED');
 });
 async function visit(path, text) {
   await page.goto(`${base}/#${path}`);
-  await page.getByText(text, { exact: false }).first().waitFor();
+  try {
+    await page.getByText(text, { exact: false }).first().waitFor();
+  } catch (e) {
+    console.log(
+      'FAILED_ROUTE',
+      page.url(),
+      (await page.locator('body').innerText()).slice(0, 2000),
+    );
+    await page.screenshot({ path: `${output}/last-failure.png` });
+    throw e;
+  }
   await page
     .locator('.ant-spin-spinning')
     .first()
@@ -370,6 +408,7 @@ async function capture(name, width) {
   );
   report.widths.push({ page: name, ...layout });
 }
+
 try {
   for (const width of [1280, 768, 390]) {
     await page.setViewportSize({ width, height: 900 });
@@ -383,15 +422,30 @@ try {
     await capture('task-pool', width);
     await visit(`/labeling/assignments/${aid}`, '图片分类标注');
     await page
-      .frameLocator('iframe')
-      .getByText('合成受控编辑器夹具', { exact: false })
-      .waitFor();
-    await capture('assignment', width);
+      .getByRole('radio', { name: '无目标', exact: true })
+      .waitFor({ state: 'attached' });
+    assert.equal(await page.locator('iframe').count(), 0);
+    await page
+      .getByRole('img', { name: '当前领取图片', exact: true })
+      .evaluate((img) => img.decode());
+    assert.equal(
+      await page
+        .getByRole('img', { name: '当前领取图片', exact: true })
+        .evaluate((img) => img.naturalWidth),
+      3000,
+    );
+    assert.equal(
+      await page
+        .getByRole('button', { name: '提交整个任务包', exact: true })
+        .isDisabled(),
+      true,
+    );
+    await capture('inline-assignment', width);
     await page.getByRole('link', { name: '我的任务', exact: true }).click();
     await page.getByRole('heading', { name: '我的标注任务' }).waitFor();
     await visit(
       `/labeling/submissions/${summaries[0].submissionId}`,
-      '这是整包提交时冻结的结果',
+      '本包人工结果已交回并冻结',
     );
     await capture('submission', width);
     await visit('/labeling/admin/users', '合成标注员');
@@ -401,51 +455,105 @@ try {
       .nth(1)
       .click();
     await page.getByRole('dialog').waitFor();
-    await page.waitForTimeout(400);
+    await page.waitForTimeout(350);
     await capture('admin-modal', width);
     await page
       .getByRole('dialog')
       .getByRole('button', { name: /取.*消/ })
       .click();
+    await visit(`/labeling/projects/${pid}/workbench`, '结果工作台');
+    await capture('real-workbench-pending', width);
+    await visit('/labeling/demo', '需求方工作台 · 合成流程演示');
+    await page.getByRole('button', { name: '查看种子 PARTIAL 批次' }).click();
+    await page.getByRole('spinbutton', { name: '低边界L' }).waitFor();
+    await capture('owner-workflow', width);
   }
   report.checks.push(
-    'Five core pages and admin modal at 1280 / 768 / 390; page overflow asserted; table scroll stays local; long filenames / instructions / wide editor fixture',
+    '1280 / 768 / 390 core pages and inline editor; no iframe; 6/10 incomplete package cannot submit; viewport overflow asserted',
   );
   await page.setViewportSize({ width: 1280, height: 900 });
   await visit(`/labeling/assignments/${aid}`, '图片分类标注');
-  const frame = page.frameLocator('iframe');
-  await frame.getByRole('button', { name: '修改分类（未保存）' }).click();
   await page
-    .getByRole('button', { name: '提交整个任务包', exact: true })
+    .locator('.ant-radio-button-wrapper')
+    .filter({ has: page.getByRole('radio', { name: '正常', exact: true }) })
+    .click();
+  page.once('dialog', (dialog) => dialog.dismiss());
+  await page.getByRole('link', { name: '我的任务', exact: true }).click();
+  await page.waitForTimeout(150);
+  assert.ok(page.url().includes(aid));
+  revisionConflict = true;
+  await page.getByRole('button', { name: '保存当前草稿', exact: true }).click();
+  await page.getByText('REVISION_CONFLICT', { exact: false }).first().waitFor();
+  assert.equal(
+    await page.getByRole('radio', { name: '正常', exact: true }).isChecked(),
+    true,
+  );
+  await capture('draft-conflict-preserves-selection', 1280);
+  revisionConflict = false;
+  await page
+    .getByRole('button', { name: '重新读取草稿', exact: true })
+    .first()
     .click();
   await page
-    .getByText('请先完成当前图片草稿保存与平台回读', { exact: false })
+    .getByRole('radio', { name: '无目标', exact: true })
+    .waitFor({ state: 'attached' });
+  assert.equal(
+    await page.getByRole('radio', { name: '无目标', exact: true }).isChecked(),
+    true,
+  );
+  await page
+    .getByRole('button', { name: samples[6].sourcePath, exact: true })
+    .click();
+  await page.getByText('AI参考结果 · 待人工确认', { exact: true }).waitFor();
+  assert.equal(drafts[samples[6].sampleId].explicitDone, false);
+  saveDelay = 400;
+  await page
+    .getByRole('button', { name: '确认参考并保存草稿', exact: true })
+    .click();
+  assert.equal(
+    await page
+      .getByRole('button', { name: '下一张', exact: true })
+      .isDisabled(),
+    true,
+  );
+  await page
+    .getByRole('button', { name: '保存当前草稿', exact: true })
     .waitFor();
-  assert.equal(await page.getByRole('dialog').count(), 0);
-  let rejectedLeave = false;
-  page.once('dialog', async (dialog) => {
-    rejectedLeave = true;
-    await dialog.dismiss();
-  });
-  await page.getByRole('link', { name: '我的任务', exact: true }).click();
-  await page.waitForTimeout(250);
-  assert.ok(rejectedLeave);
-  assert.ok(page.url().includes(aid));
-  await frame.getByRole('button', { name: 'Submit / Update 草稿' }).click();
-  await page.getByText('平台草稿 revision 2', { exact: false }).waitFor();
-  report.checks.push(
-    'Dirty editor blocks full submission; route guard cancels leaving; native editor save requires real client GET draft readback',
+  saveDelay = 0;
+  assert.equal(drafts[samples[6].sampleId].explicitDone, true);
+  await page.getByRole('button', { name: '清空选择', exact: true }).click();
+  await page.getByRole('button', { name: '保存当前草稿', exact: true }).click();
+  await page.getByText('已保存未完成草稿', { exact: false }).first().waitFor();
+  await page
+    .getByRole('button', { name: '重新读取草稿', exact: true })
+    .first()
+    .click();
+  await page
+    .getByRole('radio', { name: '正常', exact: true })
+    .waitFor({ state: 'attached' });
+  assert.equal(
+    await page.getByRole('radio', { name: '正常', exact: true }).isChecked(),
+    false,
   );
-  revisionConflict = true;
-  await frame.getByRole('button', { name: 'Submit / Update 草稿' }).click();
-  await page.getByText('REVISION_CONFLICT', { exact: false }).first().waitFor();
-  await capture('editor-conflict', 1280);
-  revisionConflict = false;
-  await page.getByRole('button', { name: '恢复核对（editor-sync）' }).click();
-  await page.getByText('编辑器已就绪', { exact: false }).waitFor();
-  report.checks.push(
-    '409 shown; editor-sync calls GET readback and opens a fresh session',
+  assert.equal(
+    await page.getByText('AI参考结果 · 待人工确认', { exact: true }).count(),
+    0,
   );
+  report.checks.push(
+    'Inline dirty navigation guard; 409 preserves choice; reference never auto-completes; save locks navigation; cleared saved draft never restores reference',
+  );
+  // Complete only this assignment as fixture data; the second claimed package stays unfinished.
+  for (const s of samples.slice(0, 10))
+    drafts[s.sampleId] = {
+      ...drafts[s.sampleId],
+      revision: Math.max(1, drafts[s.sampleId].revision),
+      explicitDone: true,
+      result: { labelId: 'none' },
+    };
+  await page.getByRole('button', { name: '重新加载整包', exact: true }).click();
+  await page
+    .getByRole('button', { name: '提交整个任务包', exact: true })
+    .waitFor();
   await page
     .getByRole('button', { name: '提交整个任务包', exact: true })
     .click();
@@ -453,12 +561,15 @@ try {
     .getByRole('dialog')
     .getByRole('button', { name: '确认提交', exact: true })
     .click();
-  await page.getByText('已提交 · 只读', { exact: true }).waitFor();
-  assert.equal(await page.locator('iframe').count(), 0);
-  report.checks.push(
-    'Full package submission freezes work as read-only and removes editor',
+  await page
+    .getByText('已交回 · 待需求方审核 · 只读', { exact: true })
+    .waitFor();
+  assert.equal(
+    await page
+      .getByRole('button', { name: '保存当前草稿', exact: true })
+      .count(),
+    0,
   );
-  // Simulate a refresh after a server-accepted submission whose receipt was lost.
   await page.evaluate(
     ({ actor, aid, items }) => {
       const key = `labeling:pending-submission:${actor}:${aid}`;
@@ -468,7 +579,7 @@ try {
         JSON.stringify({
           actorId: actor,
           assignmentId: aid,
-          key: 'synthetic-lost-receipt-key',
+          key: 'fixture-lost-receipt',
           items,
         }),
       );
@@ -476,7 +587,7 @@ try {
     {
       actor,
       aid,
-      items: samples.map((s) => ({
+      items: samples.slice(0, 10).map((s) => ({
         sampleId: s.sampleId,
         revision: drafts[s.sampleId].revision,
       })),
@@ -494,9 +605,8 @@ try {
     .getByRole('link', { name: '查看冻结提交结果', exact: true })
     .waitFor();
   report.checks.push(
-    'Lost receipt remains replayable with original revision manifest even when reloaded work is read-only',
+    'Exactly 10 frozen members across all item pages submitted; another incomplete assignment does not block; handback stays pending review; lost receipt replay succeeds',
   );
-
   await page.getByRole('link', { name: '我的任务', exact: true }).click();
   await page.getByRole('heading', { name: '我的标注任务' }).waitFor();
   isAdmin = false;
@@ -504,9 +614,6 @@ try {
   assert.equal(
     await page.getByRole('button', { name: '修改权限', exact: true }).count(),
     0,
-  );
-  report.checks.push(
-    'Ordinary user directly visiting admin route is denied; self mutation button disabled',
   );
   isAdmin = true;
   denied = true;
@@ -517,65 +624,195 @@ try {
     await page.evaluate(() => JSON.parse(sessionStorage.getItem('token'))),
     'synthetic-ui-fixture',
   );
-  report.checks.push('403 preserves login token, displays code and requestId');
   denied = false;
   empty = true;
   await visit('/labeling/tasks', '暂无可领取任务');
   await capture('empty-pool', 390);
   empty = false;
   await page.setViewportSize({ width: 1280, height: 900 });
-  await visit(`/labeling/projects/${pid}`, '分类规范与历史版本');
-  await page.getByRole('button', { name: '从此规范创建新版本' }).click();
-  await page
-    .getByRole('textbox', { name: '分类 1 名称', exact: true })
-    .fill('正常（更名）');
-  await page
-    .getByRole('button', { name: /上.*移/ })
-    .nth(1)
-    .click();
-  await page.getByRole('button', { name: '保存新版本', exact: true }).click();
-  await page.getByRole('button', { name: '从此规范创建新版本' }).waitFor();
-  assert.deepEqual(project.specVersions[0].labels, [
-    { id: 'none', name: '无目标' },
-    { id: 'normal', name: '正常（更名）' },
-  ]);
-  report.checks.push(
-    'Clone / rename / reorder specification keeps label IDs and verifies real-client project readback',
-  );
-  await visit('/labeling/admin/users', '合成标注员');
+  await visit('/labeling/demo', '需求方工作台 · 合成流程演示');
+  await page.getByRole('button', { name: '查看种子 PARTIAL 批次' }).click();
   assert.equal(
     await page
-      .getByRole('button', { name: '修改权限', exact: true })
-      .first()
+      .getByRole('button', { name: '保存阈值策略（不审核）' })
       .isDisabled(),
     true,
   );
+  await page.getByRole('spinbutton', { name: '低边界L' }).fill('0.6');
+  await page.getByRole('spinbutton', { name: '高边界H' }).fill('0.9');
+  await page.getByRole('button', { name: '保存阈值策略（不审核）' }).click();
   await page
-    .getByRole('button', { name: '修改权限', exact: true })
-    .nth(1)
+    .getByText('阈值策略已保存，没有产生任何审核决定', { exact: true })
+    .waitFor();
+  await page.getByRole('button', { name: /MEDIUM · 已载成功项 2/ }).waitFor();
+  await page.getByRole('spinbutton', { name: '高边界H' }).fill('0.61');
+  assert.equal(
+    await page.getByRole('button', { name: /MEDIUM · 已载成功项 2/ }).count(),
+    1,
+  );
+  await page.getByRole('button', { name: /MEDIUM · 已载成功项 2/ }).click();
+  await page
+    .getByRole('textbox', { name: '全部筛选结果排除样本' })
+    .fill('demo-sample-4');
+  await page.getByRole('button', { name: '固定全部筛选结果并预览' }).click();
+  await page.getByRole('dialog', { name: '固定选择预览 · 1 项' }).waitFor();
+  await page.getByRole('button', { name: '完成范围预览' }).click();
+  await page.getByRole('button', { name: '明确确认所选结果' }).click();
+  await page
+    .getByRole('dialog')
+    .getByRole('button', { name: '确认操作' })
     .click();
   await page
-    .getByRole('textbox', { name: /操作原因/ })
-    .fill('合成浏览器验收原因');
-  await page.getByRole('button', { name: '确认修改', exact: true }).click();
-  await page.getByRole('dialog').waitFor({ state: 'hidden' });
-  report.checks.push(
-    'Admin reason form confirms PATCH data:null successfully; self-disable/revoke entry disabled',
-  );
-  await visit('/labeling/demo', '本地合成演示');
-  await page.getByRole('button', { name: '创建演示导出' }).click();
-  await page.getByText('QUEUED', { exact: true }).waitFor();
-  await page.getByRole('button', { name: '查询状态', exact: true }).click();
-  await page.getByText('RUNNING', { exact: true }).waitFor();
-  await page.getByRole('button', { name: '查询状态', exact: true }).click();
-  await page.getByText('SUCCEEDED', { exact: true }).waitFor();
+    .getByText('已明确审核 1 项；尚未形成最终成果。', { exact: true })
+    .waitFor();
+  const resultTable = page.locator('.ant-table-wrapper').first();
+  await resultTable
+    .locator('tr[data-row-key="demo-sample-3"]')
+    .getByRole('checkbox')
+    .check();
+  await page
+    .getByRole('combobox', { name: '固定选择用途' })
+    .locator('xpath=../..')
+    .click();
+  await page
+    .locator('.ant-select-item-option-content')
+    .getByText('FINALIZE', { exact: true })
+    .click();
+  await page.getByRole('button', { name: '固定勾选样本并预览' }).click();
+  await page.getByRole('button', { name: '完成范围预览' }).click();
+  await page.getByRole('button', { name: '确认形成范围成果' }).click();
+  await page
+    .getByRole('dialog')
+    .getByRole('button', { name: /确.*定|确.*认|OK/ })
+    .last()
+    .click();
+  await page
+    .getByText('已固定范围成果，项目其他未完成项仍保留', { exact: true })
+    .waitFor();
+  const finalTable = page.locator('.ant-table-wrapper').filter({
+    has: page.getByRole('columnheader', { name: '成果快照', exact: true }),
+  });
+  await finalTable
+    .locator('tbody tr.ant-table-row')
+    .first()
+    .getByRole('checkbox')
+    .check();
+  await page.getByRole('button', { name: '创建成果导出', exact: true }).click();
+  await page.getByRole('button', { name: '查询导出状态' }).click();
+  await page.getByRole('button', { name: '查询导出状态' }).click();
   const downloadPromise = page.waitForEvent('download');
-  await page.getByRole('button', { name: '下载 ZIP' }).click();
-  const download = await downloadPromise;
-  await download.saveAs(`${output}/synthetic-export.zip`);
-  await capture('gap-demo', 1280);
+  await page.getByRole('button', { name: '下载分类 ZIP' }).click();
+  await (await downloadPromise).saveAs(
+    `${output}/confirmed-classification-export.zip`,
+  );
+  await capture('confirmed-final-export', 1280);
   report.checks.push(
-    'UI mock export queue/running/success and downloadable ZIP containing independent N=2 results',
+    'No default thresholds; editing unsaved thresholds does not change saved policy; fixed medium-band selection excludes one item; explicit review then final snapshot then CSV ZIP',
+  );
+  await page.getByRole('button', { name: '重置合成种子' }).click();
+  const allRowsTable = page.locator('.ant-table-wrapper').first();
+  await allRowsTable
+    .locator('tr[data-row-key="demo-sample-1"]')
+    .getByRole('button', { name: '来源历史' })
+    .click();
+  const historyTable = page.locator('.ant-table-wrapper').filter({
+    has: page.getByRole('columnheader', { name: '来源身份', exact: true }),
+  });
+  await historyTable
+    .locator('tbody tr.ant-table-row')
+    .getByRole('checkbox')
+    .nth(0)
+    .check();
+  await historyTable
+    .locator('tbody tr.ant-table-row')
+    .getByRole('checkbox')
+    .nth(1)
+    .check();
+  await historyTable
+    .locator('tbody tr.ant-table-row')
+    .getByRole('checkbox')
+    .nth(2)
+    .check();
+  await page.getByRole('button', { name: '生成集成建议（不审核）' }).click();
+  await page.getByText('CONSENSUS', { exact: true }).waitFor();
+  await capture('majority-suggestion', 1280);
+  report.checks.push(
+    'Three independent fixed result versions produce strict-majority suggestion without automatic acceptance',
+  );
+  await page.getByRole('button', { name: '重置合成种子' }).click();
+  await page
+    .getByRole('combobox', { name: '固定选择用途' })
+    .locator('xpath=../..')
+    .click();
+  await page
+    .locator('.ant-select-item-option-content')
+    .getByText('PUBLISH', { exact: true })
+    .click();
+  await page.getByRole('button', { name: '固定全部筛选结果并预览' }).click();
+  await page.getByRole('button', { name: '完成范围预览' }).click();
+  await page.getByRole('button', { name: '预览人工打包' }).click();
+  await page.getByText('各包 10 / 2', { exact: false }).waitFor();
+  await page.getByRole('button', { name: '确认发布人工包' }).click();
+  await page
+    .getByRole('dialog')
+    .getByRole('button', { name: /确.*定/ })
+    .click();
+  await page
+    .getByRole('button', { name: '模拟本包全部完成并交回' })
+    .first()
+    .click();
+  const packagesTable = page.locator('.ant-table-wrapper').filter({
+    has: page.getByRole('columnheader', { name: '新人工包', exact: true }),
+  });
+  await packagesTable.getByText('SUBMITTED', { exact: true }).waitFor();
+  assert.equal(
+    await packagesTable.getByText('OPEN', { exact: true }).count(),
+    1,
+  );
+  await capture('human-republish-10-plus-2', 1280);
+  await page.getByRole('button', { name: '重置合成种子' }).click();
+  await page
+    .getByRole('combobox', { name: '固定选择用途' })
+    .locator('xpath=../..')
+    .click();
+  await page
+    .locator('.ant-select-item-option-content')
+    .getByText('PUBLISH', { exact: true })
+    .click();
+  await page
+    .getByRole('combobox', { name: '答案筛选' })
+    .locator('xpath=../..')
+    .click();
+  await page
+    .locator('.ant-select-item-option-content')
+    .getByText('没有答案', { exact: true })
+    .click();
+  await page.getByRole('button', { name: '固定全部筛选结果并预览' }).click();
+  await page.getByRole('button', { name: '完成范围预览' }).click();
+  await page.getByRole('button', { name: '创建合成 AI 执行' }).click();
+  await page.getByText('QUEUED · revision 1', { exact: false }).waitFor();
+  await page.getByRole('button', { name: '查询执行进度' }).click();
+  await page.getByText('RUNNING · revision', { exact: false }).waitFor();
+  await page.getByRole('button', { name: '查询执行进度' }).click();
+  await page.getByText('PARTIAL · revision', { exact: false }).waitFor();
+  await page
+    .locator('#workflow-step-3')
+    .getByText('SYNTHETIC_MODEL_FAILURE', { exact: true })
+    .waitFor();
+  await capture('ai-partial-fixed-output', 1280);
+  await page.getByRole('button', { name: '仅重试该批次失败/取消项' }).click();
+  await page.getByText('QUEUED · revision 1', { exact: false }).waitFor();
+  await page
+    .getByRole('textbox', { name: '操作原因', exact: true })
+    .fill('取消合成重试');
+  await page.getByRole('button', { name: '取消执行', exact: true }).click();
+  await page
+    .getByRole('dialog')
+    .getByRole('button', { name: /确.*定/ })
+    .click();
+  await page.getByText('CANCELLED · revision', { exact: false }).waitFor();
+  report.checks.push(
+    'UI publishes 10+2 independent packages; one handed back while other remains open; AI executes directly on fixed samples, partial outputs, failure-only retry, cancellation',
   );
   const anonymous = await browser.newPage();
   const anonymousRequests = [];
@@ -584,13 +821,13 @@ try {
     return route.abort();
   });
   await anonymous.goto(`${base}/#/labeling/demo`);
-  await anonymous.getByRole('button', { name: '创建演示导出' }).waitFor();
-  await anonymous.getByRole('button', { name: '创建演示导出' }).click();
-  await anonymous.getByText('QUEUED', { exact: true }).waitFor();
-  assert.deepEqual(anonymousRequests, []);
+  await anonymous
+    .getByRole('button', { name: '查看种子 PARTIAL 批次' })
+    .waitFor();
   await anonymous.close();
+  assert.deepEqual(anonymousRequests, []);
   report.checks.push(
-    'Standalone synthetic demo works without a login or backend and performs no HTTP requests',
+    'Synthetic workflow requires no login/backend; no legacy editor session/sync/assets requests; no external model calls',
   );
   assert.deepEqual(report.unexpectedRequests, []);
   assert.deepEqual(report.pageErrors, []);

@@ -44,6 +44,11 @@ export type WorkSample = {
   sourcePath: string;
   ordinal: number;
   mediaType: string;
+  referenceResultId?: string;
+  referenceResult?: ClassificationResult;
+  sourceKind?: 'HUMAN' | 'AI' | 'OWNER' | 'AGGREGATION';
+  modelVersion?: string;
+  confidence?: number | null;
   draftRevision: number | null;
   explicitDone: boolean | null;
   resultFormat: string | null;
@@ -66,7 +71,7 @@ export type Draft = {
   revision: number;
   savedAt: string | null;
   explicitDone: boolean;
-  resultFormat: string;
+  resultFormat: 'image-classification-v1';
   result: ClassificationResult;
 };
 export type RevisionItem = { sampleId: string; revision: number };
