@@ -53,6 +53,15 @@ export class LabelingError extends Error {
   }
 }
 
+export function describeLabelingError(error: unknown): string {
+  if (error instanceof LabelingError || error instanceof Error) {
+    const e = error as Error &
+      Partial<{ status: number; code: string; requestId: string }>;
+    return `${e.status === 403 ? '标注身份或权限不足：' : ''}${e.message}${typeof e.code === 'string' ? `（${e.code}）` : ''}${typeof e.requestId === 'string' ? ` · 请求编号 ${e.requestId}` : ''}`;
+  }
+  return '操作失败';
+}
+
 const prefix = '/api/labeling/v1';
 export function operationKey(): string {
   // getRandomValues also works on the existing HTTP deployment.
@@ -99,13 +108,20 @@ async function response(
 export async function labelingJson<T>(
   path: string,
   init?: RequestInit,
+  allowNull = false,
 ): Promise<T> {
   const res = await response(path, init);
   const body = await res.json();
-  if (!body || !Object.hasOwn(body, 'data') || body.data === null) {
+  if (
+    !body ||
+    !Object.hasOwn(body, 'data') ||
+    (!allowNull && (body.data === null || typeof body.data !== 'object'))
+  ) {
     throw new LabelingError(
       '接口响应格式异常，请检查标注服务的转发配置',
       res.status,
+      undefined,
+      body?.requestId,
     );
   }
   return body.data as T;
@@ -126,6 +142,25 @@ export function pageQuery(cursor?: string | null): string {
   const query = new URLSearchParams({ limit: '20' });
   if (cursor) query.set('cursor', cursor);
   return query.toString();
+}
+
+/** Authorized file response for the future final-snapshot export route; never puts tokens in URLs. */
+export async function labelingZip(
+  path: string,
+  signal?: AbortSignal,
+): Promise<Blob> {
+  const res = await response(path, { signal });
+  const type = (res.headers.get('Content-Type') || '').split(';')[0];
+  if (
+    ![
+      'application/zip',
+      'application/octet-stream',
+      'application/x-zip-compressed',
+    ].includes(type)
+  ) {
+    throw new LabelingError('导出接口未返回 ZIP，请检查服务或网关', res.status);
+  }
+  return res.blob();
 }
 
 export async function sampleBlob(

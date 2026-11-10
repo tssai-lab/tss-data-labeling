@@ -10,7 +10,7 @@ import {
   Typography,
 } from 'antd';
 import { useEffect, useRef, useState } from 'react';
-import { operationKey } from '@/services/labeling';
+import { describeLabelingError, operationKey } from '@/services/labeling';
 import type { Plan } from '@/services/labelingTasks';
 import { tasks } from '@/services/labelingTasks';
 
@@ -28,6 +28,8 @@ export default function PublishPlan({
   onPublished: () => void;
 }) {
   const [plan, setPlan] = useState<Plan>();
+  const incompatibleDraft =
+    plan?.status === 'DRAFT' && plan.totalWorkload !== plan.sampleCount;
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [form] = Form.useForm<{
@@ -56,8 +58,7 @@ export default function PublishPlan({
           if (!abort.signal.aborted) setPlan(value);
         })
         .catch((e: unknown) => {
-          if (!abort.signal.aborted)
-            setError(e instanceof Error ? e.message : '计划读取失败');
+          if (!abort.signal.aborted) setError(describeLabelingError(e));
         })
         .finally(() => {
           if (!abort.signal.aborted) setBusy(false);
@@ -89,7 +90,7 @@ export default function PublishPlan({
         /* Plan remains on this page. */
       }
     } catch (e) {
-      if (alive.current) setError(e instanceof Error ? e.message : '预览失败');
+      if (alive.current) setError(describeLabelingError(e));
     } finally {
       if (alive.current) setBusy(false);
     }
@@ -105,10 +106,7 @@ export default function PublishPlan({
       setPlan(current);
       onPublished();
     } catch (e) {
-      if (alive.current)
-        setError(
-          e instanceof Error ? e.message : '发布失败，可使用同一计划重试',
-        );
+      if (alive.current) setError(describeLabelingError(e));
     } finally {
       if (alive.current) setBusy(false);
     }
@@ -126,6 +124,14 @@ export default function PublishPlan({
       {!specVersionId && (
         <Alert type="info" message="请先保存分类规范，再预览任务包。" />
       )}
+      <Typography.Paragraph type="secondary">
+        当前选择规范：{specVersionId || '尚未选择'}
+        。已生成的预览及已发布任务包保留创建时的冻结规范；换版本请先调整打包参数重新预览。
+      </Typography.Paragraph>
+      <Alert
+        type="info"
+        message="新计划每包1名人工，自行领取；历史包沿用冻结人数。默认10张，尾包保留，其他包未完成不阻塞本包。跨范围选样和再次发布待后端轮次接口。"
+      />
       {!plan && (
         <Form
           form={form}
@@ -147,15 +153,10 @@ export default function PublishPlan({
           </Form.Item>
           <Form.Item
             name="annotatorsPerSample"
-            label="每包标注人数"
+            label="本轮每包人工人数"
             rules={[{ required: true }]}
           >
-            <InputNumber
-              min={1}
-              max={10}
-              precision={0}
-              disabled={busy || !writable}
-            />
+            <InputNumber min={1} max={1} precision={0} disabled />
           </Form.Item>
           <Button
             htmlType="submit"
@@ -165,6 +166,12 @@ export default function PublishPlan({
             生成打包预览
           </Button>
         </Form>
+      )}
+      {incompatibleDraft && (
+        <Alert
+          type="warning"
+          message="本机旧预览不是本轮每包1人的规则，请先调整参数重新生成。"
+        />
       )}
       {plan && (
         <>
@@ -184,6 +191,7 @@ export default function PublishPlan({
                 size="small"
                 pagination={false}
                 rowKey="packageId"
+                scroll={{ x: 450 }}
                 dataSource={plan.packages}
                 columns={[
                   { title: '包序号', dataIndex: 'sequenceNo' },
@@ -198,7 +206,7 @@ export default function PublishPlan({
               <Button
                 type="primary"
                 loading={busy}
-                disabled={!writable}
+                disabled={!writable || incompatibleDraft}
                 onClick={() => void publish()}
               >
                 确认发布此预览

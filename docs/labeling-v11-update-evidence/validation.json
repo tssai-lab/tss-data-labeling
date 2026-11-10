@@ -1,0 +1,54 @@
+{
+  "date": "2026-11-10",
+  "branch": "feat/labeling-v11-frontend-gap",
+  "featureParent": "085fbb6b69a43e8df3770f7b8a5e38f0e3f3800e",
+  "nodeVersion": "22.11.0",
+  "checks": {
+    "typescript": { "command": "npm run tsc", "passed": true },
+    "unitAndContractTests": {
+      "command": "npm test",
+      "total": 290,
+      "passed": 290,
+      "failed": 0,
+      "skipped": 0
+    },
+    "governance": {
+      "command": "npm run lint:governance",
+      "passed": true,
+      "note": "Existing five informational template-literal suggestions remain outside this change."
+    },
+    "browser": {
+      "command": "node scripts/qa/labeling-v11.browser.mjs",
+      "passed": true,
+      "screenshots": 31,
+      "viewports": [1280, 768, 390],
+      "report": "browser-report.json",
+      "pageErrors": 0,
+      "unexpectedRequests": 0
+    },
+    "defaultOff": { "passed": true, "report": "default-off-report.json" },
+    "productionBuild": {
+      "command": "$env:LABELING_GAP_MOCK='true'; npm run build",
+      "passed": true
+    },
+    "productionForcedFlag": {
+      "passed": true,
+      "report": "production-forced-flag-report.json"
+    },
+    "exportArchive": {
+      "file": "confirmed-classification-export.zip",
+      "entries": ["classifications.csv", "manifest.json"],
+      "acceptedRows": 1,
+      "includesOriginals": false,
+      "synthetic": true
+    }
+  },
+  "data": "Synthetic fixtures only. Existing HTTP routes were intercepted in browser tests; new workflow uses a separate in-memory adapter, never real-service fallback.",
+  "notVerified": [
+    "Real backend end-to-end integration: no environment or test account supplied",
+    "New backend selection, AI, review, aggregation, final snapshot and export services are not implemented in inspected backend baseline",
+    "D-provided cropped Label Studio renderer, fixed version and license inventory remain pending; delivered renderer uses native platform controls",
+    "Real model execution, worker cancellation fencing, authorization and concurrent CAS against deployed services"
+  ],
+  "delivery": "Same feature branch only; no PR, merge, deployment or database migration."
+}

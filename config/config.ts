@@ -23,6 +23,13 @@ const config: ReturnType<typeof defineConfig> = defineConfig({
    * @doc https://umijs.org/docs/api/config#hash
    */
   hash: true,
+  define: {
+    'process.env.LABELING_GAP_MOCK':
+      process.env.NODE_ENV !== 'production' &&
+      process.env.LABELING_GAP_MOCK === 'true'
+        ? 'true'
+        : 'false',
+  },
 
   history: {
     type: REACT_APP_HISTORY_MODE === 'browser' ? 'browser' : 'hash',

@@ -1,0 +1,520 @@
+{
+  "data": "Synthetic browser fixtures; no real accounts or service writes",
+  "widths": [
+    {
+      "page": "project",
+      "viewport": 1280,
+      "document": 1280,
+      "tables": [
+        {
+          "client": 1128,
+          "scroll": 1128
+        },
+        {
+          "client": 1128,
+          "scroll": 1128
+        },
+        {
+          "client": 1128,
+          "scroll": 1128
+        }
+      ]
+    },
+    {
+      "page": "task-pool",
+      "viewport": 1280,
+      "document": 1280,
+      "tables": [
+        {
+          "client": 1128,
+          "scroll": 1128
+        }
+      ]
+    },
+    {
+      "page": "inline-assignment",
+      "viewport": 1280,
+      "document": 1280,
+      "tables": []
+    },
+    {
+      "page": "submission",
+      "viewport": 1280,
+      "document": 1280,
+      "tables": [
+        {
+          "client": 1128,
+          "scroll": 1128
+        }
+      ]
+    },
+    {
+      "page": "admin-users",
+      "viewport": 1280,
+      "document": 1280,
+      "tables": [
+        {
+          "client": 1128,
+          "scroll": 1128
+        }
+      ]
+    },
+    {
+      "page": "admin-modal",
+      "viewport": 1280,
+      "document": 1280,
+      "tables": [
+        {
+          "client": 1128,
+          "scroll": 1128
+        }
+      ]
+    },
+    {
+      "page": "real-workbench-pending",
+      "viewport": 1280,
+      "document": 1280,
+      "tables": [
+        {
+          "client": 1128,
+          "scroll": 1128
+        },
+        {
+          "client": 1128,
+          "scroll": 1128
+        }
+      ]
+    },
+    {
+      "page": "owner-workflow",
+      "viewport": 1280,
+      "document": 1280,
+      "tables": [
+        {
+          "client": 1128,
+          "scroll": 1550
+        },
+        {
+          "client": 1128,
+          "scroll": 1128
+        },
+        {
+          "client": 1128,
+          "scroll": 1128
+        },
+        {
+          "client": 1128,
+          "scroll": 1128
+        },
+        {
+          "client": 1128,
+          "scroll": 1128
+        },
+        {
+          "client": 1128,
+          "scroll": 1128
+        }
+      ]
+    },
+    {
+      "page": "project",
+      "viewport": 768,
+      "document": 768,
+      "tables": [
+        {
+          "client": 657,
+          "scroll": 657
+        },
+        {
+          "client": 657,
+          "scroll": 657
+        },
+        {
+          "client": 657,
+          "scroll": 657
+        }
+      ]
+    },
+    {
+      "page": "task-pool",
+      "viewport": 768,
+      "document": 768,
+      "tables": [
+        {
+          "client": 657,
+          "scroll": 700
+        }
+      ]
+    },
+    {
+      "page": "inline-assignment",
+      "viewport": 768,
+      "document": 768,
+      "tables": []
+    },
+    {
+      "page": "submission",
+      "viewport": 768,
+      "document": 768,
+      "tables": [
+        {
+          "client": 657,
+          "scroll": 2697
+        }
+      ]
+    },
+    {
+      "page": "admin-users",
+      "viewport": 768,
+      "document": 768,
+      "tables": [
+        {
+          "client": 657,
+          "scroll": 872
+        }
+      ]
+    },
+    {
+      "page": "admin-modal",
+      "viewport": 768,
+      "document": 768,
+      "tables": [
+        {
+          "client": 657,
+          "scroll": 872
+        }
+      ]
+    },
+    {
+      "page": "real-workbench-pending",
+      "viewport": 768,
+      "document": 768,
+      "tables": [
+        {
+          "client": 657,
+          "scroll": 657
+        },
+        {
+          "client": 657,
+          "scroll": 657
+        }
+      ]
+    },
+    {
+      "page": "owner-workflow",
+      "viewport": 768,
+      "document": 768,
+      "tables": [
+        {
+          "client": 657,
+          "scroll": 1550
+        },
+        {
+          "client": 657,
+          "scroll": 800
+        },
+        {
+          "client": 657,
+          "scroll": 750
+        },
+        {
+          "client": 657,
+          "scroll": 950
+        },
+        {
+          "client": 657,
+          "scroll": 750
+        },
+        {
+          "client": 657,
+          "scroll": 800
+        }
+      ]
+    },
+    {
+      "page": "project",
+      "viewport": 390,
+      "document": 390,
+      "tables": [
+        {
+          "client": 332,
+          "scroll": 450
+        },
+        {
+          "client": 332,
+          "scroll": 650
+        },
+        {
+          "client": 332,
+          "scroll": 650
+        }
+      ]
+    },
+    {
+      "page": "task-pool",
+      "viewport": 390,
+      "document": 390,
+      "tables": [
+        {
+          "client": 332,
+          "scroll": 700
+        }
+      ]
+    },
+    {
+      "page": "inline-assignment",
+      "viewport": 390,
+      "document": 390,
+      "tables": []
+    },
+    {
+      "page": "submission",
+      "viewport": 390,
+      "document": 390,
+      "tables": [
+        {
+          "client": 332,
+          "scroll": 2697
+        }
+      ]
+    },
+    {
+      "page": "admin-users",
+      "viewport": 390,
+      "document": 390,
+      "tables": [
+        {
+          "client": 332,
+          "scroll": 872
+        }
+      ]
+    },
+    {
+      "page": "admin-modal",
+      "viewport": 390,
+      "document": 390,
+      "tables": [
+        {
+          "client": 332,
+          "scroll": 872
+        }
+      ]
+    },
+    {
+      "page": "real-workbench-pending",
+      "viewport": 390,
+      "document": 390,
+      "tables": [
+        {
+          "client": 332,
+          "scroll": 650
+        },
+        {
+          "client": 332,
+          "scroll": 650
+        }
+      ]
+    },
+    {
+      "page": "owner-workflow",
+      "viewport": 390,
+      "document": 390,
+      "tables": [
+        {
+          "client": 332,
+          "scroll": 1550
+        },
+        {
+          "client": 332,
+          "scroll": 800
+        },
+        {
+          "client": 332,
+          "scroll": 750
+        },
+        {
+          "client": 332,
+          "scroll": 950
+        },
+        {
+          "client": 332,
+          "scroll": 750
+        },
+        {
+          "client": 332,
+          "scroll": 800
+        }
+      ]
+    },
+    {
+      "page": "draft-conflict-preserves-selection",
+      "viewport": 1280,
+      "document": 1280,
+      "tables": []
+    },
+    {
+      "page": "permission-error",
+      "viewport": 390,
+      "document": 390,
+      "tables": []
+    },
+    {
+      "page": "empty-pool",
+      "viewport": 390,
+      "document": 390,
+      "tables": [
+        {
+          "client": 332,
+          "scroll": 700
+        }
+      ]
+    },
+    {
+      "page": "confirmed-final-export",
+      "viewport": 1280,
+      "document": 1280,
+      "tables": [
+        {
+          "client": 1128,
+          "scroll": 1550
+        },
+        {
+          "client": 1128,
+          "scroll": 1128
+        },
+        {
+          "client": 1128,
+          "scroll": 1128
+        },
+        {
+          "client": 1128,
+          "scroll": 1128
+        },
+        {
+          "client": 1128,
+          "scroll": 1128
+        },
+        {
+          "client": 1128,
+          "scroll": 1128
+        },
+        {
+          "client": 0,
+          "scroll": 0
+        }
+      ]
+    },
+    {
+      "page": "majority-suggestion",
+      "viewport": 1280,
+      "document": 1280,
+      "tables": [
+        {
+          "client": 1128,
+          "scroll": 1550
+        },
+        {
+          "client": 1128,
+          "scroll": 1128
+        },
+        {
+          "client": 1128,
+          "scroll": 1128
+        },
+        {
+          "client": 1128,
+          "scroll": 1128
+        },
+        {
+          "client": 1128,
+          "scroll": 1128
+        },
+        {
+          "client": 1128,
+          "scroll": 1128
+        },
+        {
+          "client": 0,
+          "scroll": 0
+        }
+      ]
+    },
+    {
+      "page": "human-republish-10-plus-2",
+      "viewport": 1280,
+      "document": 1280,
+      "tables": [
+        {
+          "client": 1128,
+          "scroll": 1550
+        },
+        {
+          "client": 1128,
+          "scroll": 1128
+        },
+        {
+          "client": 1128,
+          "scroll": 1128
+        },
+        {
+          "client": 1128,
+          "scroll": 1128
+        },
+        {
+          "client": 1128,
+          "scroll": 1128
+        },
+        {
+          "client": 0,
+          "scroll": 0
+        }
+      ]
+    },
+    {
+      "page": "ai-partial-fixed-output",
+      "viewport": 1280,
+      "document": 1280,
+      "tables": [
+        {
+          "client": 1128,
+          "scroll": 1550
+        },
+        {
+          "client": 1128,
+          "scroll": 1128
+        },
+        {
+          "client": 1128,
+          "scroll": 1128
+        },
+        {
+          "client": 1128,
+          "scroll": 1128
+        },
+        {
+          "client": 1128,
+          "scroll": 1128
+        },
+        {
+          "client": 1128,
+          "scroll": 1128
+        },
+        {
+          "client": 0,
+          "scroll": 0
+        }
+      ]
+    }
+  ],
+  "checks": [
+    "1280 / 768 / 390 core pages and inline editor; no iframe; 6/10 incomplete package cannot submit; viewport overflow asserted",
+    "Inline dirty navigation guard; 409 preserves choice; reference never auto-completes; save locks navigation; cleared saved draft never restores reference",
+    "Exactly 10 frozen members across all item pages submitted; another incomplete assignment does not block; handback stays pending review; lost receipt replay succeeds",
+    "No default thresholds; editing unsaved thresholds does not change saved policy; fixed medium-band selection excludes one item; explicit review then final snapshot then CSV ZIP",
+    "Three independent fixed result versions produce strict-majority suggestion without automatic acceptance",
+    "UI publishes 10+2 independent packages; one handed back while other remains open; AI executes directly on fixed samples, partial outputs, failure-only retry, cancellation",
+    "Synthetic workflow requires no login/backend; no legacy editor session/sync/assets requests; no external model calls"
+  ],
+  "pageErrors": [],
+  "unexpectedRequests": []
+}

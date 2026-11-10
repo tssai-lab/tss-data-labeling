@@ -5,13 +5,14 @@ import {
   Button,
   Card,
   Empty,
+  Input,
+  Select,
   Space,
   Table,
   Tag,
-  Typography,
 } from 'antd';
 import { useEffect, useRef, useState } from 'react';
-import { operationKey } from '@/services/labeling';
+import { describeLabelingError, operationKey } from '@/services/labeling';
 import type { Assignment, Package } from '@/services/labelingTasks';
 import { tasks } from '@/services/labelingTasks';
 import styles from './index.less';
@@ -22,6 +23,8 @@ export default function TaskList() {
   const { pathname } = useLocation();
   const mine = pathname === '/labeling/assignments';
   const { message } = App.useApp();
+  const [filter, setFilter] = useState<string>();
+  const [submissionId, setSubmissionId] = useState('');
   const [rows, setRows] = useState<Row[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
   const [error, setError] = useState('');
@@ -41,8 +44,7 @@ export default function TaskList() {
       setRows((old) => (next ? [...old, ...page.items] : page.items));
       setCursor(page.nextCursor);
     } catch (e) {
-      if (current === version.current)
-        setError(e instanceof Error ? e.message : '任务读取失败');
+      if (current === version.current) setError(describeLabelingError(e));
     } finally {
       if (current === version.current) setBusy(false);
     }
@@ -59,7 +61,9 @@ export default function TaskList() {
       .then((me) => {
         if (current === version.current) setCanAnnotate(me.canAnnotate);
       })
-      .catch(() => {});
+      .catch((e) => {
+        if (current === version.current) setError(describeLabelingError(e));
+      });
     void load();
     return () => {
       ++version.current;
@@ -81,8 +85,7 @@ export default function TaskList() {
         `/labeling/assignments/${encodeURIComponent(result.assignmentId)}`,
       );
     } catch (e) {
-      if (current === version.current)
-        setError(e instanceof Error ? e.message : '领取失败，请刷新席位后重试');
+      if (current === version.current) setError(describeLabelingError(e));
     } finally {
       if (current === version.current) setClaiming('');
     }
@@ -101,6 +104,51 @@ export default function TaskList() {
             style={{ marginBottom: 20 }}
           />
         )}
+        {mine && (
+          <Card title="本人提交历史与查询">
+            <Alert
+              type="info"
+              message="已提交领取来自真实本人任务分页；状态筛选仅针对已加载数据。"
+              description="服务尚无按本人查询提交历史/由领取查 submissionId 的接口。新会话可通过已知提交编号读取真实冻结结果；本机回执不能代表跨设备历史。"
+            />
+            <Space wrap style={{ marginTop: 16 }}>
+              <Input
+                aria-label="已知提交编号"
+                placeholder="输入本人已知 submissionId"
+                value={submissionId}
+                onChange={(e) => setSubmissionId(e.target.value)}
+              />
+              <Button
+                disabled={!submissionId.trim()}
+                onClick={() =>
+                  history.push(
+                    `/labeling/submissions/${encodeURIComponent(submissionId.trim())}`,
+                  )
+                }
+              >
+                读取已提交结果
+              </Button>
+            </Space>
+            <Select
+              aria-label="本人任务状态筛选"
+              allowClear
+              value={filter}
+              onChange={setFilter}
+              placeholder="筛选已加载任务状态"
+              style={{ width: '100%', marginTop: 16 }}
+              options={[
+                'CLAIMED',
+                'IN_PROGRESS',
+                'SUBMITTED',
+                'RELEASED',
+                'REVOKED',
+              ].map((value) => ({ value, label: value }))}
+            />
+            <Button disabled style={{ marginTop: 16 }}>
+              放弃领取 · 待后端接入
+            </Button>
+          </Card>
+        )}
         <Card
           extra={
             <Button loading={busy} onClick={() => void load()}>
@@ -110,7 +158,9 @@ export default function TaskList() {
         >
           <Table<Row>
             rowKey={(row) => row.assignmentId || row.packageId || ''}
-            dataSource={rows}
+            dataSource={
+              mine && filter ? rows.filter((r) => r.status === filter) : rows
+            }
             loading={busy}
             pagination={false}
             locale={{
@@ -121,7 +171,16 @@ export default function TaskList() {
                       ? '尚未领取任务，可前往任务广场'
                       : '暂无可领取任务，请先在项目内发布任务包'
                   }
-                />
+                >
+                  <Button
+                    type="primary"
+                    onClick={() =>
+                      history.push(mine ? '/labeling/tasks' : '/labeling')
+                    }
+                  >
+                    {mine ? '前往任务广场' : '创建或发布项目'}
+                  </Button>
+                </Empty>
               ),
             }}
             scroll={{ x: 700 }}
@@ -148,7 +207,7 @@ export default function TaskList() {
                             {
                               CLAIMED: '已领取',
                               IN_PROGRESS: '标注中',
-                              SUBMITTED: '已提交',
+                              SUBMITTED: '已交回 · 待需求方审核',
                             } as Record<string, string>
                           )[value] || value}
                         </Tag>
@@ -165,7 +224,9 @@ export default function TaskList() {
                             )
                           }
                         >
-                          {row.status === 'SUBMITTED' ? '查看任务' : '进入标注'}
+                          {row.status === 'SUBMITTED'
+                            ? '查看已交回包'
+                            : '进入标注'}
                         </Button>
                       ),
                     },

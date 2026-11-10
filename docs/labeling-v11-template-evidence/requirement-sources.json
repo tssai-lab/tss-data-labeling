@@ -1,0 +1,62 @@
+{
+  "readDate": "2026-11-10",
+  "backendBaseline": "fafefcaebd7cbb8fd4dec0cbea7a3576bb9703e2",
+  "frontendBaseline": "2e1560203329d8afe90179c3e01182dcc9b27fb6",
+  "featureParent": "1e05cccc41b7e9cdafe40980e1125969eed3b023",
+  "changesSincePreviousBackend": "Only 9 documentation files; service code unchanged",
+  "sources": [
+    {
+      "path": "docs/labeling-v1.1/01-product.md",
+      "sha256": "3edfd1d87eb22a08eaa58c3e29c09c960b9b7d63ed6c39714a033ac07f516b97"
+    },
+    {
+      "path": "docs/labeling-v1.1/02-architecture.md",
+      "sha256": "838a9dacee2b4f5526a2541f6b811f2886d2687fe311977e2982c75b9ea20236"
+    },
+    {
+      "path": "docs/labeling-v1.1/03-database.md",
+      "sha256": "7bd4e5a960b0d01f551e69c582a5cc6265ca3b26db7809f348311220227724bd"
+    },
+    {
+      "path": "docs/labeling-v1.1/04-api.md",
+      "sha256": "6ee67249d8d12babcd50945bb64cb2b507e2bfb237240bb4664543fa12e17f61"
+    },
+    {
+      "path": "docs/labeling-v1.1/05-team-and-acceptance.md",
+      "sha256": "e1c7d2d4363a4633bc5cf9e78ec77df557cfe7041871abc8d52afcf8fd723d32"
+    },
+    {
+      "path": "docs/labeling-v1.1/06-research-evidence.md",
+      "sha256": "39e36b976b7cd8d65b164f6feab79e2c97893053533ac475b6a87091fe4da152"
+    },
+    {
+      "path": "docs/labeling-v1.1/07-image-import-handoff.md",
+      "sha256": "30a0d5c469bbafce6115e5854c8e3714f981cbd2b5c115f24c4dddcdcb2fbe38"
+    },
+    {
+      "path": "docs/labeling-v1.1/08-image-import-api.md",
+      "sha256": "83f9f58be890e93fe92b96d07aa176abb3aa2ee1bd819fd9fc73a5c45de5d908"
+    },
+    {
+      "path": "docs/labeling-v1.1/09-image-import-verification.md",
+      "sha256": "b586d72dfa805b28812e672acd72bee2649e8a0c4b7f9a60360aefc13cc48dda"
+    },
+    {
+      "path": "docs/labeling-v1.1/10-editor-integration.md",
+      "sha256": "8e681b202111eee373e26d9d55b2bb586eaec616a0bc745774d02c04a4bf8a1e"
+    },
+    {
+      "path": "docs/labeling-v1.1/13-team-work-plan.md",
+      "sha256": "0b3259f0c310ace13029c4619e1d823f59404870b461a44c609d3ceecf28733c"
+    },
+    {
+      "path": "docs/labeling-v1.1/14-task-plugins-and-energy-acceptance.md",
+      "sha256": "2fb495bb9e846bd31d1417e50f76cfe3ee511d2849a86c36d154610f63653d5d"
+    },
+    {
+      "path": "docs/labeling-v1.1/README.md",
+      "sha256": "21afe9d0de3347e9199ec050b9a28e631549f54e0e983e119951ba860411b425"
+    }
+  ],
+  "restrictedDataset": "Not accessed, copied, downloaded or independently validated. All added fixtures and exports are synthetic."
+}
