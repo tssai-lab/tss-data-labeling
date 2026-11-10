@@ -47,6 +47,11 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
       - name: Reject a stale synchronized dispatch
         if: >-
           github.event_name == 'workflow_dispatch' &&
@@ -119,7 +124,7 @@ jobs:
 
       - name: Run YOLOv11n inference preview tests
         run: |
-          python3 -m pip install --disable-pip-version-check --no-input 'Pillow==11.0.0'
+          python3 -m pip install --disable-pip-version-check --no-input --only-binary=:all: 'Pillow==11.0.0'
           python3 -m unittest discover \
             -s examples/inference/yolov11n \
             -p 'test_*.py' -v
