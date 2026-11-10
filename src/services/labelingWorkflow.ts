@@ -29,6 +29,9 @@ export type ResultRow = {
   reviewStatus: string;
   reviewRevision: number;
   hasResult: boolean;
+  selectedResultId?: string | null;
+  candidateCount?: number;
+  requiresResultSelection?: boolean;
   activeProcessing: boolean;
   reviewable: boolean;
   errorCode?: string | null;
@@ -39,6 +42,7 @@ export type Selection = {
   count: number;
   expiresAt: string;
   purpose: string;
+  reviewAction?: string | null;
 };
 export type SelectionItem = {
   sampleId: string;
@@ -84,7 +88,7 @@ export type ExportJob = {
 };
 export type WorkflowPage<T> = { items: T[]; nextCursor: string | null };
 
-/** e55bf6e implements none of these new routes. UI must not enable them until backend integration is verified. */
+/** fafefca only updates documentation; these routes still require verified backend integration. */
 export const workflowBackendReady = false;
 export const realWorkflowCall: WorkflowCall = (method, path, body, key) =>
   method === 'GET'
@@ -117,6 +121,11 @@ export function workflowClient(call: WorkflowCall, projectId: string) {
       call<WorkflowPage<SelectionItem>>(
         'GET',
         `/result-selections/${encodeURIComponent(id)}/items?${new URLSearchParams({ limit: '20', ...(cursor ? { cursor } : {}) })}`,
+      ),
+    selectionStatistics: (id: string) =>
+      call<Record<string, number>>(
+        'GET',
+        `/result-selections/${encodeURIComponent(id)}/statistics`,
       ),
     agents: () => call<Agent[]>('GET', '/agents?taskType=IMAGE_CLASSIFICATION'),
     execute: (body: unknown, key?: string) =>

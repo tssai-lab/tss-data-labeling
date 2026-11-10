@@ -2,15 +2,16 @@
 // npm install --prefix .qa --no-save --package-lock=false playwright
 // node scripts/qa/labeling-v11.browser.mjs   (dev:labeling-demo must be running)
 import assert from 'node:assert/strict';
-import { deflateSync } from 'node:zlib';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
+import { deflateSync } from 'node:zlib';
+
 const require = createRequire(import.meta.url);
 const { chromium } = require('../../.qa/node_modules/playwright');
 const base = process.env.LABELING_UI_BASE || 'http://127.0.0.1:8001';
 const output = fileURLToPath(
-  new URL('../../docs/labeling-v11-update-evidence/', import.meta.url),
+  new URL('../../docs/labeling-v11-template-evidence/', import.meta.url),
 );
 await mkdir(output, { recursive: true });
 const browser = await chromium.launch({ channel: 'chrome', headless: true });
@@ -305,7 +306,7 @@ await page.route('**/api/**', async (route) => {
       items: (url.searchParams.has('cursor')
         ? samples.slice(5, 10)
         : samples.slice(0, 5)
-      ).map((s, i) => ({
+      ).map((s) => ({
         ...s,
         draftRevision: drafts[s.sampleId].revision || null,
         explicitDone: drafts[s.sampleId].revision

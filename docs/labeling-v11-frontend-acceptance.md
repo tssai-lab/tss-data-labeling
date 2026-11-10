@@ -1,5 +1,7 @@
 # 图片分类前端 · 新版需求更新与验收
 
+本页保留上一交付的分类说明。最新backend `fafefca`增加能耗模板与通用质检，本分支再次对齐的范围、验证及缺口见[新文档对齐记录](labeling-v11-template-alignment.md)。当前选择用途仅PUBLISH/REVIEW/FINALIZE，审核快照另固定reviewAction；集成不使用AGGREGATE选择快照。最新证据在`labeling-v11-template-evidence/`。
+
 更新日期：2026-11-10。实际功能分支 `feat/labeling-v11-frontend-gap`，本次在上一交付 `085fbb6b69a43e8df3770f7b8a5e38f0e3f3800e` 上继续修改。仍然只提交、推送此分支；等用户本地验收并明确同意后再向 frontend 创建 PR，不合并、不部署。
 
 ## 需求依据与实际后端
@@ -39,7 +41,7 @@
 
 操作建议：
 
-1. 在结果区勾选已加载的明确项，或用“固定全部筛选结果”由adapter生成快照；可逐行填sampleId排除。用途选择REVIEW/PUBLISH/AGGREGATE/FINALIZE，预览确认count和reviewRevision。改筛选/排除须重新固定范围。
+1. 在结果区勾选已加载的明确项，或用“固定全部筛选结果”由adapter生成快照；可逐行填sampleId排除。用途选择REVIEW/PUBLISH/FINALIZE；REVIEW另固定ACCEPT或NEEDS_REVISION。预览确认count和reviewRevision。改筛选/排除须重新固定范围；集成单独固定多个resultId。
 2. 查看种子PARTIAL批次，先看结果/失败/模型分数，再手动输入L/H保存策略。低c<L，中L≤c<H，高c≥H，null单列未知；失败无答案不混入未知。改变输入框但未保存不会改已保存策略的分档。
 3. 点分档筛选，固定REVIEW范围并排除个别样本，再点击“明确确认所选结果”。保存阈值、AI结束、生成建议都不会自动审核。标记待修正需原因；任何过期reviewRevision整体拒绝。
 4. owner修改调用owner修订契约，生成新OWNER候选且confidence=null，原AI结果保留。来源历史可明确采用固定版本；新AI/人工候选不按时间自动覆盖已有选定答案。
@@ -50,7 +52,7 @@
 9. 固定FINALIZE范围，全部有有效已确认答案且无活动处理才形成成果；有缺项整体拒绝，不自动剔除。成果按固定范围计数，不把部分范围称为全项目完成。
 10. 仅选择finalSnapshotIds创建classification-csv-zip。旧ALL_SUBMITTED/submissionIds输入已移除。下载ZIP为classifications.csv＋manifest.json；包含原路径、样本/结果/规范、来源、模型和审核映射。AI-only无人工包也可导出。原图选项当前明确422，不静默忽略。
 
-模拟POST全部校验幂等键；同键不同体409。选择5分钟过期410，导出60秒过期410；可注入导出FAILED/过期。下载未完成409。错误保留code、status、requestId。演示项目暂停/恢复/归档也有reason、revision和活动范围约束；不是持久化管理系统。
+模拟POST全部校验幂等键；同键不同体409。选择30分钟过期410，导出60秒过期410；可注入导出FAILED/过期。下载未完成409。错误保留code、status、requestId。演示项目暂停/恢复/归档也有reason、revision和活动范围约束；不是持久化管理系统。
 
 ## 接口替换与当前限制
 

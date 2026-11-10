@@ -1,5 +1,6 @@
 import type { Label, Page } from './labeling';
 import { labelingJson, pageQuery, post } from './labeling';
+import type { TaskBinding } from './labelingTemplates.mjs';
 
 export type LabelingIdentity = {
   actorId: string;
@@ -39,7 +40,7 @@ export type Plan = {
   }[];
 };
 export type ClassificationResult = { labelId?: string };
-export type WorkSample = {
+export type WorkSample = TaskBinding & {
   sampleId: string;
   sourcePath: string;
   ordinal: number;
@@ -54,17 +55,18 @@ export type WorkSample = {
   resultFormat: string | null;
   result: ClassificationResult | null;
 };
-export type WorkPage = Page<WorkSample> & {
-  assignmentId: string;
-  packageId: string;
-  status: string;
-  readOnly: boolean;
-  specification: {
-    specVersionId: string;
-    labels: Label[];
-    instructions: string;
+export type WorkPage = Page<WorkSample> &
+  TaskBinding & {
+    assignmentId: string;
+    packageId: string;
+    status: string;
+    readOnly: boolean;
+    specification: TaskBinding & {
+      specVersionId: string;
+      labels: Label[];
+      instructions: string;
+    };
   };
-};
 export type Draft = {
   assignmentId: string;
   sampleId: string;
@@ -188,6 +190,18 @@ export async function allWorkItems(
   assignmentId: string,
   signal?: AbortSignal,
 ): Promise<WorkPage> {
+  const bindingKeys = [
+    'templateId',
+    'templateVersion',
+    'inputFormat',
+    'resultFormat',
+    'editorKey',
+    'inputSchemaId',
+    'resultSchemaId',
+    'taskType',
+  ] as const;
+  const bindingChanged = (left: TaskBinding, right: TaskBinding) =>
+    bindingKeys.some((key) => left[key] !== right[key]);
   let result: WorkPage | undefined;
   let cursor: string | null = null;
   const cursors = new Set<string>();
@@ -205,7 +219,9 @@ export async function allWorkItems(
           result.specification.specVersionId !==
             page.specification.specVersionId ||
           result.status !== page.status ||
-          result.readOnly !== page.readOnly))
+          result.readOnly !== page.readOnly ||
+          bindingChanged(result, page) ||
+          bindingChanged(result.specification, page.specification)))
     ) {
       throw new Error('任务包在读取期间发生变化，请重新加载');
     }

@@ -5,6 +5,7 @@ import {
   createWorkflowMock,
   majorityVote,
 } from './labelingWorkflowMock.mjs';
+
 const prefix = '/api/labeling/v1';
 function setup(options = {}) {
   const mock = createWorkflowMock({
@@ -20,6 +21,7 @@ function setup(options = {}) {
   const select = (purpose, ids, extra = {}) =>
     post('/projects/demo-project/result-selections', {
       purpose,
+      ...(purpose === 'REVIEW' ? { reviewAction: 'ACCEPT' } : {}),
       specVersionId: 'demo-spec-v1',
       ...(ids
         ? {
@@ -148,7 +150,7 @@ test('selection exclusion is frozen; stale review rejects the whole batch; expir
   );
   assert.equal(rows().filter((r) => r.reviewStatus === 'ACCEPTED').length, 1);
   const fresh = select('REVIEW', ['demo-sample-1']);
-  clock = 300001;
+  clock = 1800001;
   assert.throws(
     () => get(`/result-selections/${fresh.selectionId}/items`),
     (e) => e.status === 410,
@@ -212,6 +214,7 @@ test('confidence selection remains bound to the immutable AI output after owner 
   );
   const s = post('/projects/demo-project/result-selections', {
     purpose: 'REVIEW',
+    reviewAction: 'ACCEPT',
     specVersionId: 'demo-spec-v1',
     filter,
   });
@@ -510,5 +513,107 @@ test('write receipts replay original frozen resources and reject changed request
   assert.throws(
     () => post(path, { ...body, purpose: 'FINALIZE' }, 'stable'),
     (e) => e.code === 'IDEMPOTENCY_CONFLICT',
+  );
+});
+test('review snapshots bind action for 30 minutes, allow missing-result revision requests, and reject unknown filters', () => {
+  const { post, get, rows } = setup({ now: () => 0 });
+  const path = '/projects/demo-project/result-selections';
+  const body = {
+    purpose: 'REVIEW',
+    reviewAction: 'NEEDS_REVISION',
+    specVersionId: 'demo-spec-v1',
+    filter: { hasResult: 'false' },
+  };
+  const fixed = post(path, body);
+  assert.equal(Date.parse(fixed.expiresAt), 1800000);
+  assert.equal(fixed.count, 4);
+  assert.equal(
+    get(`/result-selections/${fixed.selectionId}/statistics`).noResultCount,
+    4,
+  );
+  assert.throws(
+    () =>
+      post('/projects/demo-project/reviews', {
+        action: 'ACCEPT',
+        selectionId: fixed.selectionId,
+      }),
+    (e) => e.code === 'SELECTION_PURPOSE_MISMATCH',
+  );
+  post('/projects/demo-project/reviews', {
+    action: 'NEEDS_REVISION',
+    reason: '还没有答案',
+    selectionId: fixed.selectionId,
+  });
+  assert.equal(
+    rows().filter((r) => r.reviewStatus === 'NEEDS_REVISION').length,
+    4,
+  );
+  assert.throws(() => post(path, { ...body, purpose: 'AGGREGATE' }));
+  assert.throws(
+    () => post(path, { ...body, filter: { ignoredUnknown: 'true' } }),
+    (e) => e.code === 'INVALID_FILTER',
+  );
+  assert.equal(
+    get(`/result-selections/${fixed.selectionId}/statistics`).noResultCount,
+    4,
+  );
+});
+test('mixed selected-reference publication freezes only available result IDs and does not invent missing references', () => {
+  const { post, select, mock } = setup();
+  const fixed = select('PUBLISH');
+  const plan = post('/projects/demo-project/package-plans', {
+    selectionId: fixed.selectionId,
+    specVersionId: 'demo-spec-v1',
+    packageSize: 10,
+    annotatorsPerSample: 1,
+    referenceMode: 'SELECTED',
+  });
+  post(`/package-plans/${plan.planId}/publish`, {
+    selectionHash: plan.selectionHash,
+  });
+  const members = mock.snapshot().packages.flatMap((p) => p.members);
+  assert.equal(members.filter((m) => m.referenceResultId).length, 8);
+  assert.equal(members.filter((m) => !m.referenceResultId).length, 4);
+});
+test('one candidate may display without moving the selected pointer; ambiguous candidates never choose latest', () => {
+  const { post, get, select, rows } = setup();
+  const run = () => {
+    const fixed = select('PUBLISH', ['demo-sample-9']);
+    const e = post('/projects/demo-project/ai-executions', {
+      selectionId: fixed.selectionId,
+      specVersionId: 'demo-spec-v1',
+      agentId: 'demo-agent',
+      referenceMode: 'NONE',
+    });
+    get(`/ai-executions/${e.executionId}`);
+    get(`/ai-executions/${e.executionId}`);
+  };
+  run();
+  let row = rows().find((r) => r.sampleId === 'demo-sample-9');
+  assert.ok(row.resultId);
+  assert.equal(row.selectedResultId, null);
+  assert.equal(row.candidateCount, 1);
+  run();
+  row = rows().find((r) => r.sampleId === 'demo-sample-9');
+  assert.equal(row.hasResult, true);
+  assert.equal(row.resultId, null);
+  assert.equal(row.requiresResultSelection, true);
+  assert.equal(row.candidateCount, 2);
+  assert.throws(() => select('REVIEW', ['demo-sample-9']));
+  const candidate = get('/projects/demo-project/samples/demo-sample-9/results')
+    .items[0];
+  post('/projects/demo-project/reviews', {
+    action: 'ACCEPT',
+    items: [
+      {
+        sampleId: row.sampleId,
+        resultId: candidate.resultId,
+        baseReviewRevision: row.reviewRevision,
+      },
+    ],
+  });
+  assert.equal(
+    rows().find((r) => r.sampleId === row.sampleId).selectedResultId,
+    candidate.resultId,
   );
 });

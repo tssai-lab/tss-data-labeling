@@ -1,0 +1,43 @@
+{
+  "synthetic": true,
+  "checks": [
+    "24 hourly kWh points, UTC+8 and independent daily value; dirty navigation guard; point/interval exact coordinates survive save/reload; cleared saved result remains empty",
+    "9/10 cannot submit; 10/10 handback is read-only and still pending review; explicit owner confirmation creates immutable JSONL/CSV/manifest ZIP with typed coordinates and source hashes",
+    "owner revision creates a separate pending candidate; fixed QC preview does not change when inputs change; gold remains unconfirmed, double-blind publication disabled pending API; kappa is synthetic primary-label pairing only; clean navigation leaves the editor normally"
+  ],
+  "captures": [
+    {
+      "name": "energy-annotations",
+      "viewport": 1280,
+      "document": 1280
+    },
+    {
+      "name": "energy-annotations",
+      "viewport": 768,
+      "document": 768
+    },
+    {
+      "name": "energy-annotations",
+      "viewport": 390,
+      "document": 390
+    },
+    {
+      "name": "energy-missing-not-zero",
+      "viewport": 390,
+      "document": 390
+    },
+    {
+      "name": "energy-owner-quality",
+      "viewport": 1280,
+      "document": 1280
+    },
+    {
+      "name": "energy-owner-quality",
+      "viewport": 390,
+      "document": 390
+    }
+  ],
+  "pageErrors": [],
+  "apiRequests": [],
+  "passed": true
+}

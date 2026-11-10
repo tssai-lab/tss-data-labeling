@@ -1,0 +1,83 @@
+{
+  "date": "2026-11-10",
+  "branch": "feat/labeling-v11-frontend-gap",
+  "featureParent": "1e05cccc41b7e9cdafe40980e1125969eed3b023",
+  "backendDocuments": "fafefcaebd7cbb8fd4dec0cbea7a3576bb9703e2",
+  "nodeVersion": "22.11.0",
+  "passed": true,
+  "checks": {
+    "typescript": { "command": "npm run tsc", "passed": true },
+    "unitAndContractTests": {
+      "command": "npm test",
+      "total": 303,
+      "passed": 303,
+      "failed": 0,
+      "skipped": 0
+    },
+    "biomeChangedSourcesAndScripts": {
+      "files": 28,
+      "passed": true,
+      "warnings": 0
+    },
+    "governance": {
+      "command": "npm run lint:governance",
+      "passed": true,
+      "existingInfosOutsideChange": 5
+    },
+    "classificationBrowser": {
+      "command": "node scripts/qa/labeling-v11.browser.mjs",
+      "passed": true,
+      "screenshots": 31,
+      "report": "browser-report.json",
+      "pageErrors": 0,
+      "unexpectedRequests": 0
+    },
+    "energyBrowser": {
+      "command": "node scripts/qa/labeling-energy.browser.mjs",
+      "passed": true,
+      "screenshots": 6,
+      "report": "energy-browser-report.json",
+      "pageErrors": 0,
+      "apiRequests": 0
+    },
+    "viewports": [1280, 768, 390],
+    "defaultOff": {
+      "passed": true,
+      "report": "default-off-report.json",
+      "routes": ["/labeling/demo", "/labeling/demo/energy"]
+    },
+    "productionBuild": {
+      "command": "$env:LABELING_GAP_MOCK='true'; npm run build",
+      "passed": true
+    },
+    "productionForcedFlag": {
+      "passed": true,
+      "report": "production-forced-flag-report.json",
+      "routes": ["/labeling/demo", "/labeling/demo/energy"]
+    },
+    "archiveVerification": {
+      "passed": true,
+      "report": "archive-validation.json",
+      "energyRows": 10,
+      "classificationAcceptedRows": 1
+    }
+  },
+  "regressions": [
+    "Unknown template/version/schema fails closed; frozen metadata cannot change between assignment item pages",
+    "Draft structure versus completion, input hash/revision CAS, zero versus null, UTC+8 and exact half-open interval ending next day",
+    "Cleared saved energy draft stays empty after reload; 9/10 cannot hand back, 10/10 is read-only and still pending owner confirmation",
+    "Dirty navigation is guarded; saved and disabled-demo pages navigate normally",
+    "Owner revision creates a separate pending candidate; old final export remains unchanged",
+    "Fixed sampling does not rerandomize on input changes; kappa excludes non-independent/duplicate pairs and shows degeneracy explicitly",
+    "30-minute review-action-bound selections; missing-answer NEEDS_REVISION; mixed references; fixed statistics and unknown-filter refusal",
+    "Candidate display does not move selected-result pointer; ambiguous candidates never choose latest"
+  ],
+  "notRealAcceptance": [
+    "No restricted energy dataset was accessed or independently verified; every new input, result, screenshot and export is synthetic",
+    "Template API, energy import, authorized data slices, service-side validator/schema migrations, new workflow and QC APIs remain absent from inspected backend",
+    "D cropped Label Studio renderer, fixed source version/license inventory, real rule/model execution and historical features remain pending",
+    "Formal labels/semantics and quality targets require expert confirmation; no expert gold answers or actual double-blind coverage were created",
+    "Real accounts, concurrency/CAS, cross-sample CSV authorization, worker late writes and deployed downloads remain unverified"
+  ],
+  "delivery": "Same feature branch only; no PR, merge, deployment, migration, real dataset redistribution or external service writes."
+}

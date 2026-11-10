@@ -31,13 +31,15 @@ import type {
   WorkSample,
 } from '@/services/labelingTasks';
 import { allWorkItems, tasks } from '@/services/labelingTasks';
-import ClassificationEditorAdapter, {
-  type ClassificationEditorHandle,
-  type EditorState,
-  type SaveInput,
+import { assertClassificationWork } from '@/services/labelingTemplates.mjs';
+import type {
+  ClassificationEditorHandle,
+  EditorState,
+  SaveInput,
 } from './ClassificationEditorAdapter';
 import styles from './index.less';
 import Navigation from './Navigation';
+import { ClassificationTaskEditor } from './TaskEditorHost';
 
 const { Paragraph, Text } = Typography;
 function describe(error: unknown): string {
@@ -210,6 +212,7 @@ export default function ClassificationAssignment() {
     ])
       .then(([me, value]) => {
         if (abort.signal.aborted || current !== requestVersion.current) return;
+        assertClassificationWork(value);
         setIdentity(me);
         setWork(value);
         setSelectedId(value.items[0]?.sampleId || '');
@@ -463,6 +466,7 @@ export default function ClassificationAssignment() {
     };
     try {
       const fresh = pending ? work : await allWorkItems(assignmentId);
+      assertClassificationWork(fresh);
       if (version !== requestVersion.current) {
         unlock();
         return;
@@ -733,7 +737,8 @@ export default function ClassificationAssignment() {
                         assignmentId={assignmentId}
                         sample={selected}
                         render={(url) => (
-                          <ClassificationEditorAdapter
+                          <ClassificationTaskEditor
+                            binding={work.specification}
                             key={`${assignmentId}:${selected.sampleId}:${work.specification.specVersionId}`}
                             ref={editorRef}
                             assignmentId={assignmentId}

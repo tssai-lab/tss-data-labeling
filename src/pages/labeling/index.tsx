@@ -32,6 +32,7 @@ import {
   post,
   sampleBlob,
 } from '@/services/labeling';
+import { taskTemplates } from '@/services/labelingTemplates.mjs';
 import { hashFile, uploadChunks } from '@/services/labelingUpload.mjs';
 import { CapabilitiesNotice } from './gapDemo';
 import styles from './index.less';
@@ -991,10 +992,18 @@ export default function Labeling() {
           <Form.Item label="任务类型">
             <Select
               value={taskType}
-              disabled
-              options={[{ value: taskType, label: '图片分类' }]}
+              options={taskTemplates.map((template) => ({
+                value: template.taskType,
+                label: template.name,
+                disabled: !template.enabled,
+              }))}
             />
           </Form.Item>
+          <Alert
+            type="info"
+            showIcon
+            message="能耗模板待后端模板注册、导入及授权切片接口接入，目前仅开放独立合成试标。"
+          />
         </Form>
       </Modal>
     </main>

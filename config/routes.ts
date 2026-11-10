@@ -1,5 +1,11 @@
 export default [
   {
+    path: '/labeling/demo/energy',
+    component: './labeling/EnergyDemo',
+    layout: false,
+    hideInMenu: true,
+  },
+  {
     path: '/labeling/projects/:projectId/workbench',
     component: './labeling/ProjectWorkflow',
     layout: false,

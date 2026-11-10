@@ -85,6 +85,7 @@ export default function WorkflowDemo() {
   const [filter, setFilter] = useState<Record<string, string>>({});
   const [chosen, setChosen] = useState<React.Key[]>([]);
   const [purpose, setPurpose] = useState('REVIEW');
+  const [reviewAction, setReviewAction] = useState('ACCEPT');
   const [excluded, setExcluded] = useState('');
   const [selection, setSelection] = useState<Selection>();
   const [preview, setPreview] = useState<SelectionItem[]>([]);
@@ -238,10 +239,18 @@ export default function WorkflowDemo() {
             })),
         };
     const frozen = await api.select(
-      { purpose, specVersionId: specs, ...body },
+      {
+        purpose,
+        ...(purpose === 'REVIEW' ? { reviewAction } : {}),
+        specVersionId: specs,
+        ...body,
+      },
       key,
     );
     const page = await api.selectionItems(frozen.selectionId);
+    const fixedStats = await api.selectionStatistics(frozen.selectionId);
+    if (fixedStats.total !== frozen.count)
+      throw new Error('选择清单与固定统计不一致，请重新预览');
     setSelection(frozen);
     setPreview(page.items);
     setPreviewCursor(page.nextCursor);
@@ -251,7 +260,7 @@ export default function WorkflowDemo() {
     );
   }
   function confirmReview(action: 'ACCEPT' | 'NEEDS_REVISION') {
-    if (selection?.purpose !== 'REVIEW') {
+    if (selection?.purpose !== 'REVIEW' || selection.reviewAction !== action) {
       setError('请先创建并预览 REVIEW 选择快照');
       return;
     }
@@ -334,6 +343,11 @@ export default function WorkflowDemo() {
           </div>
         </header>
         <nav className={styles.navigation}>
+          {enabled && (
+            <Link className={styles.navTab} to="/labeling/demo/energy">
+              能耗模板与质检合成试标
+            </Link>
+          )}
           <Link className={styles.navTab} to="/labeling">
             真实标注平台
           </Link>
@@ -390,6 +404,7 @@ export default function WorkflowDemo() {
                     mock.reset();
                     setExcluded('');
                     setPurpose('REVIEW');
+                    setReviewAction('ACCEPT');
                     setReferenceMode('NONE');
                     setReopen(false);
                     setPackageSize(10);
@@ -491,10 +506,10 @@ export default function WorkflowDemo() {
               </Space>
               <Space wrap style={{ margin: '16px 0' }}>
                 <Tag>范围 {stats.total ?? 0}</Tag>
-                <Tag>已确认 {stats.accepted ?? 0}</Tag>
-                <Tag>待修正 {stats.needsRevision ?? 0}</Tag>
-                <Tag>没有答案 {stats.incomplete ?? 0}</Tag>
-                <Tag>活动处理 {stats.active ?? 0}</Tag>
+                <Tag>已确认 {stats.acceptedCount ?? 0}</Tag>
+                <Tag>待修正 {stats.needsRevisionCount ?? 0}</Tag>
+                <Tag>没有答案 {stats.noResultCount ?? 0}</Tag>
+                <Tag>活动处理 {stats.activeCount ?? 0}</Tag>
               </Space>
               <Table<ResultRow>
                 rowKey="sampleId"
@@ -550,7 +565,15 @@ export default function WorkflowDemo() {
                     title: '审核 / revision',
                     render: (_, r) => `${r.reviewStatus} / ${r.reviewRevision}`,
                   },
-                  { title: '结果版本', dataIndex: 'resultId', ellipsis: true },
+                  {
+                    title: '结果版本',
+                    dataIndex: 'resultId',
+                    ellipsis: true,
+                    render: (id, row) =>
+                      row.requiresResultSelection
+                        ? '多份候选，须从来源历史明确选择'
+                        : id || '无候选答案',
+                  },
                   {
                     title: '活动 / 失败',
                     render: (_, r) =>
@@ -654,10 +677,28 @@ export default function WorkflowDemo() {
                     setPurpose(v);
                     setSelection(undefined);
                   }}
-                  options={['REVIEW', 'PUBLISH', 'AGGREGATE', 'FINALIZE'].map(
-                    (value) => ({ value, label: value }),
-                  )}
+                  options={['REVIEW', 'PUBLISH', 'FINALIZE'].map((value) => ({
+                    value,
+                    label: value,
+                  }))}
                 />
+                {purpose === 'REVIEW' && (
+                  <Select
+                    aria-label="快照审核动作"
+                    value={reviewAction}
+                    options={[
+                      { value: 'ACCEPT', label: '确认结果' },
+                      {
+                        value: 'NEEDS_REVISION',
+                        label: '标记待修正（允许无答案）',
+                      },
+                    ]}
+                    onChange={(value) => {
+                      setReviewAction(value);
+                      setSelection(undefined);
+                    }}
+                  />
+                )}
                 <Button
                   disabled={busy || !chosen.length}
                   onClick={() =>
@@ -719,13 +760,21 @@ export default function WorkflowDemo() {
               <Space wrap>
                 <Button
                   type="primary"
-                  disabled={busy || selection?.purpose !== 'REVIEW'}
+                  disabled={
+                    busy ||
+                    selection?.purpose !== 'REVIEW' ||
+                    selection.reviewAction !== 'ACCEPT'
+                  }
                   onClick={() => confirmReview('ACCEPT')}
                 >
                   明确确认所选结果
                 </Button>
                 <Button
-                  disabled={busy || selection?.purpose !== 'REVIEW'}
+                  disabled={
+                    busy ||
+                    selection?.purpose !== 'REVIEW' ||
+                    selection.reviewAction !== 'NEEDS_REVISION'
+                  }
                   onClick={() => confirmReview('NEEDS_REVISION')}
                 >
                   明确标记所选待修正

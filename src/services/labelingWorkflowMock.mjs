@@ -83,6 +83,12 @@ export function createWorkflowMock({
       fail(503, 'MOCK_DISABLED', '待后端接入，开发演示未启用');
   };
   const uid = (type) => `demo-new-${type}-${++sequence}`;
+  const scopeFingerprint = (value) => {
+    let hash = 2166136261;
+    for (const c of JSON.stringify(value))
+      hash = Math.imul(hash ^ c.charCodeAt(0), 16777619);
+    return `synthetic-fnv32-${(hash >>> 0).toString(16).padStart(8, '0')}`;
+  };
   function reset() {
     check();
     sequence = 0;
@@ -202,28 +208,41 @@ export function createWorkflowMock({
     if (!r) fail(404, 'RESOURCE_NOT_FOUND', '结果版本不存在');
     return r;
   };
-  const row = (s) => ({
-    ...s,
-    ...(s.currentResultId
+  const row = (s) => {
+    const candidates = db.results.filter(
+      (r) => r.sampleId === s.sampleId && r.reviewable,
+    );
+    const display = s.currentResultId
       ? result(s.currentResultId)
-      : {
-          resultId: null,
-          result: null,
-          sourceKind: null,
-          sourceActor: null,
-          modelVersion: null,
-          confidence: null,
-          reviewable: false,
-        }),
-    specVersionId: db.specVersionId,
-    hasResult: Boolean(s.currentResultId),
-  });
+      : candidates.length === 1
+        ? candidates[0]
+        : null;
+    return {
+      ...s,
+      ...(display
+        ? display
+        : {
+            resultId: null,
+            result: null,
+            sourceKind: null,
+            sourceActor: null,
+            modelVersion: null,
+            confidence: null,
+            reviewable: false,
+          }),
+      specVersionId: db.specVersionId,
+      hasResult: candidates.length > 0,
+      selectedResultId: s.currentResultId,
+      candidateCount: candidates.length,
+      requiresResultSelection: !s.currentResultId && candidates.length > 1,
+    };
+  };
   function snapshot() {
     check();
     if (!db) return reset();
     return clone({ ...db, rows: db.samples.map(row) });
   }
-  function reviewItem(s, id = s.currentResultId) {
+  function reviewItem(s, id = row(s).resultId) {
     return {
       sampleId: s.sampleId,
       resultId: id,
@@ -279,6 +298,21 @@ export function createWorkflowMock({
     });
   }
   function filtered(query) {
+    const supported = [
+      'specVersionId',
+      'packageId',
+      'roundId',
+      'executionId',
+      'sourceKind',
+      'reviewStatus',
+      'hasResult',
+      'confidencePolicyId',
+      'band',
+      'limit',
+      'cursor',
+    ];
+    if ([...query.keys()].some((key) => !supported.includes(key)))
+      fail(422, 'INVALID_FILTER', '未知筛选字段，不能静默忽略');
     const policy = query.get('confidencePolicyId')
       ? db.policies.find((p) => p.policyId === query.get('confidencePolicyId'))
       : null;
@@ -299,6 +333,8 @@ export function createWorkflowMock({
               ...row(s),
               ...r,
               hasResult: true,
+              candidateCount: 1,
+              requiresResultSelection: false,
               reviewStatus:
                 s.currentResultId === r.resultId ? s.reviewStatus : 'PENDING',
             }
@@ -307,6 +343,8 @@ export function createWorkflowMock({
               resultId: null,
               result: null,
               hasResult: false,
+              candidateCount: 0,
+              requiresResultSelection: false,
               sourceKind: 'AI',
               executionId,
               roundId: execution.roundId,
@@ -369,8 +407,15 @@ export function createWorkflowMock({
   }
   function createSelection(body) {
     validSpec(body.specVersionId);
-    if (!['PUBLISH', 'REVIEW', 'AGGREGATE', 'FINALIZE'].includes(body.purpose))
+    if (!['PUBLISH', 'REVIEW', 'FINALIZE'].includes(body.purpose))
       fail(400, 'INVALID_REQUEST', '未知选择用途');
+    if (
+      body.purpose === 'REVIEW' &&
+      !['ACCEPT', 'NEEDS_REVISION'].includes(body.reviewAction)
+    )
+      fail(422, 'SELECTION_PURPOSE_MISMATCH', '审核快照必须固定审核动作');
+    if (body.purpose !== 'REVIEW' && body.reviewAction)
+      fail(422, 'SELECTION_PURPOSE_MISMATCH', '仅审核快照可携带审核动作');
     if (body.items && (body.filter || body.excludeSampleIds))
       fail(400, 'INVALID_REQUEST', '明确选择与筛选输入互斥');
     const exclude = new Set(body.excludeSampleIds || []);
@@ -381,17 +426,37 @@ export function createWorkflowMock({
         .filter((r) => !exclude.has(r.sampleId))
         .map((r) => reviewItem(sample(r.sampleId), r.resultId));
     validateItems(items, {
-      needsResult: ['REVIEW', 'AGGREGATE'].includes(body.purpose),
+      needsResult: body.purpose === 'REVIEW' && body.reviewAction === 'ACCEPT',
       reviewable: body.purpose === 'REVIEW',
     });
     const s = {
       selectionId: uid('selection'),
-      selectionHash: uid('scope'),
+      selectionHash: scopeFingerprint({
+        projectId: 'demo-project',
+        specVersionId: db.specVersionId,
+        purpose: body.purpose,
+        reviewAction: body.reviewAction || null,
+        items: [...items].sort((a, b) => a.sampleId.localeCompare(b.sampleId)),
+      }),
       purpose: body.purpose,
+      reviewAction: body.reviewAction || null,
+      statistics: {
+        total: items.length,
+        hasResultCount: items.filter((i) => i.resultId).length,
+        noResultCount: items.filter((i) => !i.resultId).length,
+        acceptedCount: items.filter(
+          (i) => sample(i.sampleId).reviewStatus === 'ACCEPTED',
+        ).length,
+        needsRevisionCount: items.filter(
+          (i) => sample(i.sampleId).reviewStatus === 'NEEDS_REVISION',
+        ).length,
+        activeCount: items.filter((i) => sample(i.sampleId).activeProcessing)
+          .length,
+      },
       items: clone(items),
       count: items.length,
-      expiry: now() + 300000,
-      expiresAt: new Date(now() + 300000).toISOString(),
+      expiry: now() + 1800000,
+      expiresAt: new Date(now() + 1800000).toISOString(),
     };
     db.selections.push(s);
     return s;
@@ -402,8 +467,6 @@ export function createWorkflowMock({
       fail(400, 'INVALID_REQUEST', '参考模式必填');
     const s = selection(body.selectionId, 'PUBLISH');
     const entries = validateItems(s.items, { inactive: true });
-    if (body.referenceMode === 'SELECTED' && entries.some((e) => !e.i.resultId))
-      fail(422, 'REFERENCE_UNAVAILABLE', '部分样本没有固定参考答案');
     if (
       entries.some((e) => e.s.reviewStatus === 'ACCEPTED') &&
       body.reopenAccepted !== true
@@ -477,11 +540,7 @@ export function createWorkflowMock({
       };
       db.results.push(r);
       execution.resultIds.push(r.resultId);
-      if (!s.currentResultId) {
-        s.currentResultId = r.resultId;
-        s.reviewStatus = 'PENDING';
-        s.reviewRevision++;
-      }
+      if (!s.currentResultId) s.reviewStatus = 'PENDING';
       s.errorCode = null;
       execution.successCount++;
     }
@@ -540,11 +599,14 @@ export function createWorkflowMock({
         const rows = filtered(url.searchParams);
         data = {
           total: rows.length,
-          accepted: rows.filter((r) => r.reviewStatus === 'ACCEPTED').length,
-          needsRevision: rows.filter((r) => r.reviewStatus === 'NEEDS_REVISION')
+          acceptedCount: rows.filter((r) => r.reviewStatus === 'ACCEPTED')
             .length,
-          incomplete: rows.filter((r) => !r.hasResult).length,
-          active: rows.filter((r) => r.activeProcessing).length,
+          needsRevisionCount: rows.filter(
+            (r) => r.reviewStatus === 'NEEDS_REVISION',
+          ).length,
+          hasResultCount: rows.filter((r) => r.hasResult).length,
+          noResultCount: rows.filter((r) => !r.hasResult).length,
+          activeCount: rows.filter((r) => r.activeProcessing).length,
         };
       } else if (
         method === 'GET' &&
@@ -568,6 +630,11 @@ export function createWorkflowMock({
         )
           fail(400, 'INVALID_REQUEST', '审核动作或互斥输入无效');
         if (body.action === 'NEEDS_REVISION') requireReason(body.reason);
+        if (
+          body.selectionId &&
+          selection(body.selectionId, 'REVIEW').reviewAction !== body.action
+        )
+          fail(422, 'SELECTION_PURPOSE_MISMATCH', '审核动作与已预览快照不匹配');
         const items = body.selectionId
           ? selection(body.selectionId, 'REVIEW').items
           : body.items.map((i) => ({
@@ -802,7 +869,10 @@ export function createWorkflowMock({
       } else
         fail(404, 'RESOURCE_NOT_FOUND', '演示未提供该能力，不回退真实服务');
     } else if (route[0] === 'result-selections' && method === 'GET')
-      data = page(selection(route[1]).items, url.searchParams);
+      data =
+        route[2] === 'statistics'
+          ? selection(route[1]).statistics
+          : page(selection(route[1]).items, url.searchParams);
     else if (route[0] === 'agents' && method === 'GET')
       data = [
         {
@@ -1000,7 +1070,7 @@ export function createWorkflowMock({
           'reviewRevision',
           'specVersionId',
         ];
-        const escape = (v) => `"${String(v ?? '').replaceAll('"', '""')}"`;
+        const csvEscape = (v) => `"${String(v ?? '').replaceAll('"', '""')}"`;
         data = {
           'classifications.csv':
             '\uFEFF' +
@@ -1010,7 +1080,7 @@ export function createWorkflowMock({
               .map((r) =>
                 fields
                   .map((f) =>
-                    escape(
+                    csvEscape(
                       f === 'labelId'
                         ? r.result.labelId
                         : f === 'labelName'
@@ -1075,8 +1145,7 @@ export function createWorkflowMock({
     finishHumanPackage(id) {
       check();
       const p = db.packages.find((p) => p.packageId === id);
-      if (!p || p.status !== 'OPEN')
-        fail(409, 'ASSIGNMENT_CLOSED', '包不可交回');
+      if (p?.status !== 'OPEN') fail(409, 'ASSIGNMENT_CLOSED', '包不可交回');
       if (db.project.status !== 'OPEN')
         fail(409, 'PROJECT_PAUSED', '项目不可写');
       // Explicit test control, not a browser call to a claimed backend API.
@@ -1099,10 +1168,6 @@ export function createWorkflowMock({
           referenceResultId: item.referenceResultId || null,
         };
         db.results.push(r);
-        if (!s.currentResultId) {
-          s.currentResultId = r.resultId;
-          s.reviewRevision++;
-        }
         s.activeProcessing = false;
         s.reviewStatus = 'PENDING';
       }

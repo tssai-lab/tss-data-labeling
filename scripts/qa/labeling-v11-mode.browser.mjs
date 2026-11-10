@@ -1,7 +1,8 @@
 // Run with LABELING_UI_BASE against default-off dev or production preview.
 import assert from 'node:assert/strict';
-import { createRequire } from 'node:module';
 import { writeFile } from 'node:fs/promises';
+import { createRequire } from 'node:module';
+
 const require = createRequire(import.meta.url);
 const { chromium } = require('../../.qa/node_modules/playwright');
 const browser = await chromium.launch({ channel: 'chrome', headless: true });
@@ -15,7 +16,7 @@ await page.addInitScript(() =>
 await page.route('**/api/**', (route) => {
   const req = route.request();
   if (req.method() !== 'GET')
-    writes.push(req.method() + ' ' + new URL(req.url()).pathname);
+    writes.push(`${req.method()} ${new URL(req.url()).pathname}`);
   if (req.url().includes('/api/labeling/v1/')) {
     requests++;
     return route.fulfill({
@@ -43,6 +44,14 @@ try {
   await page
     .getByText('开发演示默认关闭，生产构建不可开启', { exact: false })
     .waitFor();
+  await page.goto(`${base}/#/labeling/demo/energy`);
+  await page
+    .getByText('开发演示默认关闭，生产构建不可开启', { exact: false })
+    .waitFor();
+  assert.equal(
+    await page.getByRole('button', { name: '交回当前能耗包' }).count(),
+    0,
+  );
   assert.equal(
     await page.getByRole('button', { name: '创建成果导出' }).count(),
     0,
@@ -67,12 +76,19 @@ try {
   };
   await writeFile(
     new URL(
-      `../../docs/labeling-v11-update-evidence/${result.mode}-report.json`,
+      `../../docs/labeling-v11-template-evidence/${result.mode}-report.json`,
       import.meta.url,
     ),
     JSON.stringify(result, null, 2),
   );
   console.log(JSON.stringify(result));
+} catch (error) {
+  console.log(
+    'MODE_FAILURE_STATE',
+    page.url(),
+    (await page.locator('body').innerText()).slice(0, 2400),
+  );
+  throw error;
 } finally {
   await browser.close();
 }
