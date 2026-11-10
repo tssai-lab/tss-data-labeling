@@ -1,6 +1,6 @@
 # 接口契约｜已有接口与新版待开发方案
 
-更新：2026-11-09。统一前缀 /api/labeling/v1。依据本地 Controller/Service 和最新业务规则整理，未联网验证部署。**第 2—5 节列现有能力，第 6—11 节是待实现契约；第 12 节说明旧编辑器接口停用方向。** 出现示例不代表接口已经可调用。
+更新：2026-11-10。统一前缀 /api/labeling/v1。依据本地 Controller/Service 和最新业务规则整理，未联网验证部署。**第 2—5 节列现有能力，第 6—11 节是待实现契约；第 12 节说明旧编辑器接口停用方向。** 第15节补充模板与时序扩展，仍待实现。出现示例不代表接口已经可调用。
 
 ## 1. 通用协议、权限与字段
 
@@ -50,7 +50,7 @@
 
 ### 3.1 登录、权限与请求约定
 
-所有接口带 `Authorization: Bearer <统一登录令牌>`。后端重新校验统一身份、标注平台 ENABLED 状态及项目 owner 归属。标注管理员按同一 owner 规则访问图片导入数据，他人资源返回 404。有效领取者的包内图片使用第 5 节的 assignment 文件接口授权。
+所有接口带 `Authorization: Bearer <统一登录令牌>`。后端重新校验统一身份、标注平台 ENABLED 状态及项目 owner 归属。标注管理员按同一 owner 规则访问图片导入数据，他人资源返回 404。有效领取者的包内图片使用第 4 节的 assignment 文件接口授权。
 
 owner 的 DRAFT/OPEN 项目允许创建批次、上传、完成、重试和预览。PAUSED/ARCHIVED 项目拒绝导入写操作，PAUSED 拒绝读取原图，ARCHIVED 允许读取已有原图。批次查询及 READY 批次的样本元数据查询可供历史查看。
 
@@ -457,3 +457,24 @@ AI链路：上传READY→选择样本（不用包）→agents→ai-executions→
 - C：按固定选择预览操作，区分执行成功、结果交回和需求方确认；人工逐包提交，AI显示批次成功/失败范围。
 
 联调必须覆盖：领取10包先提交5个完整包；原10张包只返工4张形成新包；多候选不自动选最新；无答案可标待修正但不能确认；选择后审核版本变化整体拒绝；AI部分成功可审成功项；重复回调不重复保存；租约过期/取消后旧回调拒绝；阈值变更不改变既有确认。模型实际可用性、资源需求和分数语义由D提交运行证据，不能仅凭本契约宣称验证通过。
+
+## 15. 任务模板与能耗时序输入扩展（待实现）
+
+详细依据、字段语义与示例见[任务插件、标注格式与工业能耗验收设计](14-task-plugins-and-energy-acceptance.md)第4—9节。现有图片接口仍按第2—5节使用，不能现在直接上传能耗CSV期待自动可用。
+
+| 接口/变更 | 契约边界 | 负责 |
+|---|---|---|
+| GET /task-templates | 启用用户读取已注册且可用的id/version/taskType/inputFormat/resultFormat/editorKey/capabilities；不返回代码/凭据 | A，C读取 |
+| POST /projects扩展 | 新模板使用templateId/templateVersion；服务端从注册表校验taskType，旧IMAGE_CLASSIFICATION请求映射既有模板；不允许任意远程schema | A |
+| POST /projects/{id}/spec-versions扩展 | 固定模板和input/resultSchemaId及摘要；标签、说明和领域配置经模板校验；旧schemaVersion字段含义保留 | A/D |
+| POST /projects/{id}/imports扩展 | 复用现有上传，增加importerKey及受校验importOptions；能耗配置TASK_ROWS或STATION_DAYS，不重复读取sample/preview | B |
+| GET /assignments/{id}/samples/{sampleId}/data | 当前领取者的授权样本，含inputFormat/schemaId/inputHash/payload/context；不返回整份共享CSV | B/A |
+| GET /projects/{id}/samples/{sampleId}/data | owner读取相同样本结构；仍按项目权限与状态验证 | B/A |
+| GET /internal/labeling/v1/executions/{id}/samples/{sampleId}/data | Worker凭据、generation、租约和执行范围都有效；输入/上下文版本已冻结 | B/A，D调用 |
+| items扩展 | 增加templateId/version、inputFormat和dataUrl；图片fileUrl继续保留；前端按注册editorKey装配 | B/C/D |
+| 草稿、提交、AI输出、修订 | 复用原路径，以冻结规范决定resultFormat及payload校验；人工完整性仍按单包，AI成功项通过模板完成检查 | A/D |
+| 导出扩展 | 注册annotation-jsonl-v1、energy-station-day-csv-v1；仅读取确认快照；公共来源和时序点/区间不丢失 | B |
+
+新增未知/不兼容模板返回422 TEMPLATE_UNSUPPORTED或TEMPLATE_MISMATCH；样本输入版本错误409 INPUT_VERSION_CONFLICT；部署缺少历史模板实现时503 TEMPLATE_UNAVAILABLE，不静默按新schema解释旧记录。完整请求/响应schema须随实现与第14号设计同步，当前表为扩展边界，不代表现成接口。
+
+本次质检要求引入抽样、双人盲标、金标准及一致性统计。A/B应先补质检计划、范围权限、指标输入/输出契约再实现，不能把分类多数投票返回值直接当kappa或金标准准确率。
