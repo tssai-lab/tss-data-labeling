@@ -1,42 +1,42 @@
-# 接口契约 V1.1
+# 接口契约｜已有接口与新版待开发方案
 
-统一前缀为 `/api/labeling/v1`。本文包含已实现接口及后续设计。2026-11-07 以 `backend` 提交 `bbf022d` 为核对基线，身份与项目、图片导入与 owner 原图读取、用户权限、任务包与领取已实现并合入 `backend`。图片导入契约见第 3 节，身份权限和任务包的实际范围见文末补充。编辑器会话、草稿保存、结果提交、导出及其他规划接口按各章节标注推进。部署与真实账号验收进度由交接、验证记录单独记录。
+更新：2026-11-09。统一前缀 /api/labeling/v1。依据本地 Controller/Service 和最新业务规则整理，未联网验证部署。**第 2—5 节列现有能力，第 6—11 节是待实现契约；第 12 节说明旧编辑器接口停用方向。** 出现示例不代表接口已经可调用。
 
-## 1. 通用规则
+## 1. 通用协议、权限与字段
 
-- 使用现有统一登录Bearer Token，后端解析身份；不信任请求体中的owner/actor/role。标注管理员权限单独判断，不用训练roleId替代。
-- 成功返回200/201；异步任务202。统一JSON响应 `{ "data": ..., "requestId": "..." }`，文件下载除外。
-- 错误 `{ "error": {"code":"SLOT_FULL","message":"任务包已被领满"}, "requestId":"..." }`。
-- 数据库业务ID为UUID，API以规范UUID字符串传递，调用方将ID视为不透明值；`identityUserId`保持统一身份服务给出的原始字符串。时间ISO8601 UTC；列表用cursor、limit（默认20，上限100），响应items/nextCursor。
-- 创建、发布、领取、放弃、提交、导出等POST写操作必须带Idempotency-Key；同调用者/方法/资源/键和相同请求返回原结果，同键不同内容409。幂等记录至少保存到所属资源归档清理，清理后仍由业务唯一约束防重复。
-- 草稿用baseRevision，分片用offset与sha256；二者按各自协议避免重复。403/404统一隐藏不属于调用者的资源，不能通过错误枚举他人数据。
+- 用户请求携带统一登录 Bearer Token，后端解析 identityUserId、HUMAN actor 和项目 owner；不采信请求体的角色和执行者身份。
+- 成功 `{ "data": ..., "requestId": "..." }`；错误 `{ "error": {"code":"...","message":"..."}, "requestId":"..." }`。新接口可扩展 error.details 返回缺项/冲突，不假称现有错误都已带详情。
+- 业务 ID 是 UUID 字符串，时间 ISO 8601 UTC。结果里的 labelId 是规范内的稳定字符串，不要求 UUID。示例的 <...> 需替换为服务返回值。
+- 默认列表 limit=20，上限100，返回 items/nextCursor；admin/users 例外沿用 offset。查询筛选不是写授权，消费快照仍须重查。
+- 新 POST 写操作带 Idempotency-Key；相同操作/调用者/键/内容重放同资源，同键不同内容 409。草稿 PUT 用 baseRevision，不同时强制幂等键。
+- 服务必须逐请求检查项目、样本、轮次和作者。管理员没有通用 owner 数据绕过。文件、下载同样授权。
+- 新处理发布、审核和成果接口都在项目范围，不要求 AI 样本先加入人工包。人工提交以单个 assignment 的领取包为完整性单位，同一发布计划的其他包不阻塞该包提交。
+- 候选、草稿、已提交、已审核是不同状态。AI confidence 由可信 Worker 提供，人工/owner 不能通过请求体伪装模型分数。
+- 默认 401 才引导重新登录；403 显示权限/启用提示，409 提示刷新或处理冲突，不能全部当作登录失效。
 
-领取者的原始样本、编辑器和草稿访问还须项目处于OPEN；暂停时本人不可继续读取工作数据。图片导入首轮允许 owner 在 DRAFT/OPEN 导入并预览自己的数据，以支持新建项目后的检查；ARCHIVED 可只读预览已导入图片，PAUSED 不可读取原图。该例外不授予领取者任何 DRAFT 数据权限。本人已提交结果可只读查看；owner可管理历史结果并导出。归档后禁止新增标注、导入和发布；owner仍可查看历史结果并创建只读结果导出任务。创建项目的taskType与规范taskType必须一致，不能跨类型发布。
+## 2. 身份、项目和权限（已有）
 
-## 2. 身份与项目
+| 接口 | 权限/请求 | 响应与说明 |
+|---|---|---|
+| GET /me | 启用的统一登录用户 | actorId、labelingAdmin、canCreateProject、canAnnotate |
+| POST /projects | 任意启用人工；name、description、taskType，幂等键 | 201，创建者为 owner，无需求方审批 |
+| GET /projects?scope=owned | 本人；cursor/limit | 本人项目列表 |
+| GET /projects/{id} | owner | 项目与规范版本，跨用户404 |
+| POST /projects/{id}/spec-versions | owner；taskType、labels、instructions、editorConfig、schemaVersion，幂等键 | 新规范版本；本轮类型 IMAGE_CLASSIFICATION |
+| GET /admin/users?limit=20&offset=0 | 标注管理员 | data 为已建立 HUMAN 映射的用户数组，不是全部统一登录账号 |
+| PATCH /admin/users/{actorId} | 标注管理员；status 和/或 labelingAdmin、必填 reason | 200 data=null；仅标注权限，不修改训练角色 |
 
-| 方法与路径 | 权限 | 输入要点 | 返回 |
-|---|---|---|---|
-| GET /me | 标注平台启用用户 | 无 | actorId、labelingAdmin、canCreateProject=true、canAnnotate=true |
-| POST /projects | 任意启用人工用户，无需审批 | name、description、taskType | 201 projectId、ownerActorId、DRAFT、revision |
-| GET /projects?scope=owned | 当前用户 | cursor/limit | 只列本人创建项目；不是全站项目原数据入口 |
-| GET /projects/{projectId} | 项目owner | 无 | 项目与已有规范版本；批次和进度随数据导入模块补齐 |
-| POST /projects/{projectId}/pause | owner或标注管理员 | reason、baseRevision | PAUSED和新revision |
-| POST /projects/{projectId}/resume | owner或标注管理员 | baseRevision | OPEN和新revision；规范/批次需仍有效 |
-| POST /projects/{projectId}/archive | owner或标注管理员 | reason、baseRevision | 无有效领取及执行中发布/导入任务后ARCHIVED，否则409 |
-| POST /projects/{projectId}/spec-versions | owner | taskType、labels[{id,name}]、instructions、editorConfig、schemaVersion | 新specVersionId；不能原位改已发布规范 |
+管理员不能停用自己或撤销自己的管理员权限；改他人状态需重新授权。查询项目和原图仍遵守 owner 规则。项目创建示例：
 
-上表中的身份、建项、本人项目列表和项目详情接口已实现并合入 `backend`。服务将原始 `Authorization` 头转交训练后端 `/api/user/current-user` 验证，再把身份ID映射为唯一HUMAN actor；不读取或复制训练平台roleId。训练后端不可用时返回503。项目仅owner可查看和管理。创建项目与创建规范版本要求 `Idempotency-Key`，相同键和请求返回原资源，不同请求复用同键返回409。`taskType`按大写编码保存，本轮图片导入接受 `IMAGE_CLASSIFICATION` 项目。
-
-创建示例：
 ```json
-{"name":"表面缺陷标注","description":"按项目规范标注","taskType":"IMAGE_CLASSIFICATION"}
+{"name":"图片分类试点","description":"未标注数据的人工与AI流转","taskType":"IMAGE_CLASSIFICATION"}
 ```
-本轮图片导入使用上述 `IMAGE_CLASSIFICATION` 项目。调用者ID由登录身份写入ownerActorId。
+
+当前 ProjectController 未见 pause/resume/archive 路由；状态规则已在服务内校验，管理入口列为待开发，不可据旧文档认为已有接口。后续路径为 POST /projects/{id}/pause、/resume、/archive，body 含 baseRevision、reason，响应项目状态/revision；owner 或具备标注运行管理权限者操作，归档前必须清理活动任务。
 
 ## 3. 图片 ZIP 导入、样本列表与原图读取
 
-本节按 `backend` 提交 `bbf022d` 的 `ImportController`、`ImportService` 和解析器核对。首轮项目类型为 `IMAGE_CLASSIFICATION`，支持 ZIP/单卷 ZIP64 中的 JPG、JPEG、PNG。导入批次、样本及原图均归属项目 owner。以下路径均接在统一前缀 `/api/labeling/v1` 后。
+本节保留现有图片导入契约，属于本地已有接口；本次未重新验证服务器部署。首轮项目类型为 `IMAGE_CLASSIFICATION`，支持 ZIP/单卷 ZIP64 中的 JPG、JPEG、PNG。导入批次、样本及原图均归属项目 owner。以下路径均接在统一前缀 `/api/labeling/v1` 后。
 
 | 方法与路径 | 输入与请求头 | 成功返回 |
 |---|---|---|
@@ -178,7 +178,7 @@ retry 会再次校验完整原包，并复用稳定的批次路径和 sampleId�
 
 完整调用顺序为统一登录、GET /me、创建项目、创建导入批次、按返回尺寸上传分片、complete、轮询至 READY、读取所有样本页、携带授权读取原图。
 
-给宋雷鸣的可执行示例见 [examples/README.md](../../labeling-service/examples/README.md)。在 `labeling-service/` 目录、使用 Node 18+ 运行以下 PowerShell 示例，输入调用者本人创建的 projectId。TOKEN 通过现有登录流程取得并设置为当前终端环境变量。
+已有可执行示例见 [examples/README.md](../../labeling-service/examples/README.md)。在 `labeling-service/` 目录、使用 Node 18+ 运行以下 PowerShell 示例，输入调用者本人创建的 projectId。TOKEN 通过现有登录流程取得并设置为当前终端环境变量。
 
 ```powershell
 $env:LABELING_API_BASE = 'http://47.111.225.144/api/labeling/v1'
@@ -188,232 +188,272 @@ $downloadDir = Read-Host '请输入原图下载验证目录'
 node examples/image-import.mjs $projectId $imageZip $downloadDir
 ```
 
-脚本执行上传、轮询、全部分页、原图下载及 SHA-256 校验，并保存包含项目、批次、样本 ID 的 manifest.json。批次查询和 samples 接口用于导入数据浏览，分类结果的草稿保存与最终提交按第 5 节后续接口接入。
+脚本执行上传、轮询、全部分页、原图下载及 SHA-256 校验，并保存包含项目、批次、样本 ID 的 manifest.json。批次查询和 samples 接口用于导入数据浏览，分类草稿与人工提交使用第 5 节已有接口。
 
 部署可调容量、ZIP 安全检查及恢复细节见 [图片导入接口细则](08-image-import-api.md)，交接记录见 [交接说明](07-image-import-handoff.md)，验证记录见 [图片导入本地验证记录](09-image-import-verification.md)。
 
-## 4. 打包与领取
+## 4. 人工打包与领取（已有，待适配新轮次）
 
+| 接口 | 请求 | 当前响应 |
+|---|---|---|
+| POST /projects/{id}/package-plans | batchId、specVersionId、packageSize、annotatorsPerSample，幂等键 | 201 planId、status、selectionHash、sampleCount、packageSampleCounts、totalWorkload、packages |
+| GET /package-plans/{id} | owner | 计划对象 |
+| POST /package-plans/{id}/publish | selectionHash，幂等键 | 当前同步200，PUBLISHED 和包列表；首次使项目 OPEN |
+| GET /task-pool?taskType=IMAGE_CLASSIFICATION | 启用人工，limit/cursor | 包摘要、sampleCount、requiredCount、remainingSlots，无原图和答案 |
+| POST /packages/{id}/claims | 当前用户，空对象或无body，幂等键 | 201 assignmentId、packageId、slotNo、CLAIMED、revision |
+| GET /assignments?scope=mine | 本人，limit/cursor | 本人领取；当前无 status 筛选 |
+| GET /assignments/{id}/items | 本人领取 | assignmentId、packageId、status、readOnly、specification、items、nextCursor |
+| GET /assignments/{id}/samples/{sampleId}/file | 本人有权范围 | 授权原图流 |
 
-| 方法与路径 | 权限 | 输入 | 返回 |
-|---|---|---|---|
-| POST /projects/{id}/package-plans | owner | batchId、specVersionId、packageSize、annotatorsPerSample | 201 planId、各包样本数、总工作量、selectionHash |
-| POST /package-plans/{planId}/publish | owner | selectionHash | 202/200，计划BUILDING/PUBLISHED；重试不重复建包 |
-| GET /package-plans/{planId} | owner | 无 | 发布状态及包清单摘要 |
-| GET /task-pool | 启用人工用户 | taskType、cursor、limit | 只返回可见包简介及remainingSlots，无原文件与他人答案 |
-| POST /packages/{packageId}/claims | 启用且在发布范围内的用户 | 空对象 | 201 assignmentId、packageId、slotNo、CLAIMED、revision |
-| GET /assignments?scope=mine | 本人 | status/cursor/limit | 本人领取列表 |
-| GET /assignments/{assignmentId}/items | 本人有效或已提交领取 | cursor/limit | 样本、本人草稿/提交、只读或可编辑状态 |
-| POST /assignments/{assignmentId}/release | 本人 | baseRevision、reason | RELEASED；已提交409 |
-| POST /admin/assignments/{assignmentId}/revoke | 标注管理员 | baseRevision、reason必填 | REVOKED；不自动赋予查看原数据权限 |
+packageSize 默认10，人数默认1。当前实现支持多席位，但本轮产品默认只开放1人；任务成员和规范冻结。同人重复领取 ALREADY_CLAIMED、满额 SLOT_FULL。当前同包行锁串行，不宣称已实现 SKIP LOCKED。
 
-同批次只能正式发布一次；成功计划的publishedAt永久保留。重复发布同一计划返回原结果；同批次其他计划已发布返回409 BATCH_ALREADY_PUBLISHED。发布前检查样本集合、每包人数与席位编号1..N完整，失败不开放领取。
+**旧限制：**当前同 batch 只能发布一次（BATCH_ALREADY_PUBLISHED），没有 roundId。新版必须扩展为第6节，不能靠重新上传数据或伪造 batchId 实现再次发布。现有包路径领取兼容时只可映射到唯一合法活动人工轮次，否则报错；不能无声领取旧轮次。
 
-默认packageSize=10、annotatorsPerSample=1，必须为正整数并满足配置上限；发布后冻结。N=2为同包创建2个不同人的席位，remainingSlots不能为负。可用席位暂时被并发事务锁定返回409 CLAIM_BUSY，客户端刷新后有限次重试；确定已领满才返回SLOT_FULL。同人重复领取409 ALREADY_CLAIMED；相同幂等键重试返回第一次领取响应。
+## 5. 人工草稿与整包提交（已有）
 
-## 5. 编辑器与保存提交
+当前仅支持 `resultFormat=image-classification-v1`，不接受原始 Label Studio JSON。
 
-| 方法与路径 | 权限 | 输入 | 返回 |
-|---|---|---|---|
-| POST /assignments/{id}/editor-sessions | 本人有效领取、项目OPEN | sampleId | editorSessionId、受控入口、expiresAt；只授权指定领取 |
-| POST /assignments/{id}/editor-sync | 本人有效领取 | sampleId | 后端回读映射结果，校验作者，返回平台draft revision；未就绪503 |
-| GET /assignments/{id}/samples/{sampleId}/file | 本人有效或已提交领取，且项目可访问 | 无 | 原始文件流；不返回其他包的文件 |
-| PUT /assignments/{id}/drafts/{sampleId} | 本人有效领取、项目OPEN | baseRevision、explicitDone、resultFormat、result | revision、savedAt |
-| POST /assignments/{id}/submissions | 本人有效领取、项目OPEN | 每个样本的已保存revision清单 | 201 submissionId、SUBMITTED |
-| GET /submissions/{id} | 提交人或项目owner | 无 | 冻结的本人/项目结果；其他标注员404 |
-| GET /projects/{id}/submissions | owner | packageId/actorId/cursor/limit | 按人和包查看所有提交 |
-| GET /projects/{id}/samples/{sampleId}/file | owner | 无 | 需求方查看原始文件 |
-
-统一保存逻辑支持编辑器适配器回读及平台保存；实施时不得同时让未经校验的浏览器结果和外部结果竞争覆盖同一revision。Label Studio路径以回读后的校验结果为准；PUT草稿的result结构须通过所绑定模板/schema校验。
-
-草稿请求示例（result具体结构以选定模板为准）：
-```json
-{"baseRevision":0,"explicitDone":true,"resultFormat":"label-studio-json","result":[{"from_name":"category","to_name":"image","type":"choices","value":{"choices":["正常"]}}]}
-```
-
-提交示例：
-```json
-{"items":[{"sampleId":"sample-001","revision":3},{"sampleId":"sample-002","revision":1}]}
-```
-首个草稿保存将CLAIMED变为IN_PROGRESS；CLAIMED不直接提交。提交清单必须与包成员完全一致且不含重复sampleId；漏样本、多样本、未完成或过期revision分别返回422 INCOMPLETE_PACKAGE/INVALID_RESULT或409 REVISION_CONFLICT。示例ID为占位，不是实际UUID。身份、规范版本、外部任务ID由后端映射取得，不允许客户端指定提交人。
-
-编辑器保存只代表草稿，提交接口成功才代表交付。首期提交后只读，不提供覆盖、撤回或返工接口。同幂等键重试返回原submissionId；换键再次提交已结束领取返回409 ASSIGNMENT_CLOSED。后续返工按新轮次设计，不改变已导出的快照。
-
-## 6. 查看与导出
-
-| 方法与路径 | 权限 | 输入 | 返回 |
-|---|---|---|---|
-| POST /projects/{id}/exports | owner | format、scope、submissionIds（选定模式）、includeOriginals=false | 202 exportId、QUEUED |
-| GET /exports/{id} | owner/该任务创建者且仍有项目权限 | 无 | QUEUED/RUNNING/SUCCEEDED/FAILED、数量及错误摘要 |
-| GET /exports/{id}/download | 同上 | 无 | 授权文件下载；未完成409；产物已清理410 EXPORT_EXPIRED |
-
-scope为ALL_SUBMITTED或SELECTED_SUBMISSIONS；创建时在同一数据库快照中冻结提交清单和完成情况，清单写入export_job_submission并校验同项目归属。空清单返回422 NO_SUBMISSIONS。后台开始、产物发布和下载时重查权限。首期建议只实现原生结果JSON＋ID映射，业务确认后增加一种适用标准；未支持format返回422 UNSUPPORTED_FORMAT。includeOriginals=true首期未实现时明确拒绝，不静默忽略。
-
-导出包含结果、mapping.csv、manifest.json和标签说明。mapping字段至少projectId/batchId/packageId/sampleId/assignmentId/actorId/submissionId/specVersionId/sourcePath/checksum。N=2分别保存两人结果；清单列出目标人数、已提交人数和未完成样本，不把缺结果表示成正常标签。不使用编辑器默认全项目导出替代本平台授权范围。
-
-## 7. 管理接口与错误码
-
-用户管理本轮采用 `GET /admin/users` 和 `PATCH /admin/users/{actorId}`，替代此前规划的 `/admin/actors` 启停接口。只影响标注身份，普通用户不得自助授予管理员权限；管理员可管理其他用户的权限。具体字段与行为见下方身份权限补充。
-
-`GET /admin/audit-events` 尚未实现。本轮用户权限变更要求 reason，并在事务成功后写入服务日志（操作者、目标、操作内容、原因、requestId）；持久化审计查询后续实现。所有回收、暂停、禁用需 reason。
-
-| HTTP | code示例 |
-|---|---|
-| 400 | INVALID_REQUEST、INVALID_CURSOR、UPLOAD_INTERRUPTED |
-| 401 | UNAUTHENTICATED |
-| 403 | FORBIDDEN、LABELING_DISABLED |
-| 404 | RESOURCE_NOT_FOUND（包括不应暴露的他人资源） |
-| 409 | SLOT_FULL、CLAIM_BUSY、RESOURCE_BUSY、ALREADY_CLAIMED、BATCH_ALREADY_PUBLISHED、REVISION_CONFLICT、ASSIGNMENT_CLOSED、PROJECT_PAUSED、PROJECT_ARCHIVED、IDEMPOTENCY_CONFLICT、UPLOAD_CONFLICT、OFFSET_MISMATCH、UPLOAD_CLOSED、IMPORT_NOT_READY、IMPORT_FAILED、IMPORT_NOT_RETRYABLE |
-| 410 | EXPORT_EXPIRED |
-| 413 | UPLOAD_TOO_LARGE |
-| 415 | UNSUPPORTED_MEDIA_TYPE |
-| 422 | INVALID_RESULT、INCOMPLETE_PACKAGE、UNSUPPORTED_FORMAT、NO_SUBMISSIONS、UPLOAD_INCOMPLETE、CHECKSUM_MISMATCH、CHUNK_SIZE_MISMATCH |
-| 503 | IDENTITY_UNAVAILABLE、STORAGE_UNAVAILABLE、EDITOR_UNAVAILABLE、TRANSACTION_RETRY_EXHAUSTED |
-
-## 8. 最小联调顺序
-
-普通用户GET /me → POST /projects（无人审批）→ 建规范 → 上传完成 → 打包预览/发布 → 两个不同用户领取N=2包 → 分别编辑/同步/提交 → owner查看两份结果 → 创建导出 → 下载核对ID。并行验收第三人超领、同人重复领取、未领取读文件、回收后迟到提交、同一结果重复提交、导出他人项目均被正确处理。
-
-2026-11-04一致性补充：暂停事务提交后拒绝新工作数据访问和草稿/提交/同步写入；此前已持共享锁的短事务先完成，已传输的字节无法撤回。导出提交清单不随重试变化。数据库死锁/序列化冲突最多重试整个事务3次，外部编辑器和存储请求不放进数据库重试闭包。幂等记录与业务写入/响应同事务提交；上传分片回执持久化，持久化成功前不推进offset。
-
-## 标注身份权限补充（2026-11-07，已合入 backend）
-
-所有以下接口使用 `Authorization: Bearer <登录令牌>`，前缀 `/api/labeling/v1`。
-标注角色独立于训练平台的 roleId。普通启用用户可直接创建项目，无需求方申请审批。
-
-| 接口 | 权限与响应 |
-| --- | --- |
-| `GET /me` | 已登录且标注身份启用；返回 actorId、labelingAdmin、canCreateProject、canAnnotate |
-| `GET /admin/users?limit=20&offset=0` | 仅启用的标注管理员；data 为用户数组，limit 为 1–100，offset 非负 |
-| `PATCH /admin/users/{actorId}` | 仅启用的标注管理员；成功返回 200，data 为 null |
-
-用户列表只包含已经访问标注平台并建立 HUMAN 映射的人，不是统一登录系统全部账号。
-列表字段：actorId、identityUserId、displayName、status、labelingAdmin；不返回密码或令牌。
-修改请求支持部分更新，至少提供一个非空字段：
-
-```json
-{"status":"DISABLED","labelingAdmin":false,"reason":"联调停用验证"}
-```
-
-`reason` 必填，1–500 字符且不能全为空白。`status` 只接受 ENABLED / DISABLED；`labelingAdmin` 为布尔值。
-停用不删除项目、不修改统一身份账号或训练角色；单独停用保留已有标注管理员授予记录，重新启用会恢复其有效权限。
-管理员不能停用自己或撤销自己的管理员权限（409），请由另一个管理员操作。
-授权变更在事务内串行化，并重新核验操作者当前身份，防止并发互相撤权导致无人管理。
-不存在的 HUMAN actor 返回 404，普通用户调用管理员接口返回 403。
-身份与管理接口的 403 错误码为 FORBIDDEN。图片导入事务内重新核验停用状态时也可能返回 LABELING_DISABLED，前端按 403 展示标注身份或权限提示，重新登录由 401 响应触发。
-
-项目列表、详情和规范创建仍按 owner 授权，标注管理员无权直接查看他人的原始数据或项目详情。
-他人项目详情返回 404。普通用户仍可以创建自己的项目。
-停用后新的 /me、项目和管理请求被拒绝；已经执行中的请求不会强制中断。
-
-### 对 B、C、D 的接入要求
-
-- C：用 /me 控制管理入口显示；调用管理接口时携带同一个统一登录令牌。隐藏按钮不能替代后端鉴权。
-- B、D：图片读取、导入、编辑器与后续提交接口都必须先验证统一身份并调用 ActorService.resolve，再检查项目或领取归属；写事务中重查并锁定启用状态。
-- 本次已合并 backend 的 V3 图片导入代码和测试；V1/V2/V3 迁移保持原样。权限功能复用已有 actor 和 actor_role_grant 表，不新增迁移。
-
-### 验收
-
-执行 `mvn -f labeling-service/pom.xml test` 运行权限单元测试。
-部署后用两个普通账号和一个标注管理员联调：普通账号管理接口 403、普通用户创建项目成功、跨账号项目详情 404、管理员也不能读取他人项目、停用后 /me 403、恢复后 /me 200、撤销管理员后管理接口 403、自停用或自撤权 409。
-单元测试不等同于真实 PostgreSQL 并发测试和服务器验收。
-
-## 任务包首轮实现（2026-11-07，已合入 backend）
-
-本节是本轮实际接口范围；上文 release/revoke、编辑器、草稿、提交、导出仍为后续设计，不能当作已实现接口。
-
-已实现创建打包预览、发布、查看计划、任务池、领取、本人领取列表、包内样本与图片读取。
-所有接口带统一登录 Bearer Token；所有 POST 带 Idempotency-Key。领取请求只接受空对象或无请求体。
-
-### 给 B、C、D 的调用顺序
-
-1. B 的批次导入达到 READY，取得 batchId；项目 owner 创建规范，取得 specVersionId。
-2. owner 调用 `POST /projects/{projectId}/package-plans`，请求：
-
-```json
-{"batchId":"批次UUID","specVersionId":"规范UUID","packageSize":10,"annotatorsPerSample":2}
-```
-
-省略 packageSize / annotatorsPerSample 时分别为 10 / 1。响应 data 包含 planId、status=DRAFT、selectionHash、sampleCount、packageSampleCounts、totalWorkload、packages（发布前为空）。样本按固定 UUID 顺序打包，不复制文件。每个包的 N 个席位代表 N 人分别标注该包全部样本。
-
-3. owner 调用 `POST /package-plans/{planId}/publish`，请求 `{"selectionHash":"预览返回的摘要"}`。
-本轮在单个事务中同步完成，成功返回 200 和 PUBLISHED 计划、包列表；项目由 DRAFT 转为 OPEN。发布后结构冻结。同批次其他计划发布返回 409 BATCH_ALREADY_PUBLISHED；重复发布同一计划不新建包。
-
-4. 标注员调用 `GET /task-pool?limit=20&taskType=IMAGE_CLASSIFICATION`。
-返回 data.items：packageId、projectId、projectName、taskType、sampleCount、requiredCount、remainingSlots；不返回原图、文件路径或他人身份。默认全部启用人工用户可见开放包，已领取或已领满的包不再出现。
-
-5. 标注员调用 `POST /packages/{packageId}/claims`，请求 `{}`。
-201 返回 assignmentId、packageId、slotNo、status=CLAIMED、revision=1。同一用户同一幂等键重试返回原结果；换键重复领取返回 ALREADY_CLAIMED；席位已满返回 SLOT_FULL。首轮同包请求使用行锁短事务串行等待，不使用跳锁策略，暂不返回上文规划的 CLAIM_BUSY。
-
-6. `GET /assignments?scope=mine&limit=20` 列出本人领取。首轮不提供 status 筛选。
-7. `GET /assignments/{assignmentId}/items?limit=20` 返回包内样本和冻结规范。
-响应包含 assignmentId、packageId、status、readOnly、items、nextCursor、specification；规范包含 specVersionId、labels 数组、instructions、editorConfig 对象。样本包含 sampleId、sourcePath、mediaType、contentSha256、ordinal、fileUrl。
-8. 图片通过返回的 fileUrl（`/assignments/{assignmentId}/samples/{sampleId}/file`）携带相同令牌读取。D 使用 assignmentId＋sampleId＋specVersionId 做编辑器映射，不能仅用 sampleId 区分个人结果。本接口尚不保存标注结果。
-
-任务池、本人领取和包内样本使用 UUID 游标：下一页传响应 nextCursor，末页为 null；limit 为 1–100。包内样本分页按 sampleId 排序，ordinal 供显示打包顺序。
-
-### 权限与部署边界
-
-- owner 才能打包、发布和查看计划，batch/spec 必须同项目；管理员无 owner 绕过。
-- 项目 OPEN 才能领取及读取包内图片；暂停或归档拒绝工作数据访问。停用身份拒绝新请求。
-- 他人的领取、包外样本返回 404；原 owner 图片接口不会因领取而放开整个项目。
-- 每个请求重新鉴权；已经开始传输的文件不强行中断。
-- 新增 Flyway V4，保留 V1/V2/V3；升级只创建任务包相关表和约束，数据仍在独立标注库。
-- 同步发布默认最多 10000 个样本、每包最多 1000 个、每包最多 10 人。分别由 LABELING_TASK_MAX_SAMPLES、LABELING_TASK_MAX_PACKAGE_SIZE、LABELING_TASK_MAX_ANNOTATORS 配置；样本超过上限返回 422 SAMPLE_LIMIT，应拆分导入批次，异步发布后续实现。
-- 任务推荐算法、领取释放/回收、编辑器、结果提交与集成尚未实现，不能将 CLAIMED 当作已完成。
-
-验证命令：`mvn -f labeling-service/pom.xml verify`。测试覆盖现有图片导入、多人并发争抢、重复领取与重放、跨用户和跨包读图、暂停/停用拒绝访问、同批次防重复发布。
-
-## 草稿与提交首轮实现（2026-11-08，本地实现待部署）
-
-本节替代上文的草稿格式示例，以实际实现为准。新增 V5 迁移，不修改 V1–V4。
-当前仅实现图片单标签分类的标准化平台记录，不接收未经适配的 Label Studio 原始 JSON。
-`resultFormat` 固定为 `image-classification-v1`，`result` 使用规范中的稳定 labelId，不使用显示名称作为主键。
-D 的 Label Studio 适配器需后端回读并校验作者、领取、样本、规范版本后转换成此记录；会话和同步接口仍未实现。不得并行启用未经协调的浏览器直写与编辑器同步写入。
-
-### 草稿保存与刷新读回
-
-`PUT /assignments/{assignmentId}/drafts/{sampleId}`，带统一登录 Bearer Token：
+PUT /assignments/{assignmentId}/drafts/{sampleId}：
 
 ```json
 {"baseRevision":0,"explicitDone":true,"resultFormat":"image-classification-v1","result":{"labelId":"normal"}}
 ```
 
-- `normal` 仅是示例，必须使用该领取绑定规范中的标签 id。
-- 首次 baseRevision=0；之后传服务器上次返回的 revision。
-- 返回 200：data 包含 assignmentId、sampleId、revision、savedAt、explicitDone、resultFormat、result。
-- 清空尚未完成的选择可传 result={}、explicitDone=false；完成状态必须有且仅有一个合法标签。
-- 格式、标签不合法为 422 INVALID_RESULT / UNSUPPORTED_FORMAT；旧版本为 409 REVISION_CONFLICT，不静默覆盖。
-- 成功保存使领取进入 IN_PROGRESS。PUT 通过 baseRevision 比较并交换，不使用 Idempotency-Key；若响应丢失，先 GET 读回确认，不盲目重试覆盖。
-- `GET /assignments/{assignmentId}/drafts/{sampleId}` 读回本人草稿；尚无草稿返回 revision=0、explicitDone=false、result={}、savedAt=null。
-- `GET /assignments/{assignmentId}/items` 现在每个样本同时返回 draftRevision、explicitDone、resultFormat、result；无草稿时这些字段为 null。
+normal 为示例，必须存在于绑定规范。首次 baseRevision=0，之后用服务器返回的 revision。未完成可保存 `result:{}, explicitDone:false`；标签错误422，旧 revision409。成功返回 assignmentId、sampleId、revision、savedAt、explicitDone、resultFormat、result。
 
-### 正式提交整包
+GET 同一路径读草稿。响应丢失时先读回再决定是否重试，不盲目增加 revision。
 
-`POST /assignments/{assignmentId}/submissions`，带独立 Idempotency-Key：
+POST /assignments/{id}/submissions，带幂等键：
 
 ```json
-{"items":[{"sampleId":"样本UUID-1","revision":1},{"sampleId":"样本UUID-2","revision":3}]}
+{"items":[{"sampleId":"<UUID-1>","revision":3},{"sampleId":"<UUID-2>","revision":1}]}
 ```
 
-清单必须和包成员完全一致、无重复，所有草稿 explicitDone=true，且 revision 为最新。
-成功返回 201，data：submissionId、assignmentId、status=SUBMITTED、sampleCount。
-服务在同一事务内锁定领取、核验草稿、复制不可变快照并关闭本次领取；多人席位分别提交，不合并答案。
+人工允许逐样本保存未完成草稿，但 `POST /assignments/{id}/submissions` 必须包含该 assignment 所属领取包的全部样本，各自已经保存、`explicitDone=true` 且 revision 最新；新轮次实现后，校验集合是该 assignment 在本轮领取包中冻结的成员，不是整轮的所有包。一次人工发布计划可有多个包，每包建立独立轮次，逐包独立提交；例如领取 10 个包，可先提交已全部完成的 5 个，其他包继续保存草稿。若重新发布时只选部分样本，先把选中范围拆成包，每个包再独立提交。漏项/未完成422 INCOMPLETE_PACKAGE，重复或非法答案422 INVALID_RESULT，旧版本409 REVISION_CONFLICT。成功201，返回 submissionId、assignmentId、SUBMITTED、sampleCount；已提交不可修改。
 
-- 缺少、多余、重复样本或未完成：422 INCOMPLETE_PACKAGE / INVALID_RESULT。
-- 草稿版本过期：409 REVISION_CONFLICT。
-- 同幂等键、相同版本清单（顺序可不同）重试：返回第一次提交结果。
-- 同幂等键内容不同：409 IDEMPOTENCY_CONFLICT；换键再次提交已结束领取：409 ASSIGNMENT_CLOSED。
-- SUBMITTED 后不能继续保存、覆盖或撤回；已提交席位不释放。
-- 草稿保存与提交按 actor → project → assignment 顺序加锁，相同领取并发保存/提交串行化。
+每个领取包分别调用一次提交接口；10 张完成 6 张只能保存草稿，不能提交该包，但不会阻止其他已完成包提交。成功响应只表示这个包的人工结果已交回，不表示 owner 已审核通过，也不表示整个任务完成。AI 不调用这个接口。
 
-### 查看已提交结果
+GET /submissions/{id} 供提交人或 owner 查看不可变内容；GET /projects/{id}/submissions?limit=20&cursor=... 为 owner 列表。当前没有 packageId/actorId 筛选参数，不按旧设计假设已实现。
 
-- `GET /submissions/{submissionId}`：仅提交人或项目 owner；data 包含 submissionId、assignmentId、packageId、projectId、specVersionId、submittedBy、submittedAt、contentHash、items。
-- items 为冻结结果：sampleId、revision（提交时草稿版本）、resultFormat、result。
-- `GET /projects/{projectId}/submissions?limit=20&cursor=...`：仅 owner，返回 items 和 nextCursor；本轮尚未支持 packageId/actorId 筛选。
-- 暂停或归档后仍允许启用的提交人/owner 读取已提交结果；工作草稿保存和新提交必须项目 OPEN。
-- 他人领取、包外样本和无权限提交返回 404；停用用户返回 403；管理员无项目数据越权特权。
+POST /assignments/{id}/release 和 POST /admin/assignments/{id}/revoke 尚未在当前 Controller 实现。待实现请求为 baseRevision、reason，返回状态/revision；不接受已提交记录，回收不删除草稿，旧页面写入拒绝。
 
-前端显示“草稿已保存”和“任务已提交”必须区分，只有 POST 提交成功才算完成任务。
-仍未实现 Label Studio 会话/同步、任务释放/回收、需求方验收状态及导出文件；本轮没有新增这些假接口。
+## 6. 人工范围选择、打包与再发布（全部待实现）
+
+先通过第8节形成 purpose=PUBLISH 的选择快照，固定 sampleId、referenceResultId、reviewRevision。然后创建新人工包计划或原包的下一轮。
+
+### 6.1 从任意项目样本创建人工包
+
+扩展 POST /projects/{id}/package-plans：新版 body 使用 selectionId、specVersionId、packageSize、annotatorsPerSample=1、instructions、referenceMode NONE/SELECTED、reopenAccepted=false。与旧 batchId 模式互斥，不能混填。selectionHash 由后端返回。
+
+新计划预览返回明确样本数、包数、每包数量、selectionHash 和涉及已确认样本数量。publish 仍使用已有路径和 hash，新版创建包及各自 HUMAN_POOL round，返回各 packageId/roundId。选择已确认样本必须 reopenAccepted=true 且预览告知；只有发布成功事务才重置所选当前审核，失败不影响原确认。
+
+新方案允许跨已结束的旧包选样，不复制原图，不修改旧包成员。旧“同 batch 一次”约束需迁移后解除。
+
+### 6.2 在同一人工包再次发布
+
+POST /packages/{id}/rounds，owner、幂等键：
+
+```json
+{
+  "mode":"HUMAN_POOL",
+  "selectionId":"<选择快照UUID>",
+  "referenceMode":"SELECTED",
+  "instructions":"复核选定图片的分类",
+  "baseRevision":4,
+  "reopenAccepted":false
+}
+```
+
+选择范围必须非空且恰好等于该包全部成员、规范兼容；子集请求返回422 PACKAGE_SCOPE_MISMATCH，改用第6.1节创建新包；不接收目标人工 actorId。201 返回 roundId、packageId、specVersionId、status=OPEN、sampleCount、revision。若只选择原包中的4张作为返工范围，应通过第6.1节将这4张组成一个新的人工包；该包必须4/4提交，不要求重做原包其他样本，也不等待同一发布计划的其他包。
+
+新版 GET /assignments/{id}/items 还需返回 roundId、每样本 referenceResultId/referenceResult/sourceKind 和当前本人草稿。参考结果仅取本轮冻结引用，不能开放任意他人历史答案；当前已有接口尚无这些新字段。
+
+GET /rounds/{id}：owner 或本人合法领取视图；返回 mode、status、specVersionId、packageId（AI为null）、sampleCount、submitted/failed counts、revision。不得向普通人暴露他人答案。
+
+POST /rounds/{id}/claims：仅人工轮次，空body＋幂等键，当前身份原子领取，201 assignmentId/roundId/packageId/slotNo/status/revision。AI轮次422 INVALID_EXECUTION_MODE。
+
+POST /rounds/{id}/cancel：owner 或运行管理权限者，baseRevision、reason；200状态/revision；结束活动工作、释放样本占用并拒绝迟到写入。已提交结果不撤回。人工与AI不能在相同样本上创建重叠活动轮次，409 SAMPLE_BUSY；可处理不相交范围。
+
+## 7. AI 范围执行（全部待实现）
+
+### 7.1 Agent 与创建执行
+
+GET /agents?taskType=IMAGE_CLASSIFICATION：返回 agentId、displayName、taskTypes、modelVersion、supportedLabels/capabilities、supportsReference、confidenceDescription、available；不含模型密钥。服务端仍需校验能力和规范匹配。
+
+POST /projects/{id}/ai-executions，owner、幂等键，无需 packageId/assignmentId：
+
+```json
+{
+  "agentId":"<Agent UUID>",
+  "specVersionId":"<规范UUID>",
+  "selectionId":"<固定选择UUID>",
+  "referenceMode":"NONE",
+  "instructions":"按项目规范进行分类",
+  "reopenAccepted":false
+}
+```
+
+202 返回 executionId、roundId、status=QUEUED、sampleCount、modelVersion、revision。选样可来自未打包数据、多个已结束人工包；项目、规范、参考结果和活动占用需校验。模型不支持参考模式时422 REFERENCE_UNSUPPORTED，不静默忽略参考。
+
+GET /ai-executions/{id}，owner：返回上述字段及 successCount/failedCount/pendingCount/cancelledCount、errorSummary、resultSnapshotId（未终结为null）。SUCCEEDED/PARTIAL/FAILED/CANCELLED 为终态。批次终结时固定成功结果和失败清单；PARTIAL 的成功结果可以先交需求方处理，失败项由需求方之后决定重试、换 Agent 或转人工。批次终态只表示 AI 已交回，不表示需求方审核通过或整个任务完成。
+
+GET /ai-executions/{id}/results?limit=20&cursor=...：运行中只读进度，标记 provisional=true、reviewable=false；终结后绑定 snapshotId、resultId，成功项 reviewable=true，失败项没有答案。运行中的 resultId 不得伪装为可审核候选。
+
+POST /ai-executions/{id}/cancel：baseRevision、reason，冻结有效结果与取消范围，拒绝迟到写入。
+
+POST /ai-executions/{id}/retries：owner 选择已失败/取消未完成项的 selectionId、baseRevision，带幂等键；创建新 execution/round，202返回新ID和retryOfExecutionId；旧快照不变。换模型则新建执行并携带来源，不冒充原模型重试。
+
+### 7.2 内部模型输出约定
+
+Worker 使用受限内部服务调用，executionId、generation、sampleId 必须经过后端核验；不是给浏览器开放一个随意上传 AI 结果的接口。输出形式：
+
+```json
+{
+  "sampleId":"<UUID>",
+  "resultFormat":"image-classification-v1",
+  "result":{"labelId":"normal"},
+  "confidence":0.87
+}
+```
+
+模型版本、actor 和来源由 execution 取得。无可信分数则null；非法标签、超范围样本、非有限或越界分数拒绝并记录错误。成功输出逐样本落库，终结快照进入第8—9节查询审核；不调用人工 submissions。正常结束、失败、取消和重试均有持久记录。
+
+### 7.3 A 与 D 的内部执行契约（待实现）
+
+统一内部边界为`/internal/labeling/v1`，不通过公开前端代理暴露；使用独立工作端凭据，服务端将凭据映射到workerId和允许的agentId，不能使用人类登录Token。A提供执行控制与鉴权，D调用并实现模型适配，B复用原图存储读取。若Worker内嵌Java服务，同样复用这些服务方法，不另写数据库旁路。实际凭据由部署配置注入，不提交仓库、不发给浏览器。
+
+| 接口 | 请求及响应 | 规则 |
+|---|---|---|
+| POST /executions/claim | body agentId；200 executionId、generation、leaseUntil、specVersionId、固定规范、modelVersion、configVersion、labelMapping、supportsReference；无工作204 | 原子领取一个QUEUED或租约过期的RUNNING执行；仅允许凭据授权Agent，递增generation |
+| POST /executions/{id}/heartbeat | generation；200 leaseUntil | 默认租约120秒，每30秒续约；身份、generation、租约或状态失效返回409 EXECUTION_LEASE_LOST，停止写回 |
+| GET /executions/{id}/items | generation、limit/cursor；样本ID、outputStatus、受限fileUrl、referenceResult | 固定本轮全集，接管后跳过已持久化终结项；引用仅限本轮允许的参考答案 |
+| GET /executions/{id}/samples/{sampleId}/file | generation | 校验Worker身份、有效租约及RoundItems，返回原图流；无任意磁盘路径，无长期存储凭据 |
+| PUT /executions/{id}/outputs/{sampleId} | generation、status、resultFormat/result/confidence或errorCode/errorMessage；200 outputStatus | status仅SUCCEEDED或FAILED；成功与错误字段互斥；同内容重复写幂等，不同内容409 OUTPUT_CONFLICT |
+| POST /executions/{id}/finish | generation、幂等键；200终态、resultSnapshotId及计数 | 尚有PENDING返回409 EXECUTION_INCOMPLETE；状态由后端计算，Worker不能自行宣称成功 |
+| POST /executions/{id}/fail | generation、幂等键、errorCode/errorMessage | 模型不可用等整批故障：保留成功项，将剩余PENDING固定为FAILED，再由后端结算 |
+
+所有路径均相对上述内部边界。有效工作端、generation、租约、项目/Agent状态和样本归属每次重新校验；401/403不能自动换成人类凭据绕过。暂停项目拒绝读取和写回，未结束执行保留，恢复后可重新领取；取消立即使旧generation失效。正常finish全部成功为SUCCEEDED、部分成功为PARTIAL、全部失败为FAILED；owner取消为CANCELLED，剩余项记CANCELLED。终态pendingCount=0，各项数量之和等于sampleCount。
+
+执行创建时固定模型/权重版本、配置版本、标签映射及置信度含义，D不能执行到一半切换配置。单个样本内部重试在写入最终输出前完成；成功或失败输出持久化后不覆盖。租约接管保留已有输出；终态重试由owner新建execution。网络失败允许按相同内容重发；终结响应丢失按幂等键重放，返回原快照，不创建第二份。
+
+失败输出示例：
+
+```json
+{"generation":1,"status":"FAILED","errorCode":"MODEL_LABEL_UNMAPPED","errorMessage":"模型输出类别无法映射到本轮标签"}
+```
+
+成功输出除第7.2节内容外须带generation和status=SUCCEEDED；sampleId以路径为准，不允许body不一致。错误信息脱敏，不包含Token、密钥或原始文件的宿主机路径。
+
+## 8. 结果查询、选择快照与分档（全部待实现）
+
+GET /projects/{id}/results：owner，筛选 specVersionId、packageId（可选）、roundId、executionId、sourceKind、reviewStatus、hasResult、confidencePolicyId＋band、limit/cursor。
+
+返回 items 含 sampleId、sourcePath、resultId（可空）、result、sourceKind、sourceActor、modelVersion、confidence、reviewStatus、reviewRevision、hasResult、activeProcessing；另含nextCursor。单个样本有多份候选时默认返回当前选定结果，未选定且多候选时提示需选，不按最新时间猜测正确答案。GET /projects/{id}/samples/{sampleId}/results 列来源历史。
+
+结果列表每行对应一个样本，增加selectedResultId、candidateCount、requiresResultSelection。hasResult表示当前筛选范围内存在可审核候选，不等于已确认；无候选时resultId=null、candidateCount=0。存在明确executionId等来源筛选时，只在该范围内选展示候选；否则优先展示当前selectedResultId。未选定且只有一份候选可展示该候选，但不自动改变审核指针；多份且无法确定时resultId=null、requiresResultSelection=true，调用方必须从样本历史中明确选择resultId，不能按时间猜测。reviewStatus/reviewRevision描述样本在该规范下的当前审核状态；仅当展示resultId等于selectedResultId且状态ACCEPTED时才能给该答案显示“已确认”。
+
+GET /projects/{id}/result-statistics 使用相同筛选，返回total、hasResultCount、noResultCount、needsRevisionCount、acceptedCount、activeCount；状态计数可能重叠，不相加当总数。AI执行统计另返回successCount/failedCount/pendingCount/cancelledCount。置信度统计仅针对选定execution的成功结果，HIGH/MEDIUM/LOW/UNKNOWN互斥；未设policy仅展示分数直方图及unknown，不默认分档。
+
+普通分页和统计为实时视图，不承诺跨请求一致。生成selection后，GET /result-selections/{id}/items分页及GET /result-selections/{id}/statistics只读固定清单和创建时统计；C必须用它们做最终预览，不再用实时统计冒充确认数量。审核消费时A重新校验当前状态和revision。
+
+POST /projects/{id}/result-selections，owner＋幂等键：
+
+```json
+{
+  "purpose":"REVIEW",
+  "reviewAction":"ACCEPT",
+  "specVersionId":"<UUID>",
+  "filter":{"executionId":"<UUID>","confidencePolicyId":"<UUID>","band":"HIGH"},
+  "excludeSampleIds":["<UUID>"]
+}
+```
+
+支持两种互斥输入：filter＋excludeSampleIds，或items[{sampleId,resultId,reviewRevision}]；不能混填。purpose 可为 PUBLISH/REVIEW/FINALIZE。PUBLISH允许没有答案，resultId仅表示明确选择的参考结果；REVIEW必须指定reviewAction=ACCEPT或NEEDS_REVISION，ACCEPT要求可审核的不可变候选，NEEDS_REVISION允许无答案；FINALIZE只能选择当前已确认结果。消费接口必须匹配purpose及reviewAction，错用返回422 SELECTION_PURPOSE_MISMATCH。多数投票使用第10节inputs中的多个resultIds及独立aggregation_input快照，不使用此单结果选择表。固定selectionId、selectionHash、count、expiresAt；GET /result-selections/{id}/items 分页预览该清单。
+
+选择快照固定projectId、specVersionId、createdBy、purpose、reviewAction（仅REVIEW）、筛选与policyId、每项sampleId/resultId/reviewRevision、selectionHash、count、createdAt、expiresAt；无审核行时revision=0。默认有效期30分钟，过期重新生成，不延长旧预览。hash按稳定sampleId顺序计算，覆盖范围、答案、revision及用途。空集合拒绝422 EMPTY_SELECTION，多候选未明确选答案且用途需要答案时拒绝422 RESULT_SELECTION_REQUIRED；未知筛选字段拒绝，不能静默忽略。referenceMode=SELECTED可有部分样本resultId为空，表示该样本无参考；NONE不向执行者展示任何已有答案。消费时不自动换用新答案。
+
+选择本页只传本页items；选择全部筛选结果由后端快照，不反复抓分页猜集合。选择过期410 SELECTION_EXPIRED；创建和消费都检查权限，变更范围须新建selection。发布消费时重查审核revision和活动状态。
+
+POST /rounds/{id}/confidence-policies：仅AI轮次owner＋幂等键，body executionId、resultSnapshotId、lowerThreshold、upperThreshold。201 返回 policyId、revision、模型及阈值；snapshot必须已终结且属于该执行，0≤L<H≤1。策略新建版本，不改历史。
+
+分档 HIGH:c≥H，MEDIUM:L≤c<H，LOW:c<L，UNKNOWN:null。0.60/0.90只是举例，不自动应用。保存策略不会生成审核决定。AI统计只计成功结果；失败/未完成单列，不归入未知分数结果。
+
+## 9. 需求方审核、修订和成果（全部待实现）
+
+POST /projects/{id}/reviews，owner＋幂等键：
+
+```json
+{
+  "action":"ACCEPT",
+  "selectionId":"<固定结果选择UUID>",
+  "confidencePolicyId":"<本次分档UUID或null>",
+  "reason":"查看并确认所选结果"
+}
+```
+
+也支持单条/明确批量 items[{sampleId,resultId,baseReviewRevision}]，与selectionId互斥。action为ACCEPT或NEEDS_REVISION，待修正要求reason；ACCEPT必须有有效结果，NEEDS_REVISION可针对尚无答案样本。相同样本只操作一份选定结果。无policy时可人工直接审核，有policy必须校验与目标AI快照一致。
+
+返回200 affectedCount、reviewBatchId、各项新reviewRevision（大批可用查询链接）；任何过期、无权限、运行中结果或不匹配项整体拒绝，409 REVIEW_CONFLICT。实际数量必须等于预览选择减去明确排除项，不动态扩大到后来出现的高分结果。
+
+POST /projects/{id}/results/{resultId}/revisions：owner＋幂等键，body baseReviewRevision、resultFormat、result、reason；201 新resultId、parentResultId、PENDING、新reviewRevision。只创建修订，不自动确认，随后显式调用reviews。修订后不继承AI置信度。
+
+POST /projects/{id}/final-snapshots：owner＋幂等键，body selectionId（purpose FINALIZE）、name；201 finalSnapshotId、sampleCount、specVersionId、scopeHash、createdAt。所有样本需当前已确认且无活动执行；缺项422 FINAL_RESULTS_INCOMPLETE，审核变化409 REVIEW_CONFLICT。此处固定范围完成，不自动表示全项目完成。
+
+GET /projects/{id}/final-snapshots、GET /final-snapshots/{id} 返回成果范围与确认来源。人工包complete可作为共享成果逻辑兼容入口，但不得强迫AI成果先打包。
+
+## 10. 批量结果集成（全部待实现）
+
+GET /aggregation-algorithms?taskType=IMAGE_CLASSIFICATION：当前目标只提供 majority-vote-v1，说明需要独立来源和至少两份有效答案。
+
+POST /projects/{id}/aggregations，owner＋幂等键，body algorithmId、specVersionId、inputs[{sampleId,resultIds}]、parameters。输入固定，不实时拉全部答案；同样本同actor重复版本拒绝，派生来源第一版拒绝自动计独立票。202 aggregationId/QUEUED。
+
+GET /aggregations/{id} 返回状态；GET /aggregations/{id}/items 分页返回 sampleId、suggestedResultId、status CONSENSUS/NO_CONSENSUS/INSUFFICIENT_INPUT、voteCounts、validVoteCount。严格过半才给建议；voteSupport不是confidence。owner采用时调用reviews确认suggestedResultId，不直接把任务置完成。
+
+## 11. 导出（全部待实现）
+
+POST /projects/{id}/exports，owner＋幂等键，body finalSnapshotIds、format="classification-csv-zip"、includeOriginals=false；202 exportId/QUEUED。输入不是 ALL_SUBMITTED 或 submissionIds，必须是已确认成果快照；多个快照重叠样本有不同答案时422 CONFLICTING_SNAPSHOTS。
+
+GET /exports/{id} 返回QUEUED/RUNNING/SUCCEEDED/FAILED、sampleCount、errorCode、expiresAt；GET /exports/{id}/download 每次重新授权，未完成409，过期410。未实现原图打包时includeOriginals=true应明确422，不静默忽略。
+
+ZIP包含 classifications.csv、manifest.json，记录sampleId/sourcePath/labelId/labelName/resultId、来源与审核；原图映射、规范、模型和快照可追溯。文件名包含项目可读名和快照/导出标识。不需要packageId、assignmentId的AI成果也可导出。重复生成固定快照时清单一致，不承诺含时间元数据的ZIP字节完全相同。
+
+## 12. 编辑器现有路径与新边界
+
+旧备份中的试验实现曾提供 POST /assignments/{id}/editor-sessions、/editor-sync 和 /editor-ui/{sessionId}/...，并依赖完整 LS 服务及 V6 外部映射；这些接口未合入当前 backend 分支，不是新版接入方式。
+
+新版编辑器直接由统一前端加载裁剪组件，通过第4—5节的本人样本/规范/草稿接口读写。转换后只发送平台 resultFormat/labelId；后端独立验证。保存是草稿，提交必须另行整包操作。不得把旧editor-sync与直接保存同时启用争写同一个草稿。
+
+切换时停止创建外部会话并拒绝旧会话写入，保留历史；新客户端不请求editor-sessions/editor-sync。不要求浏览器持有LS Token。详见 [编辑器接入](10-editor-integration.md)。
+
+## 13. 错误处理与联调顺序
+
+| 情形 | HTTP/code | 前端处理 |
+|---|---|---|
+| 未登录/身份不可用 | 401 UNAUTHENTICATED / 503 IDENTITY_UNAVAILABLE | 登录或稍后重试，不删除草稿 |
+| 停用、无权限 | 403 FORBIDDEN/LABELING_DISABLED，隐藏资源404 | 提示权限，不切换成别人的身份 |
+| 草稿版本冲突 | 409 REVISION_CONFLICT（已有） | 保留本地选择，重新读取，由用户决定 |
+| 人工包缺结果 | 422 INCOMPLETE_PACKAGE（已有） | 定位未完成项，禁止伪装提交成功 |
+| 样本活动范围冲突 | 409 SAMPLE_BUSY（待实现） | 显示被占用范围，调整选择或结束原执行 |
+| 审核/选择过期 | 409 REVIEW_CONFLICT / 410 SELECTION_EXPIRED（待实现） | 刷新并重新预览确认 |
+| 能力/阈值非法 | 422 AGENT_INCOMPATIBLE/REFERENCE_UNSUPPORTED/INVALID_THRESHOLDS（待实现） | 修正配置，不自动换模型 |
+| AI执行未终结 | 409 AI_RESULTS_NOT_READY（待实现） | 仅展示进度，不审核运行中输出 |
+| 请求重放内容不同 | 409 IDEMPOTENCY_CONFLICT（已有） | 新操作用新键，重试用原请求原键 |
+
+新增错误最终进入同一错误模型。列表里的待实现错误不得被测试或页面假装成服务器已有行为。
+
+人工链路：登录→me→建项目/规范→上传READY→选择→打包预览/发布→领取→所有页items→保存草稿→完整提交→owner查询/审核→成果快照→导出。
+
+AI链路：上传READY→选择样本（不用包）→agents→ai-executions→轮询至终态→看结果→手动policy→选择快照预览→reviews→final-snapshots→exports。
+
+混合链路：AI结束→owner选择待修正结果→打人工包并携带参考→领取且整包提交→owner审核；反向为人工提交后选样创建AI批次。最终验收必须有真实模型和真实接口，不能用Mock或旧编辑器服务代替。
+
+## 14. 2026-11-10 契约审查结论
+
+本次为静态代码与设计文档审查，没有执行迁移、调用共享数据库、部署或真实模型验收。第6—11节及内部Worker接口仍待实现，不代表B/D已确认或完成。
+
+- A：统一迁移编号与事务；实现发布轮次、执行租约/终结、审核revision和最终快照。先交可调用的接口和错误响应，不能要求D直接改业务表。
+- B：按第8节实现候选展示、统计、固定选择及受限原图读取；多数投票单独保存多结果输入；导出只消费最终快照。
+- D：按第7.3节调用执行控制，提供真实模型、权重版本、标签映射、分数含义及一组实际成功/失败输出；不另建一套业务结果库。
+- C：按固定选择预览操作，区分执行成功、结果交回和需求方确认；人工逐包提交，AI显示批次成功/失败范围。
+
+联调必须覆盖：领取10包先提交5个完整包；原10张包只返工4张形成新包；多候选不自动选最新；无答案可标待修正但不能确认；选择后审核版本变化整体拒绝；AI部分成功可审成功项；重复回调不重复保存；租约过期/取消后旧回调拒绝；阈值变更不改变既有确认。模型实际可用性、资源需求和分数语义由D提交运行证据，不能仅凭本契约宣称验证通过。

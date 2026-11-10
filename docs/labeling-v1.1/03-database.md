@@ -1,198 +1,174 @@
-# 数据库设计草案
+# 数据库设计｜多轮人工任务与独立 AI 批次
 
-目标：PostgreSQL专用库。业务ID在数据库中为UUID；API以规范UUID字符串传递（如 `550e8400-e29b-41d4-a716-446655440000`），调用方将其视为不透明ID，不自行解析或生成。统一身份服务的用户ID保留text并原样映射。时间timestamptz/UTC，文件大小bigint，结构化结果jsonb。引用关系默认禁止级联删除业务记录。
+更新：2026-11-09。本文为目标设计，不是已执行的 SQL。当前 backend 分支包含 V1—V5；旧备份曾有未合入的编辑器 V6 试验迁移。新增表、列、索引和权限须通过新的迁移实现，编号由 A 核对代码分支及各环境 Flyway 历史后分配。不得直接修改已执行迁移或生产数据。
 
-实现状态（2026-11-04）：标注服务已有 `V1__create_actor.sql` 和 `V2__create_projects_and_spec_versions.sql` Flyway迁移；V1已应用后不得修改原迁移，后续结构变更新增版本。V2的幂等表先以业务资源ID实现同步项目/规范创建的重放；异步任务和通用响应快照仍需后续扩充。其余本文件的任务、上传、提交、导出表仍是设计稿。
+## 1. 当前迁移与变更边界
 
-## 1. 实体关系
+| 现有迁移 | 本地代码中已有结构 | 本轮处理 |
+|---|---|---|
+| V1/V2 | actor、project、规范、角色授权及幂等基础 | 保留身份，扩充业务，不复制密码 |
+| V3 | 导入批次、分片、sample | 保留稳定 ID 与原图；不导入外部标签 |
+| V4 | package_plan、task_package、package_item、package_slot、assignment | 改为人工专用打包/领取；新增轮次，解除阻止多轮的旧唯一约束 |
+| V5 | annotation_draft、submission、submission_item | 保留人工完整提交；增加 round 归属和统一 result_revision 投影 |
+| 旧备份 V6（未合入当前 backend 分支） | editor_mapping、editor_session 及外部 LS 映射 | 不作为新版迁移；若某个环境已经应用，先核对并保留历史，不直接删除或重写 |
+
+现有 V4 同一 batch 只允许一个已发布计划、同一 actor 同包提交后永久占用旧席位；这些约束须按轮次改造。当前 V5 提交没有 AI 来源，不能为 AI 虚构 assignment 来绕过设计。数据库中的实际迁移状态以各环境的 Flyway history 为准，删除源码迁移文件不等于回滚数据库。
+
+## 2. 数据类型与关系
+
+业务 ID 为 UUID，身份服务 ID 保持 text；时间 timestamptz/UTC；revision 和字节数 bigint；结果 jsonb；分数用有限的 double precision 或等价受约束数值，范围 [0,1]，允许 NULL。禁止 NaN/Infinity。API 数值限制在 JavaScript 安全整数范围。FK 默认 RESTRICT，不级联清空业务历史。
 
 ```mermaid
 erDiagram
- ACTOR ||--o{ PROJECT : owns
- ACTOR ||--o{ ASSIGNMENT : claims
- PROJECT ||--o{ SPEC_VERSION : defines
- PROJECT ||--o{ IMPORT_BATCH : imports
- IMPORT_BATCH ||--o{ SAMPLE : contains
- IMPORT_BATCH ||--o{ IMPORT_CHUNK : receives
- PROJECT ||--o{ PACKAGE_PLAN : publishes
- SPEC_VERSION ||--o{ PACKAGE_PLAN : configures
- PACKAGE_PLAN ||--o{ TASK_PACKAGE : creates
- TASK_PACKAGE ||--o{ PACKAGE_ITEM : includes
- SAMPLE ||--o{ PACKAGE_ITEM : belongs
- TASK_PACKAGE ||--o{ PACKAGE_SLOT : requires
- PACKAGE_SLOT ||--o{ ASSIGNMENT : history
- ASSIGNMENT ||--o{ ANNOTATION_DRAFT : edits
- ASSIGNMENT ||--o| SUBMISSION : submits
- SUBMISSION ||--o{ SUBMISSION_ITEM : freezes
- SAMPLE ||--o{ SUBMISSION_ITEM : annotated
- EXPORT_JOB ||--o{ EXPORT_JOB_SUBMISSION : selects
- SUBMISSION ||--o{ EXPORT_JOB_SUBMISSION : referenced
+    PROJECT ||--o{ SAMPLE : contains
+    PROJECT ||--o{ SPEC_VERSION : defines
+    PROJECT ||--o{ PUBLICATION_ROUND : publishes
+    TASK_PACKAGE o|--o{ PUBLICATION_ROUND : human_only
+    PUBLICATION_ROUND ||--|{ ROUND_ITEM : fixes
+    SAMPLE ||--o{ ROUND_ITEM : selected
+    PUBLICATION_ROUND ||--o{ ASSIGNMENT : human_claims
+    ASSIGNMENT ||--o| SUBMISSION : whole_package
+    PUBLICATION_ROUND ||--o| AI_EXECUTION : ai_only
+    AI_EXECUTION ||--o{ AI_ITEM_OUTPUT : produces
+    SAMPLE ||--o{ RESULT_REVISION : has_versions
+    SAMPLE ||--o{ SAMPLE_REVIEW : has_spec_state
+    RESULT_REVISION ||--o{ REVIEW_EVENT : reviewed
+    FINAL_SNAPSHOT ||--|{ FINAL_SNAPSHOT_ITEM : freezes
+    RESULT_REVISION ||--o{ FINAL_SNAPSHOT_ITEM : adopted
 ```
 
-N=2不复制样本文件，而为每包创建2个slot。每个slot可有历史领取，但同一时刻仅一份有效或已提交领取。每次重新领取使用新assignmentId。
+## 3. 项目、包、轮次和领取
 
-## 2. 表与字段
+表中“新增/调整”均是待实现内容。所有冗余 project/spec/round 字段必须通过组合 FK 或同事务校验保持一致，不能仅靠前端传参。
 
-内部实体ID及其外键为uuid；identity_user_id、外部编辑器ID、幂等键、角色码保留text等原类型，不强制转换为uuid。status/kind按枚举或CHECK校验，created_at/updated_at为timestamptz；字段标为可空才允许NULL。用户名仅作展示，identity_user_id才是身份关联键。以下名称与组合外键使用完整字段名。
-
-| 表 | 主要字段 | 关键约束/索引 |
+| 表 | 字段要点 | 约束与说明 |
 |---|---|---|
-| actor | id、kind(HUMAN/MODEL)、identity_user_id(text，可空)、display_name、status(ENABLED/DISABLED) | HUMAN必须有identity_user_id且唯一；MODEL必须为空。V1仅人工actor |
-| actor_role_grant | actor_id、role_code、granted_by、created_at | 主键(actor_id,role_code)；仅LABELING_ADMIN；不是训练角色 |
-| project | id、owner_actor_id、name、description、task_type、status、visibility、revision | owner外键actor；索引(owner_actor_id,created_at,id)；V1 visibility=PLATFORM仅公开任务摘要，不直接授予数据/管理权限 |
-| spec_version | id、project_id、version_no、task_type、labels(jsonb)、instructions、editor_config、schema_version、frozen_at(可空) | 唯一(project_id,version_no)；首次成功发布时冻结；新规则创建新版本 |
-| import_batch | id、project_id、status、original_name、storage_key、size_bytes、received_bytes、sha256、error_code(可空) | 索引(project_id,status)；长度非负且received_bytes不超过size_bytes；READY前完成文件校验 |
-| sample | id、project_id、batch_id、source_path、storage_key、content_sha256、media_type、metadata(jsonb) | 唯一(batch_id,source_path)；batch必须属于同project；同内容不自动合并不同样本 |
-| package_plan | id、project_id、batch_id、spec_version_id、package_size、annotators_per_sample、status、selection_hash、published_at(可空) | batch/spec必须同项目；size/N均>0；同批次仅一条published_at非空的计划；发布后不清空时间 |
-| task_package | id、plan_id、sequence_no、status、sample_count、required_count、revision | 唯一(plan_id,sequence_no)；sample_count/required_count>0；人数必须等于计划N，发布后冻结 |
-| package_item | package_id、plan_id、batch_id、sample_id、ordinal | 主键(package_id,sample_id)；唯一(plan_id,sample_id)、(package_id,ordinal)；ordinal>0；组合外键保证包属计划、样本属计划批次 |
-| package_slot | id、package_id、slot_no | 唯一(package_id,slot_no)；slot_no>0；发布校验必须完整覆盖1..N；发布后不增删 |
-| assignment | id、slot_id、package_id、actor_id、status、revision、claimed_at、ended_at(可空)、release_reason(可空) | slot必须属于package；见下方两项部分唯一约束 |
-| annotation_draft | assignment_id、package_id、sample_id、result_format、result(jsonb)、explicit_done、revision、saved_at | 主键(assignment_id,sample_id)；组合外键保证样本属于领取的包；revision>=1 |
-| submission | id、project_id、package_id、assignment_id、spec_version_id、submitted_by、submitted_at、content_hash | 唯一assignment_id；组合外键绑定领取、作者、规范和项目；冻结后禁止更新/删除 |
-| submission_item | submission_id、package_id、sample_id、draft_revision、result_format、result(jsonb)、explicit_done | 主键(submission_id,sample_id)；组合外键保证包成员归属；draft_revision>=1、explicit_done=true；提交后不可变 |
-| editor_mapping | assignment_id、package_id、sample_id、provider、external_project_id(可空)、external_task_id(可空)、sync_status、external_annotation_id(可空)、result_hash(可空)、synced_revision(可空)、error_code(可空) | 主键(assignment_id,sample_id,provider)；包成员组合外键；READY须有外部project/task ID；唯一(provider,external_project_id,external_task_id)，未映射时允许NULL |
-| export_job | id、project_id、requested_by、status、format、selection(jsonb)、progress_snapshot(jsonb)、storage_key(可空)、checksum(可空)、error_code(可空) | selection只存筛选参数；progress_snapshot冻结同次快照的完成情况；提交清单由关联表保存；索引(project_id,created_at) |
-| export_job_submission | export_job_id、project_id、submission_id、content_hash | 主键(export_job_id,submission_id)；组合外键保证导出任务和提交属于同项目；摘要等于冻结提交摘要；索引(submission_id) |
-| import_chunk | batch_id、offset_bytes、size_bytes、sha256、storage_key | 主键(batch_id,offset_bytes)；batch外键；offset>=0、size>0；批次行锁下校验顺序及总长度，文件持久化后才记回执 |
-| idempotency_record | actor_id、operation、idempotency_key、request_hash、resource_id、created_at | 主键(actor_id,operation,idempotency_key)；V2同步建项/建规范时指向已创建资源；异步操作的通用请求状态模型仍未实现 |
-| audit_event | id、actor_id、project_id(可空)、action、resource_type、resource_id、reason(可空)、created_at | 追加记录；索引(project_id,created_at)；不得记录Token/密钥或完整原始数据 |
+| actor（保留） | id、kind HUMAN/MODEL、identity_user_id、status | HUMAN 身份唯一且非空；MODEL 无人类登录 ID；不另建 AI 枚举 |
+| project/spec_version（保留） | owner、task_type、revision；labels、frozen_at | 使用规范的任何发布都冻结版本，AI 同样如此 |
+| import_batch/sample（保留） | project_id、batch_id、source_path、storage_key、hash | sample 与批次同项目；READY 样本不可变；同内容不同路径不自动合并 |
+| result_selection（新增） | id、project_id、spec_version_id、created_by、purpose、review_action 可空、filter_json、policy_id 可空、statistics_json、selection_hash、created_at、expires_at | PUBLISH/REVIEW/FINALIZE固定选择；集成另用aggregation_input，不是动态查询表达式 |
+| result_selection_item（新增） | selection_id、project_id、sample_id、result_id 可空、review_revision、ordinal | 唯一(selection,sample)；ACCEPT/FINALIZE时result必填；PUBLISH/NEEDS_REVISION可空；无审核行revision=0 |
+| package_plan（调整） | project_id、spec_version_id、selection_id、package_size、annotators_per_sample、selection_hash、status | 新计划按选定样本，不强制单一 batch；默认 10/1，同一 selection 可多次规划但活动样本不得重复发布 |
+| task_package（调整） | plan_id、project_id、spec_version_id、sequence_no、sample_count、status | 人工工作单位，不承载所有 AI 业务；成员冻结，旧包不得重新塞入新样本 |
+| package_item（调整） | package_id、project_id、sample_id、ordinal | 唯一(package,sample)、(package,ordinal)；不再强制所有样本来自同一 batch，样本原批次仍保留 |
+| publication_round（新增） | id、project_id、spec_version_id、package_id 可空、round_no、mode HUMAN_POOL/AI_AGENT、instructions、status OPEN/CLOSED/CANCELLED、revision | 人工必须有包；AI 必须无包；人工唯一(package,round_no)，同包至多一个 OPEN round |
+| round_item（新增） | round_id、project_id、spec_version_id、sample_id、ordinal、reference_result_id 可空 | 唯一(round,sample)、(round,ordinal)；人工必须等于包的全部成员；AI 任意同项目兼容样本；发布后不可变 |
+| sample_work_claim（新增） | project_id、sample_id、round_id | PK(project,sample)；发布时占用，轮次结束删除占用行；不是删除历史。多个同轮人工席位共用占用 |
+| package_slot（调整） | id、round_id、package_id、slot_no | 唯一(round,slot_no)，不再唯一(package,slot_no)；每轮完整 1..N |
+| assignment（调整） | id、round_id、package_id、slot_id、actor_id、status、revision、ended_at | 仅人工，slot/round/package 一致；同一 actor 在同轮不可重复领取 |
 
-数据类型细节：name/title建议varchar(200)，外部ID/路径使用text，revision/draft_revision/synced_revision用bigint且为正，version_no/包内计数用integer，字节数及分片offset用bigint。API整数不得超过JavaScript安全整数范围；容量及revision越界应明确拒绝。结果JSON不存原始图片字节，storage_key不作为公开文件地址。SHA-256按64位十六进制字符串校验；JSON摘要采用明确版本的规范化序列化规则。
+result_selection 的“全选筛选结果”由后端在一个一致快照内生成 item 清单；返回实际数量和 hash，分页预览此清单。超量拒绝或通过持久任务生成，不能跨多次普通分页查询拼出漂移集合。
 
-## 3. 必须落地的约束
+新人工包可以从同项目不同导入批次/旧包选样，但必须使用一份规范。旧 package_item 的 plan/batch FK 不能原样套给新跨批次计划：迁移时新增 project/spec 组合归属、回填，再解除单批次依赖，保留 sample.batch_id 追溯。唯一(plan,sample)可继续用于防止同一打包计划重复分包。
 
-### 3.1 席位与发布唯一性
+## 4. 人工草稿、提交与统一结果
 
-assignment的slot_id、package_id、actor_id、status均NOT NULL，状态受CHECK约束。保留两项部分唯一索引：
-
-```sql
-CREATE UNIQUE INDEX uq_assignment_slot_reserved
-ON assignment(slot_id)
-WHERE status IN ('CLAIMED', 'IN_PROGRESS', 'SUBMITTED');
-
-CREATE UNIQUE INDEX uq_assignment_actor_package_reserved
-ON assignment(package_id, actor_id)
-WHERE status IN ('CLAIMED', 'IN_PROGRESS', 'SUBMITTED');
-
-CREATE UNIQUE INDEX uq_plan_batch_published
-ON package_plan(batch_id)
-WHERE published_at IS NOT NULL;
-```
-
-提交后席位永久保留；RELEASED/REVOKED不占席位，重新领取生成新assignment，不继承旧草稿。发布事务原子写入status=PUBLISHED和published_at；CHECK要求两者同时成立或同时不成立。发布后的计划不退回草稿、不清空published_at，归档通过project控制；否则部分唯一索引会被绕过。同批次可有失败/未发布计划，但只允许一个成功发布。重试同一计划返回原发布结果；另一计划抢先发布则返回BATCH_ALREADY_PUBLISHED。
-
-### 3.2 完整归属链
-
-以下箭头表示组合外键，引用端各字段均NOT NULL。被引用组合建立相应普通UNIQUE键；默认禁止级联删除。不能只验证传入ID存在。
-
-| 引用字段 | 被引用字段 | 保证 |
+| 表 | 字段要点 | 约束与说明 |
 |---|---|---|
-| sample(batch_id,project_id) | import_batch(id,project_id) | 样本批次与项目一致 |
-| package_plan(batch_id,project_id) | import_batch(id,project_id) | 计划批次属于项目 |
-| package_plan(spec_version_id,project_id) | spec_version(id,project_id) | 计划规范属于项目 |
-| package_item(package_id,plan_id) | task_package(id,plan_id) | 包属于计划 |
-| package_item(plan_id,batch_id) | package_plan(id,batch_id) | 使用计划指定批次 |
-| package_item(batch_id,sample_id) | sample(batch_id,id) | 样本来自该批次 |
-| assignment(slot_id,package_id) | package_slot(id,package_id) | 席位属于包 |
-| annotation_draft(assignment_id,package_id) | assignment(id,package_id) | 草稿属于领取的包 |
-| annotation_draft(package_id,sample_id) | package_item(package_id,sample_id) | 草稿样本是包成员 |
-| submission(assignment_id,package_id,submitted_by) | assignment(id,package_id,actor_id) | 提交包及作者与领取一致 |
-| submission(spec_version_id,project_id) | spec_version(id,project_id) | 提交规范属于项目 |
-| submission_item(submission_id,package_id) | submission(id,package_id) | 提交项属于提交的包 |
-| submission_item(package_id,sample_id) | package_item(package_id,sample_id) | 提交样本是包成员 |
-| editor_mapping(assignment_id,package_id) | assignment(id,package_id) | 编辑器映射属于领取 |
-| editor_mapping(package_id,sample_id) | package_item(package_id,sample_id) | 编辑器只映射包成员 |
-| export_job_submission(export_job_id,project_id) | export_job(id,project_id) | 导出关联属于任务项目 |
-| export_job_submission(submission_id,project_id) | submission(id,project_id) | 不引用其他项目提交 |
+| annotation_draft（调整） | assignment_id、round_id、package_id、sample_id、result_format、result、explicit_done、revision | PK(assignment,sample)；同时绑定 assignment 及 round_item，只有包成员 FK 不够 |
+| submission（调整） | id、assignment_id、round_id、project_id、package_id、spec_version_id、submitted_by、content_hash | assignment 唯一；必须绑定本轮和作者；不可变 |
+| submission_item（调整） | submission_id、round_id、sample_id、draft_revision、result | 完整快照；样本必须是该 round_item，不只是原包成员 |
+| result_revision（新增） | id、project_id、sample_id、spec_version_id、source_kind、source_actor_id 可空、submission_id/ai_execution_id/aggregation_id/owner_edit_id、result_format、result、confidence 可空、created_at、content_hash | 每条为不可变候选；四种来源只能有一种且匹配 source_kind；人工/AI 不共用唯一 marks |
+| result_reference（新增） | result_id、project_id、sample_id、spec_version_id、reference_result_id | 同样本/规范的来源引用；保留人工参考 AI、owner 修改等关系；禁止自引用，新增结果只引用既有不可变版本 |
+| owner_edit（新增） | id、project_id、sample_id、spec_version_id、actor_id、base_result_id、reason、created_at | owner 修订必须基于存在的候选，新结果默认 PENDING，不暗中审核通过 |
 
-submission仍需在提交事务中沿package→plan验证project_id及spec_version_id等于发布计划绑定值；外键只证明规范属于项目，不能证明它是该包的规范。导出关联content_hash从不可变submission读取，禁止客户端填写。对submission插入增加数据库校验触发器核对包计划的项目/规范，防止绕过服务层写错。对草稿和映射，包与发布规范的关系通过不可变包计划取得。
+source_kind 为 HUMAN/AI/OWNER/AGGREGATION。来源字段建议显式 FK 加 num_nonnulls(...)=1 CHECK，而不是一个无法建外键的 source_id。HUMAN 的 source_actor 必须等于 submission.submitted_by；AI 必须等于 execution.agent_actor_id；OWNER 必须为该操作有权限的 owner；AGGREGATION 不是伪造的标注员，来源身份可为空，另记录触发人。
 
-### 3.3 发布和提交的集合完整性
+HUMAN结果还应通过(submission_id,sample_id)关联submission_item，AI结果通过(execution_id,sample_id)关联成功的ai_item_output；候选内容必须来自对应固定输出，不能只验证父记录存在。
 
-- 发布前检查：有效样本至少1条；READY批次的有效样本集合等于全部package_item样本集合；无遗漏、重复、外批次样本；按冻结排序确定包边界，末包可以不足package_size。
-- 每包sample_count等于成员行数，required_count等于计划annotators_per_sample；实际slot_no集合必须恰为1..N。每包成员ordinal恰为1..sample_count。
-- 提交前检查：客户端sample/revision清单、服务器已完成草稿和包成员集合完全对应，不接受重复sampleId；每个revision一致且explicit_done=true，结果通过绑定规范验证。
-- 外键保障归属，服务事务保障集合完整；所有业务写入经过服务。发布成员/席位、冻结规范、正式提交及提交项由数据库触发器禁止后续更新/删除（提交项只能在该领取尚未SUBMITTED的同一提交事务中插入）。数据库迁移账号与业务账号分离，业务账号不得修改保护触发器。
+唯一(submission_id,sample_id)、(ai_execution_id,sample_id)、(aggregation_id,sample_id)、(owner_edit_id)分别防止来源重复投影。只有 AI 来源可带模型 confidence，人工修改及集成不继承 AI 分数。模型版本从执行记录取得，不信任浏览器。
 
-### 3.4 规范冻结与索引
+人工草稿允许包内只有部分样本完成，但草稿本身不构成正式交回。每个 assignment 对应一个领取包；提交事务必须验证请求 sample/revision 集合恰好等于该 assignment 在本轮领取的包成员，每条草稿 explicit_done=true 且内容有效，不能漏项、重复或加入包外样本。同一发布计划的其他包不属于本次提交校验范围，可以稍后提交；例如 10 个包可先分别提交其中已完成的 5 个。单个包内有任一样本未完成就不能为该包生成 submission。重新发布的选定人工范围应先拆成包，各 assignment 再独立校验。提交与 result_revision 投影同事务完成；旧记录回填也建立唯一来源，避免查询期双写成两份答案。
 
-编辑规范与发布都必须先锁同一spec_version行。首次正式发布设置frozen_at；触发器阻止冻结版本内容修改、删除或清空冻结时间。规范task_type必须等于项目task_type；项目存在规范/数据后不允许原位切换任务类型。READY批次的样本内容不再覆盖，已发布计划/包/成员/席位不再变更；状态管理字段按允许转换更新。
+## 5. AI 执行与结果快照
 
-除表内主键/唯一索引外，至少补齐外键引用侧及常用列表索引：sample(batch_id,project_id)、package_plan(batch_id,project_id)、package_plan(spec_version_id,project_id)、package_item(plan_id,batch_id)、package_item(batch_id,sample_id)、assignment(slot_id,package_id)、assignment(actor_id,status,claimed_at)、annotation_draft(package_id,sample_id)、editor_mapping(package_id,sample_id)、submission(project_id,submitted_at)、submission(package_id)、submission_item(package_id,sample_id)、export_job_submission(submission_id,project_id)。其他外键按查询/约束检查补齐；已有索引最左前缀覆盖时不重复创建，正式DDL通过执行计划再调整。
+| 表 | 字段要点 | 约束与说明 |
+|---|---|---|
+| ai_agent_config（新增） | actor_id MODEL、task_type、capabilities、model_version、config_ref、enabled | 数据库保存受控配置引用，不在前端暴露密钥；模型是否支持参考输入显式声明 |
+| ai_execution（新增） | id、round_id 唯一、project_id、spec_version_id、agent_actor_id、model_version、config_version、label_mapping、confidence_description、status、generation、lease_owner/lease_until 可空、started/ended_at、retry_of_execution_id 可空、success/failed/pending/cancelled counts | 无 package/assignment；RoundItems 为执行全集；终态不可重开 |
+| ai_item_output（新增） | execution_id、round_id、sample_id、status SUCCEEDED/FAILED/PENDING/CANCELLED、result 可空、confidence 可空、error_code 可空、generation、attempt_count | PK(execution,sample)；FK 绑定 execution 和 round_item；成功时有效标签必填，失败不填虚假答案 |
+| ai_result_snapshot（新增） | id、execution_id 唯一、model_version、input_hash、created_at、counts | 执行结束时固定成功 result_revision、失败清单及计数；PARTIAL 时两者都必须齐全；未结束不得创建审核策略 |
+| ai_result_snapshot_item（新增） | snapshot_id、execution_id、sample_id、result_id 可空、outcome、error_code 可空 | 每个输入样本恰有一行；成功绑定该 execution 的结果，失败/取消未完成结果为空 |
+| confidence_policy（新增） | id、project_id、execution_id、snapshot_id、model_version、lower_threshold、upper_threshold、created_by、created_at、revision | CHECK 0≤L<H≤1；保存策略追加版本，不修改旧审核使用的策略 |
 
-## 4. 关键事务与并发
+AI 批次的终态表示执行已交回，不代表需求方已审核通过或项目已完成。失败清单和成功候选属于同一个不可变批次快照；需求方可以先核查、修正或确认成功结果，再单独决定失败项重试、换 Agent 或转人工。审核记录不能修改 AI 原始输出。
 
-### 4.1 锁定规则
+Worker凭据绑定workerId及Agent授权；执行输入配置和标签映射创建时固定。租约默认120秒、30秒心跳，详见04第7.3节；已写入成功/失败输出不可覆盖，接管保留原输出，旧generation写回拒绝。
 
-V1使用READ COMMITTED，导出清单快照使用REPEATABLE READ短事务。通常锁的是行，不是整张表；所有多行操作按稳定ID顺序。
+Worker 在短事务原子认领租约并递增 generation，事务外调用模型，写回时检查 generation、actor/project 状态、样本范围和执行状态。租约过期接管可以重复计算，不能重复采纳。取消递增 fencing generation，使旧工作者写入失效。
 
-全局顺序：幂等记录 → actor（涉及多人按ID排序）→ project → spec_version → import_batch → package_plan → task_package → package_slot → assignment → annotation_draft → editor_mapping → submission/提交项 → export_job/导出关联 → 审计追加。只取实际需要的锁；新插入行由插入事务持有，不为了遵守顺序读取锁定全部表。关联ID可预读用于定位，但拿锁后必须重读校验。不得先锁assignment再反向申请slot或project锁。
+批次终结需所有输入有成功、失败或取消未完成结论：全部成功为 SUCCEEDED，部分成功为 PARTIAL，全失败为 FAILED；主动取消为 CANCELLED 并保留有效已得结果。事务生成 snapshot、候选 result_revision、终态及统计；结果量超过同步事务上限应明确拒绝或采用不可见 staging 后原子发布，不边发布边审核。
 
-| 操作 | 行锁与并发规则 |
+成功候选可经需求方审核，即使批次 PARTIAL。失败无答案，不能进入审核集合。重试已终结批次由 owner 选择失败项创建新 execution/round，retry_of_execution_id 关联原执行，不覆盖原模型版本或结果快照。
+
+## 6. 当前审核、集成和成果
+
+| 表 | 字段要点 | 约束与说明 |
+|---|---|---|
+| sample_review（新增） | project_id、sample_id、spec_version_id、selected_result_id 可空、status UNREVIEWED/PENDING/NEEDS_REVISION/ACCEPTED、revision | PK(project,sample,spec)；ACCEPTED 必须有对应 selected_result；无候选时可 UNREVIEWED 或 owner 指定 NEEDS_REVISION |
+| review_event（新增） | id、project_id、sample_id、spec_version_id、actor_id、action、previous/result_id 可空、reason、policy_id 可空、selection_id 可空、before/after_revision、created_at | 追加且不可变；只有 owner 的明确动作生成审核决定，执行者不能自审 |
+| aggregation_run（新增） | id、project_id、spec_version_id、algorithm/version、parameters、requested_by、status、input_hash、created_at | 固定整批输入，不从实时“最新答案”推断 |
+| aggregation_input（新增） | run_id、sample_id、result_id、source_actor_id | 样本与规范相同；同一样本同一来源 actor 至多一份选定答案 |
+| aggregation_output（新增） | run_id、sample_id、status、suggested_label_id 可空、vote_counts、valid_vote_count、result_id 可空 | 有严格多数才生成 AGGREGATION 候选；少于两票或无多数保留原因，不造答案 |
+| final_snapshot（新增） | id、project_id、spec_version_id、scope_hash、created_by、created_at | 只固化明确范围；不强制 packageId，不能表示未选样本也完成 |
+| final_snapshot_item（新增） | snapshot_id、project_id、sample_id、spec_version_id、result_id、review_event_id、review_revision、source_path、content_hash | 每样本一条；记录创建时有效确认依据；不可变 |
+| export_job（新增） | id、project_id、requested_by、status、format、include_originals、storage_key/checksum 可空、expires_at 可空 | 创建时固定 final_snapshot 清单，不从 submission 直接导出未审核结果 |
+| export_job_snapshot（新增） | export_id、project_id、snapshot_id | 同项目 FK；多个快照重叠样本若选择不同答案则拒绝，禁止静默择新 |
+| audit_event（新增/完善） | actor/project、action、resource、reason、request_id、created_at | 与状态写入同事务追加，不写密码、Token、密钥 |
+
+确认必须指定具体结果版本和当前 reviewRevision；更改阈值不会改变 ACCEPTED。重新发布已确认样本时 owner 先显式同意，发布事务内写撤销当前确认事件、推进 revision，历史 final_snapshot 不被重写。旧快照仍是当时成果，不代表最新状态。
+
+成果创建时以稳定样本顺序检查所有选中样本已 ACCEPTED、答案合法、没有活动占用，生成快照。人工包完成状态可以引用快照，但 AI-only 成果无需人工包。项目仍有其他未完成样本时，不把项目显示为全部完成。
+
+## 7. 归属约束与唯一性
+
+以下组合外键必须有对应 UNIQUE 键；具体 DDL 由迁移实现，不能用 nullable FK 绕过 mode/source CHECK。
+
+| 引用链 | 保证 |
 |---|---|
-| 身份启用检查 | 调用者actor用FOR SHARE；禁用用FOR UPDATE。管理操作涉及其他actor时统一排序，拿锁后复核权限 |
-| 领取、保存、提交 | project与task_package用FOR SHARE并复核状态；不同包/席位可并行 |
-| 暂停/恢复/归档 | project用FOR UPDATE；等待此前持共享锁的短事务结束，再修改状态；提交后的新请求被拒绝 |
-| 领取 | slot用FOR UPDATE；选择空席可用SKIP LOCKED，拿锁后重查有效/已提交assignment；唯一索引兜底 |
-| 保存草稿 | 已IN_PROGRESS的assignment用FOR SHARE，草稿用revision条件更新；首次CLAIMED转IN_PROGRESS直接申请FOR UPDATE后复核，不先共享再升级锁 |
-| 提交、放弃、回收 | slot和assignment均FOR UPDATE；提交再按sampleId顺序锁已有草稿，阻止保存与终态转换并发 |
-| 发布/规范编辑 | project发布时FOR UPDATE，spec_version、batch、plan依序FOR UPDATE；冻结与规范编辑互斥 |
+| round(project,spec) → spec(id,project) | 本轮规范属于项目 |
+| round_item(round,project,spec) → round(id,project,spec)，(sample,project) → sample(id,project) | 样本与轮次同项目 |
+| round_item(reference_result,sample,project,spec) → result_revision(id,sample,project,spec) | 引用同样本规范的固定结果 |
+| assignment(slot,round,package) → package_slot(id,round,package)，slot(round,package) → round(id,package) | 人工席位绑定本轮包 |
+| draft/submission_item(round,sample) → round_item(round,sample)，submission_item(submission,sample) 与 assignment 包成员关系 | 只能提交本 assignment 所属包内样本；包内必须完整，其他包不纳入本次提交 |
+| submission(assignment,round,package,author) → assignment(id,round,package,actor) | 作者及范围不能伪造 |
+| ai_item_output(execution,round) → ai_execution(id,round)，(round,sample) → round_item | AI 不能写范围外结果 |
+| result_revision 的来源组合 → submission/ai_execution/owner_edit/aggregation_run | 来源、项目、规范、作者一致；服务及必要触发器核对样本来源 |
+| sample_review(selected_result,sample,project,spec) → result_revision | 不能审核另一张图的答案 |
+| snapshot/review/selection 的 result 组合外键 | 审核、选择与导出不得跨项目或替换样本 |
 
-首次草稿创建用主键冲突保护，baseRevision=0仅允许不存在时插入；已有草稿执行WHERE revision=baseRevision的原子更新，影响0行返回REVISION_CONFLICT。保存时assignment共享锁一直持有至提交，让提交/回收的排他锁等待保存完成；不同样本的保存可以并行。
+将旧 uq_assignment_actor_package_reserved 替换为 (round_id,actor_id) 的有效态唯一索引；slot 改为轮次席位。已提交占用本轮席位，但不阻止下一轮新席位。新计划取消 uq_plan_published_batch，发布幂等按计划 ID/hash 管理，跨计划冲突由 sample_work_claim 保证。
 
-SKIP LOCKED暂时选不到席位不能直接断言永久领满：若仍有未占席位但正被锁定，返回CLAIM_BUSY；已无剩余席位才返回SLOT_FULL。若锁争用后提交使最后空位消失，也允许返回CLAIM_BUSY让客户端刷新。本人重复占席由唯一约束转ALREADY_CLAIMED。
+锁持有期间由服务验证人工 RoundItems 与 package_item 集合完全相等，AI round 没有人工包，source_actor 类型正确；对不可变结果/快照限制业务账号 UPDATE/DELETE 权限。应用账号不能修改保护触发器和迁移历史。
 
-### 4.2 业务事务
+## 8. 事务、锁顺序与幂等
 
-- 发布：先短事务把DRAFT或FAILED计划转BUILDING；后台构建不可见包/成员/slot；进入BUILDING后计划参数及selection_hash固定，修改需求须新建未发布计划。相同plan仅一个构建者，使用数据库事务锁控制；分批构建只在BUILDING状态且持计划锁写入。最终发布按上述顺序持锁，复核批次/规范/selection_hash及完整集合，冻结规范、写published_at、置PUBLISHED，并将首次发布的DRAFT项目置OPEN，整体原子可见。READY样本不可变保证构建稳定。PAUSED/ARCHIVED禁止发布；重试同一计划使用(plan,sequence_no)、(plan,sample)、(package,slot_no)等唯一键，不重复生成。失败保持不可领取，已提交成功的计划不改FAILED。
-- 领取：按顺序取得actor/project/package锁，确认计划PUBLISHED、项目和包OPEN、本人有权限，再锁席位并复核，原子新建assignment与审计。不在锁内调用Label Studio或文件存储。
-- 保存/同步：外部结果先在事务外读取；进入短事务重新检查身份、项目、包、assignment有效性，校验映射、作者、规范、样本和baseRevision，再写草稿及同步记录。并发变更返回409，不自动覆盖新草稿。不要把浏览器传来的任意结果当作已验证编辑器结果。
-- 提交：锁assignment及全部包内已存草稿，校验完整样本/revision集合和规范，生成不可变submission/items、摘要，并将assignment置SUBMITTED、设置ended_at、推进revision、记录审计，一次提交。同幂等键重试返回原submissionId；不同键且已提交返回ASSIGNMENT_CLOSED。
-- 放弃/回收：本人放弃→RELEASED；管理员或受控回收任务→REVOKED，reason必填。锁定后拒绝SUBMITTED，设置ended_at并推进revision。旧草稿保留，新领取使用新ID。暂停时可执行回收以满足归档条件，不准以回收修改已提交结果。
-- 暂停：以暂停事务提交为边界，之前已拿共享锁的操作允许先完成；之后的新领取、工作数据访问、草稿保存/同步及提交拒绝。已经发出的网络字节无法撤回；编辑器旧页面的迟到保存必须在平台重新鉴权并拒绝，恢复后仍有效领取可继续。owner仍可读历史结果并导出。
-- 导出：在同一REPEATABLE READ短事务中检查owner权限，选定并验证同项目提交，写export_job_submission及对应摘要，同时冻结progress_snapshot；后台只读取该清单。空清单返回NO_SUBMISSIONS。后台开始、产物发布和每次下载都重查权限；暂停允许owner导出，归档允许历史结果导出但不允许新增标注或导入任务。不会随执行时间增加后来提交。
+统一顺序：幂等记录 → 涉及 actor（按 ID）→ project → spec → sample（按 ID）→ sample_review（同序）→ selection/plan/package → round → slot → assignment 或 ai_execution → draft/output → 不可变结果、审核事件和快照。只拿需要的锁；可预读定位 ID，拿锁后复核。Worker 禁止先锁 execution 再倒锁 project/sample。
 
-### 4.3 幂等、失败与外部操作
+- 正常写请求 actor/project 用共享锁；停用/暂停用排他锁；人工发布首次 DRAFT→OPEN 用项目排他锁，避免锁升级死锁。
+- 发布、再发布、审核与最终成果对受影响 sample 行按稳定顺序排他锁，解决 review 行尚不存在和样本占用插入的竞态；sample_work_claim 唯一键兜底。
+- 保存持 assignment 共享锁，首次转 IN_PROGRESS 直接用排他锁；草稿 CAS revision。提交/释放用 assignment 排他锁，提交按 sample 顺序固定所有草稿。
+- AI 结果写回持执行状态保护锁、检查 generation；终结/取消取排他锁。锁只覆盖数据库校验和写入，不覆盖模型运行。
+- 选择快照用 REPEATABLE READ 一致短事务；消费时仍验证 reviewRevision 和当前授权，过期全部拒绝，不把旧预览当作永久授权。
+- 发布与撤销当前确认、占用、持久任务创建在同一事务完成。队列记录与发布同时提交，避免已发布却无工作。
+- 审核全有或全无；有一个过期项返回 REVIEW_CONFLICT，给出需刷新范围，不部分成功却显示全成功。
+- AI 终结结果只在快照完整落库后可审核。导出在数据库外生成文件，校验后才标 SUCCEEDED。
 
-幂等键包含调用者、方法、具体资源路径和key。同步写操作的幂等记录、业务写入与结果响应在同一事务提交，失败一起回滚；相同键的并发请求等待/冲突后重读结果，不能重复执行。异步发布、导入、导出在短事务写持久任务并返回其ID，后续查询任务状态；相同键返回同一任务，不重复创建任务。记录至少保留至资源归档清理，实际清理期限上线前确定；业务唯一约束长期保留。
+40P01/40001 最多有限次重试整个数据库事务并退避；23505 按约束区分幂等、占用和重复领取；不重试所有错误，不在重试闭包中调用模型。Idempotency-Key 绑定调用者、操作路径、键和请求 hash，同内容重放同响应，同键不同内容 409。
 
-40P01（死锁）和40001（序列化失败）最多重试整个数据库事务3次并随机退避；重试耗尽返回503 TRANSACTION_RETRY_EXHAUSTED。23505按已知约束名区分重复领取、批次重复发布、幂等冲突，转换对应409或读取幂等原响应；未知约束错误记服务错误，不能一概当领取冲突。55P03按场景返回409 RESOURCE_BUSY。不无条件重试所有数据库错误，也不在数据库重试闭包中发送外部请求。
+## 9. 迁移、回填与恢复
 
-文件、对象存储和编辑器无法参加业务库事务：
+1. A 先列出各环境实际 Flyway 历史，分配新编号；不得修改已执行迁移文件或清空库来跳过升级。
+2. 新增 round/结果/审核/AI 表和兼容列；回填旧包为人工首轮，现有 assignment/slot/draft/submission 加入 round 归属。
+3. 回填旧正式提交到 HUMAN result_revision，来源唯一；旧草稿仍是草稿，没有 owner 审核证据的旧答案为待审核，不自动 ACCEPTED。
+4. 建立新组合 FK 和索引、校验计数后，再解除旧单批次/单包永久席位约束；更新 ORM/SQL 查询同步上线。不能先删旧约束而不加新归属保护。
+5. 旧活动包回填 sample_work_claim；若历史不同活动包存在同样本冲突，停止迁移并给出清单，由负责人处理，不能任意覆盖。
+6. 冻结输入、结果和规范不可变；旧 package_item batch 信息保留追溯，新增跨批次计划走新 project 归属。
+7. 停用外部 LS 会话路径。若环境中存在旧 V6 映射则保留数据库历史，不再新增外部项目任务；当前分支不带入旧 V6 迁移实现。
+8. 隔离副本验证迁移、回填、旧接口兼容和恢复；记录源码版本、迁移清单、数据库与文件备份。验证失败不更新共享库。
 
-- 上传时持久化分片文件并核对摘要，再在短事务中插入import_chunk回执并推进received_bytes；同offset同摘要重试返回原回执。崩溃产生孤立文件时按批次和摘要重认领，不能仅凭文件存在推进offset。
-- 原始文件/解析结果使用稳定key、写后校验且不覆盖已发布内容；最终确认文件完整后才置READY。解析失败不允许发布，重试复用稳定sample ID。
-- 导出文件先写临时key，校验完成后才提交storage_key/checksum与SUCCEEDED；下载只读成功记录。孤立临时文件在确认无活跃任务引用且超过保留期后清理，不删除已发布原始文件。
-- editor_mapping先PENDING，后台转SYNCING并按assignment/sample/provider生成稳定外部标识。外部调用超时先查询对账再重试；不可假设Label Studio天然支持幂等创建。不得在不确定创建结果时盲目新建。成功后写READY，失败写FAILED；回写前重新授权并校验草稿revision，作者/样本/规范不符则拒绝。READY可再次SYNCING；synced_revision记录本次成功写入的平台草稿版本。提交只使用已在平台落库且校验成功的版本。
+导入继续遵守文件持久化后才记回执，恢复按摘要核验；业务库、原图、模型版本配置、成果文件和队列一并考虑恢复。已确认结果/原图不因导出文件过期被级联删除。备份和恢复是实施任务，本文未实际执行。
 
-## 5. 状态、保留和演进
+## 10. 验收重点
 
-| 实体 | 状态与允许转换 |
-|---|---|
-| actor | ENABLED↔DISABLED；禁用不释放提交席位、不修改训练角色 |
-| project | DRAFT首次成功发布→OPEN；OPEN↔PAUSED；DRAFT/OPEN/PAUSED在没有CLAIMED/IN_PROGRESS领取且没有执行中发布/导入任务时可归档→ARCHIVED；归档不恢复 |
-| import_batch | UPLOADING→PROCESSING→READY；上传/解析失败→FAILED；原文件完整的FAILED可重试→PROCESSING，否则重新上传建立新批次；READY终态 |
-| package_plan | DRAFT→BUILDING→PUBLISHED或FAILED；FAILED→BUILDING；PUBLISHED终态；published_at永久保留 |
-| task_package | 构建时CLOSED，成功发布后OPEN；包级控制OPEN↔PAUSED、OPEN/PAUSED→CLOSED（须无有效领取）。V1不开放独立包状态API，项目暂停/归档优先拦截，恢复不批量篡改包状态 |
-| assignment | CLAIMED→IN_PROGRESS→SUBMITTED；CLAIMED/IN_PROGRESS→RELEASED或REVOKED；首个有效草稿使其IN_PROGRESS，CLAIMED不直接提交；三个终态不可恢复 |
-| editor_mapping | PENDING→SYNCING→READY或FAILED；READY/FAILED→SYNCING；PENDING/SYNCING允许外部ID为空，READY必填；崩溃重试先对账 |
-| export_job | QUEUED→RUNNING→SUCCEEDED或FAILED；后台有限次重试FAILED→QUEUED，清单保持不变；SUCCEEDED结果不可覆盖 |
-
-枚举/CHECK只限制状态合法值；Service条件更新和必要的保护触发器负责转换合法性，更新影响0行视为状态/revision冲突。assignment终态必须有ended_at，非终态ended_at为空；RELEASED/REVOKED必须有release_reason。领取的slot/package/actor在创建后不得修改。已提交席位数由SUBMITTED领取计算；任务包全员提交后可以保持OPEN但remainingSlots=0，不把COMPLETED另造为与人数冲突的状态。
-
-不建立REQUESTER全局角色或isRequester审批开关，创建者是project.owner_actor_id；未来协作管理增加project_member，创建审批增加project_creation_request，均不改变训练角色。
-
-V1普通接口不物理删除已发布项目、样本、提交。草稿、原始文件、导出产物和审计日志分别设保留策略；导出过期可删除产物并令下载返回410 EXPORT_EXPIRED，但保留提交清单及审计，不能级联删除个人提交。正式提交和原始数据的清理另走受控流程。具体保留期限由业务与部署容量确认，未配置时不自动删除原始数据/正式提交。备份覆盖业务库、原始文件及编辑器必需数据；数据库内的映射随业务库备份，外部编辑器数据不能仅靠映射恢复。上线前须在隔离环境演练恢复。
-
-未来准确度评估记录方法版本、样本集合、提交来源；融合结果另表，通过来源关联表引用多个submission_item，保留原提交；模型运行引用MODEL actor。V1不创建没有实际使用的融合或模型任务表。
-
-## V5 实施补充（2026-11-08）
-
-本地新增 `V5__create_annotation_results.sql`：annotation_draft、submission、submission_item。
-草稿主键为 (assignment_id,sample_id)，组合外键保证领取和样本属于同一包；revision 从 1 递增。
-submission 每个 assignment 唯一，并用组合外键约束领取人、包、计划、项目、规范的归属。
-submission_item 复制提交时的版本和分类结果，通过 submission/package/sample 组合外键验证归属。
-业务角色对快照表只有 SELECT/INSERT，无 UPDATE/DELETE；不会覆盖第二人的结果。
-整包完整性和当前版本由提交事务校验；原草稿仍保留，但提交接口返回和导出后续应以冻结快照为准。
-该补充是本轮实际建表范围，尚未创建编辑器映射、验收、结果集成或导出表。
+人工 6/10 拒绝提交、10/10 成功；100 包独立提交；第二轮子集完整提交；同一样本人工/AI 重叠发布拒绝；AI 无 packageId 可完成 PARTIAL 并审核成功候选；暂停/取消后迟到写入拒绝；reviewRevision 冲突拒绝；改变阈值不改变旧审核；AI-only 成果可导出；结果、审核、导出跨项目全部拒绝。具体团队验收见 05。
