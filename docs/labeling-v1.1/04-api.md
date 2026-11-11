@@ -458,23 +458,23 @@ AI链路：上传READY→选择样本（不用包）→agents→ai-executions→
 
 联调必须覆盖：领取10包先提交5个完整包；原10张包只返工4张形成新包；多候选不自动选最新；无答案可标待修正但不能确认；选择后审核版本变化整体拒绝；AI部分成功可审成功项；重复回调不重复保存；租约过期/取消后旧回调拒绝；阈值变更不改变既有确认。模型实际可用性、资源需求和分数语义由D提交运行证据，不能仅凭本契约宣称验证通过。
 
-## 15. 任务模板与能耗时序输入扩展（待实现）
+## 15. 任务模板与插件契约
 
-详细依据、字段语义与示例见[任务插件、标注格式与工业能耗验收设计](14-task-plugins-and-energy-acceptance.md)第4—9节。现有图片接口仍按第2—5节使用，不能现在直接上传能耗CSV期待自动可用。
+本平台面向注册的多种标注任务。模板元数据用于让前端选择兼容的编辑器、导入方式和结果格式；真正的数据解析、语义校验及导出由对应插件实现。图片分类和工业能耗是当前两种示例，能耗字段不属于公共接口必填项。详细契约见[任务插件、标注格式与工业能耗验收设计](14-task-plugins-and-energy-acceptance.md)第3—9节。模板出现在查询结果中不代表其所有导入/编辑/导出能力都已完成或可用于生产。
 
 | 接口/变更 | 契约边界 | 负责 |
 |---|---|---|
-| GET /task-templates | 启用用户读取已注册且可用的id/version/taskType/inputFormat/resultFormat/editorKey/capabilities；不返回代码/凭据 | A，C读取 |
-| POST /projects扩展 | 新模板使用templateId/templateVersion；服务端从注册表校验taskType，旧IMAGE_CLASSIFICATION请求映射既有模板；不允许任意远程schema | A |
-| POST /projects/{id}/spec-versions扩展 | 固定模板和input/resultSchemaId及摘要；标签、说明和领域配置经模板校验；旧schemaVersion字段含义保留 | A/D |
-| POST /projects/{id}/imports扩展 | 复用现有上传，增加importerKey及受校验importOptions；能耗配置TASK_ROWS或STATION_DAYS，不重复读取sample/preview | B |
+| GET /task-templates | 启用用户读取已注册模板的id/version/taskType/inputFormat/resultFormat/editorKey/importerKeys/capabilities及实现状态；不返回代码/凭据 | A，C读取 |
+| POST /projects扩展 | 新模板使用templateId/templateVersion；服务端从注册表校验模板与taskType映射，旧IMAGE_CLASSIFICATION请求映射既有模板；不允许任意远程schema | A |
+| POST /projects/{id}/spec-versions扩展 | 固定模板和input/resultSchemaId及摘要；标签、说明和模板专属配置经插件校验；旧schemaVersion字段含义保留 | A/D |
+| POST /projects/{id}/imports扩展 | 复用现有上传，增加已注册importerKey及经该导入器校验的importOptions；能耗配置是一个具体实现，不是通用接口枚举的唯一选项 | B |
 | GET /assignments/{id}/samples/{sampleId}/data | 当前领取者的授权样本，含inputFormat/schemaId/inputHash/payload/context；不返回整份共享CSV | B/A |
 | GET /projects/{id}/samples/{sampleId}/data | owner读取相同样本结构；仍按项目权限与状态验证 | B/A |
 | GET /internal/labeling/v1/executions/{id}/samples/{sampleId}/data | Worker凭据、generation、租约和执行范围都有效；输入/上下文版本已冻结 | B/A，D调用 |
-| items扩展 | 增加templateId/version、inputFormat和dataUrl；图片fileUrl继续保留；前端按注册editorKey装配 | B/C/D |
-| 草稿、提交、AI输出、修订 | 复用原路径，以冻结规范决定resultFormat及payload校验；人工完整性仍按单包，AI成功项通过模板完成检查 | A/D |
-| 导出扩展 | 注册annotation-jsonl-v1、energy-station-day-csv-v1；仅读取确认快照；公共来源和时序点/区间不丢失 | B |
+| items扩展 | 增加templateId/version、inputFormat/schemaId和授权数据引用；图片fileUrl可作为插件兼容字段；前端按冻结editorKey装配 | B/C/D |
+| 草稿、提交、AI输出、修订 | 复用公共路径，以冻结规范选择resultFormat及插件校验器；人工完整性按单包，AI成功项按对应模板完成规则检查 | A/D |
+| 导出扩展 | 由已注册exporterKey生成格式；只读取确认快照并保留公共来源元数据，领域字段由插件转换 | B |
 
-新增未知/不兼容模板返回422 TEMPLATE_UNSUPPORTED或TEMPLATE_MISMATCH；样本输入版本错误409 INPUT_VERSION_CONFLICT；部署缺少历史模板实现时503 TEMPLATE_UNAVAILABLE，不静默按新schema解释旧记录。完整请求/响应schema须随实现与第14号设计同步，当前表为扩展边界，不代表现成接口。
+当前后端工作区尚无任务模板查询接口、能耗样例 ZIP 导入、结构化时序样本读取或相应结果格式支持；本节是目标契约，不是已实现接口。后续应先实现公共插件注册/装配边界，再加入能耗模板作为时序示例。新增未知/不兼容模板返回422；历史版本不可用时明确报错，不静默按新schema解释旧记录。完整实现状态见开发清单。
 
 本次质检要求引入抽样、双人盲标、金标准及一致性统计。A/B应先补质检计划、范围权限、指标输入/输出契约再实现，不能把分类多数投票返回值直接当kappa或金标准准确率。
