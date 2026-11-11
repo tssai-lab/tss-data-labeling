@@ -21,8 +21,7 @@ import {
 } from '@/services/labeling';
 import type { Submission } from '@/services/labelingTasks';
 import { tasks } from '@/services/labelingTasks';
-import styles from './index.less';
-import Navigation from './Navigation';
+import WorkspaceLayout from './WorkspaceLayout';
 
 export default function SubmissionView() {
   const { submissionId = '' } = useParams<{ submissionId: string }>();
@@ -134,104 +133,101 @@ export default function SubmissionView() {
     }
   }
   return (
-    <main className={styles.page}>
-      <section className={styles.content}>
-        <Navigation />
-        <h1>已交回的人工包结果</h1>
-        {error && (
+    <WorkspaceLayout>
+      <h1>已交回的人工包结果</h1>
+      {error && (
+        <Alert
+          type="error"
+          showIcon
+          message={error}
+          action={<Button onClick={() => setRetry(retry + 1)}>重试</Button>}
+        />
+      )}
+      {!error && !value && <Spin />}
+      {value && (
+        <Card>
           <Alert
-            type="error"
+            type="success"
             showIcon
-            message={error}
-            action={<Button onClick={() => setRetry(retry + 1)}>重试</Button>}
+            message="本包人工结果已交回并冻结，只读待需求方审核"
+            description="人工提交不表示审核通过或整个任务完成。标签使用提交绑定的冻结规范，不使用之后的分类名称覆盖历史。"
+            style={{ marginBottom: 24 }}
           />
-        )}
-        {!error && !value && <Spin />}
-        {value && (
-          <Card>
-            <Alert
-              type="success"
-              showIcon
-              message="本包人工结果已交回并冻结，只读待需求方审核"
-              description="人工提交不表示审核通过或整个任务完成。标签使用提交绑定的冻结规范，不使用之后的分类名称覆盖历史。"
-              style={{ marginBottom: 24 }}
+          {mappingNote && <Alert type="info" message={mappingNote} />}
+          {imageError && <Alert type="error" message={imageError} />}
+          {preview && (
+            <img
+              src={preview}
+              alt="授权原图预览"
+              style={{
+                maxWidth: '100%',
+                maxHeight: 400,
+                objectFit: 'contain',
+              }}
             />
-            {mappingNote && <Alert type="info" message={mappingNote} />}
-            {imageError && <Alert type="error" message={imageError} />}
-            {preview && (
-              <img
-                src={preview}
-                alt="授权原图预览"
-                style={{
-                  maxWidth: '100%',
-                  maxHeight: 400,
-                  objectFit: 'contain',
-                }}
-              />
-            )}
-            <Descriptions
-              column={1}
-              items={[
-                {
-                  key: 'id',
-                  label: '提交编号',
-                  children: (
-                    <Typography.Text copyable>
-                      {value.submissionId}
-                    </Typography.Text>
-                  ),
-                },
-                {
-                  key: 'actor',
-                  label: '标注人编号',
-                  children: value.submittedBy,
-                },
-                {
-                  key: 'time',
-                  label: '提交时间',
-                  children: new Date(value.submittedAt).toLocaleString('zh-CN'),
-                },
-                {
-                  key: 'spec',
-                  label: '规范版本编号',
-                  children: value.specVersionId,
-                },
-              ]}
-            />
-            <Table
-              rowKey="sampleId"
-              pagination={{ pageSize: 20 }}
-              dataSource={value.items}
-              scroll={{ x: 550 }}
-              columns={[
-                {
-                  title: '图片路径 / 真实编号',
-                  render: (_, item) =>
-                    samples.find((s) => s.sampleId === item.sampleId)
-                      ?.sourcePath || item.sampleId,
-                },
-                {
-                  title: '分类标签 ID',
-                  render: (_, item) =>
-                    spec?.labels.find((l) => l.id === item.result.labelId)
-                      ?.name ||
-                    item.result.labelId ||
-                    '—',
-                },
-                { title: '已提交草稿版本', dataIndex: 'revision' },
-                {
-                  title: '原图',
-                  render: (_, item) => (
-                    <Button onClick={() => void showImage(item.sampleId)}>
-                      授权读取
-                    </Button>
-                  ),
-                },
-              ]}
-            />
-          </Card>
-        )}
-      </section>
-    </main>
+          )}
+          <Descriptions
+            column={1}
+            items={[
+              {
+                key: 'id',
+                label: '提交编号',
+                children: (
+                  <Typography.Text copyable>
+                    {value.submissionId}
+                  </Typography.Text>
+                ),
+              },
+              {
+                key: 'actor',
+                label: '标注人编号',
+                children: value.submittedBy,
+              },
+              {
+                key: 'time',
+                label: '提交时间',
+                children: new Date(value.submittedAt).toLocaleString('zh-CN'),
+              },
+              {
+                key: 'spec',
+                label: '规范版本编号',
+                children: value.specVersionId,
+              },
+            ]}
+          />
+          <Table
+            rowKey="sampleId"
+            pagination={{ pageSize: 20 }}
+            dataSource={value.items}
+            scroll={{ x: 550 }}
+            columns={[
+              {
+                title: '图片路径 / 真实编号',
+                render: (_, item) =>
+                  samples.find((s) => s.sampleId === item.sampleId)
+                    ?.sourcePath || item.sampleId,
+              },
+              {
+                title: '分类标签 ID',
+                render: (_, item) =>
+                  spec?.labels.find((l) => l.id === item.result.labelId)
+                    ?.name ||
+                  item.result.labelId ||
+                  '—',
+              },
+              { title: '已提交草稿版本', dataIndex: 'revision' },
+              {
+                title: '原图',
+                render: (_, item) => (
+                  <Button onClick={() => void showImage(item.sampleId)}>
+                    授权读取
+                  </Button>
+                ),
+              },
+            ]}
+          />
+        </Card>
+      )}
+    </WorkspaceLayout>
   );
 }

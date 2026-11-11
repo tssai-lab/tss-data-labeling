@@ -1,13 +1,15 @@
-.page { min-height: 100vh; background: #f4f7fb; color: #172b4d; }
+.page { min-height: 100vh; background: #f2f6fd; color: #142c50; font-size: 14px; }
 .workspaceHeader { min-height: 64px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 0 0 18px; border-bottom: 1px solid #e5ebf3; }
 .brand { font-size: 24px; font-weight: 800; color: #172b4d; span { color: #2875ed; } small { font-size: 11px; letter-spacing: 2px; font-weight: 600; } }
 .account { min-width: 100px; padding: 9px 16px; border: 1px solid #d9e3ef; border-radius: 22px; background: #fff; color: #25476e; cursor: pointer; font: inherit; }
-.content { max-width: 1440px; margin: auto; padding: 28px 4% 64px; > :global(.ant-alert), > :global(.ant-card) { margin-bottom: 20px; } }
-.navigation { display: flex; align-items: center; gap: 16px; margin: 12px 0 28px; border-bottom: 1px solid #dce5ef; }
-.navTabs { display: flex; flex-wrap: wrap; gap: 8px; }
+.content { max-width: 1680px; margin: auto; padding: 26px 36px 56px; > :global(.ant-alert), > :global(.ant-card) { margin-bottom: 20px; } > h1 { color: #102b51; font-size: 28px; margin: 0 0 24px; } :global(.ant-card) { border: 1px solid #dce5f3; border-radius: 12px; box-shadow: none; } :global(.ant-card-head) { color: #142c50; border-bottom-color: #e5ebf5; } :global(.ant-table-thead > tr > th) { background: #f0f4fb; color: #4b6283; } :global(.ant-alert) { border-radius: 10px; } }
+.navigation { display: flex; align-items: center; gap: 16px; margin: 6px 0 0; }
+.navTabs { display: flex; overflow-x: auto; white-space: nowrap; gap: 8px; max-width: 100%; }
 .navTab { display: inline-flex; align-items: center; min-height: 44px; padding: 0 18px; border-bottom: 3px solid transparent; color: #62758d; font-size: 15px; font-weight: 600; transition: color .18s, border-color .18s, background .18s; &:hover { color: #1c5aa5; background: #edf4fc; } }
 .navTabActive { border-bottom-color: #2875ed; color: #174b85; }
 .heading { display: flex; justify-content: space-between; align-items: center; gap: 20px; margin: 24px 0; h1 { margin: 8px 0; font-size: 30px; } }
+.heading > div:first-child { flex: 1; min-width: 0; max-width: 100%; }
+.heading > :global(.ant-space) { flex: 0 0 auto; }
 .setup { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px; }
 .workspace { display: grid; grid-template-columns: minmax(320px, 0.8fr) minmax(0, 1.2fr); gap: 20px; margin-top: 20px; }
 .preview { min-height: 260px; border-radius: 10px; padding: 16px; background: #eef2f7; display: flex; align-items: center; justify-content: center; }
@@ -17,6 +19,9 @@
 .more { margin-top: 16px; }
 .sampleButton { white-space: normal; height: auto; text-align: left; word-break: break-word; padding-left: 0; }
 .selectedRow { background: #eaf2ff; }
+.eyebrow { color: #2165dc; margin: 0 0 10px; }
+.headingHint { color: #657b99; margin: 8px 0 0; max-width: 800px; }
+.projectStats { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); background: #fff; border: 1px solid #dce5f3; border-radius: 12px; margin-bottom: 24px; padding: 18px 0; > div { display: flex; justify-content: center; align-items: center; gap: 22px; border-right: 1px solid #dce5f3; &:last-child { border: 0; } } span { color: #617591; } strong { font-size: 28px; color: #092f73; } }
 @media (max-width: 900px) { .setup, .workspace { grid-template-columns: 1fr; } .workspaceHeader { flex-wrap: wrap; } .brand small { display: none; } .navTabs { width: 100%; gap: 0; } .navTab { flex: 1; justify-content: center; padding: 0 8px; font-size: 14px; } }
 
 .content { min-width: 0; overflow-wrap: anywhere; }
@@ -29,12 +34,14 @@
 .content :global(.ant-table-wrapper) { min-width: 0; max-width: 100%; }
 .content :global(.ant-table-container) { max-width: 100%; }
 .content :global(.ant-space) { max-width: 100%; }
+.content :global(.ant-space-item) { min-width: 0; max-width: 100%; }
 .content :global(.ant-tag) { white-space: normal; overflow-wrap: anywhere; }
 .content :global(.ant-form-inline) { gap: 16px; flex-wrap: wrap; }
 .content :global(.ant-form-inline .ant-form-item) { margin: 0; }
 .content :global(.ant-btn):focus-visible, .navTab:focus-visible, .account:focus-visible { outline: 3px solid #2875ed; outline-offset: 3px; }
 @media (max-width: 900px) { .setup, .workspace { grid-template-columns: minmax(0, 1fr); } }
 @media (max-width: 480px) {
+  .projectStats { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 16px 0; > div { gap: 12px; &:nth-child(2) { border: 0; } } strong { font-size: 24px; } }
   .content { padding: 16px 12px 40px; }
   .heading { align-items: flex-start; flex-direction: column; gap: 8px; h1 { font-size: 24px; } }
   .content :global(.ant-card-body) { padding: 16px; }
@@ -44,3 +51,33 @@
 }
 
 .sampleButton > span { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+
+.workspacePage { display: grid; grid-template-columns: 200px minmax(0,1fr); grid-template-rows: 62px minmax(calc(100vh - 62px),auto); background: #f8f9ff; color: #202237; }
+.workspacePage .workspaceHeader { grid-column: 1 / -1; position: sticky; top: 0; z-index: 20; min-height: 62px; height: 62px; padding: 0 26px; background: #fff; border-bottom: 1px solid #e2e4f0; justify-content: flex-start; gap: 24px; }
+.workspaceBrand { display: flex; align-items: center; gap: 10px; color: #202237; white-space: nowrap; strong { font-size: 19px; font-weight: 650; } }
+.brandTile { width: 30px; height: 30px; display: inline-flex; align-items: center; justify-content: center; background: linear-gradient(140deg,#7064ff,#4436e5); color: #fff; border-radius: 5px; font-size: 24px; box-shadow: 0 2px 8px #5145f533; }
+.projectSwitcher { display: flex; align-items: center; gap: 18px; padding-left: 24px; border-left: 1px solid #e2e4f0; color: #25273e; font-weight: 600; max-width: 50%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.headerAccount { margin-left: auto; }
+.workspacePage .account { border: 0; min-width: auto; color: #30324a; background: #f3f1ff; }
+.sidebar { background: linear-gradient(180deg,#fff,#f9f9ff); border-right: 1px solid #e4e5f0; min-width: 0; }
+.workspacePage .navigation { display: block; position: sticky; top: 62px; max-height: calc(100vh - 62px); overflow-y: auto; border: 0; margin: 0; padding: 20px 5px; }
+.navGroup { display: flex; flex-direction: column; gap: 7px; &:nth-child(2) { border-top: 1px solid #e9e9f4; margin-top: 28px; padding-top: 18px; } }
+.workspacePage .navTab { display: flex; align-items: center; gap: 16px; width: 100%; flex: 0 0 auto; min-height: 49px; padding: 0 20px; border: 0; border-left: 4px solid transparent; border-radius: 5px; color: #3e4058; font-size: 16px; font-weight: 500; :global(.anticon) { font-size: 21px; } &:hover { color: #5145f5; background: #f0eeff; } }
+.workspacePage .navTabActive { background: #eae7ff; color: #5145f5; border-left-color: #5145f5; font-weight: 650; }
+.workspacePage > .content { width: 100%; max-width: none; padding: 26px; margin: 0; min-width: 0; }
+.workspacePage > .workbenchContent { padding: 0; }
+.workspacePage .content :global(.ant-card) { border-color: #e3e4f0; }
+.workspacePage .content :global(.ant-table-thead > tr > th) { background: #f3f3fa; color: #34354e; }
+.workspacePage .projectStats { border-color: #e3e4f0; strong { color: #262442; } }
+@media (max-width: 900px) {
+  .workspacePage { grid-template-columns: minmax(0,1fr); grid-template-rows: 62px auto 1fr; }
+  .workspacePage .workspaceHeader { padding: 0 16px; gap: 12px; }
+  .sidebar { grid-column: 1; border-right: 0; border-bottom: 1px solid #e4e5f0; }
+  .workspacePage .navigation { display: flex; gap: 4px; position: static; overflow-x: auto; padding: 6px 8px; }
+  .navGroup { display: contents; &:nth-child(2) { margin: 0; border: 0; padding: 0; } }
+  .workspacePage .navTab { width: auto; gap: 6px; min-height: 42px; font-size: 13px; padding: 0 10px; white-space: nowrap; border-left: 0; border-bottom: 3px solid transparent; :global(.anticon) { font-size: 16px; } }
+  .workspacePage .navTabActive { border-bottom-color: #5145f5; }
+  .workspacePage > .content { padding: 20px 14px; }
+  .workspacePage > .workbenchContent { padding: 0; }
+}
+@media (max-width: 600px) { .projectSwitcher { display: none; } .workspaceBrand strong { font-size: 15px; } .workspacePage .account { padding: 6px 10px; } }

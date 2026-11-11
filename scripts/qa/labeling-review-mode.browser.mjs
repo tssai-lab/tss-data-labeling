@@ -8,9 +8,11 @@ const { chromium } = require('../../.qa/node_modules/playwright');
 const base = process.env.LABELING_UI_BASE || 'http://127.0.0.1:8001';
 const mode = process.env.LABELING_REVIEW_MODE || 'default-off';
 assert.ok(['default-off', 'production-forced-flag'].includes(mode));
-const out = fileURLToPath(
-  new URL('../../docs/labeling-review-evidence/', import.meta.url),
-);
+const out =
+  process.env.LABELING_REVIEW_EVIDENCE ||
+  fileURLToPath(
+    new URL('../../docs/labeling-review-evidence/', import.meta.url),
+  );
 await mkdir(out, { recursive: true });
 const browser = await chromium.launch({ channel: 'chrome', headless: true });
 const page = await browser.newPage();

@@ -3,7 +3,7 @@ import {
   PlusOutlined,
   ReloadOutlined,
 } from '@ant-design/icons';
-import { history, Link, useParams } from '@umijs/max';
+import { history, Link, useLocation, useParams } from '@umijs/max';
 import {
   Alert,
   App,
@@ -36,10 +36,10 @@ import { taskTemplates } from '@/services/labelingTemplates.mjs';
 import { hashFile, uploadChunks } from '@/services/labelingUpload.mjs';
 import { CapabilitiesNotice } from './gapDemo';
 import styles from './index.less';
-import Navigation from './Navigation';
 import ProjectSubmissions from './ProjectSubmissions';
 import PublishPlan from './PublishPlan';
 import SpecVersions from './SpecVersions';
+import WorkspaceLayout from './WorkspaceLayout';
 
 const { Text, Paragraph } = Typography;
 const taskType = 'IMAGE_CLASSIFICATION';
@@ -120,6 +120,7 @@ function Preview({ sample, projectId }: { sample: Sample; projectId: string }) {
 }
 
 export default function Labeling() {
+  const location = useLocation();
   const { message } = App.useApp();
   const { projectId } = useParams<{ projectId?: string }>();
   const [identity, setIdentity] = useState<Identity>();
@@ -157,6 +158,12 @@ export default function Labeling() {
   const currentProjectId = useRef(projectId);
   currentProjectId.current = projectId;
   const writable = project?.status === 'DRAFT' || project?.status === 'OPEN';
+  useEffect(() => {
+    if (new URLSearchParams(location.search).get('panel') === 'publish')
+      document
+        .getElementById('labeling-publish')
+        ?.scrollIntoView({ block: 'start' });
+  }, [location.search, batch?.batchId, batch?.status]);
   const bookmarkKey =
     identity && projectId
       ? `labeling:last-batch:${identity.actorId}:${projectId}`
@@ -518,48 +525,80 @@ export default function Labeling() {
   }
 
   return (
-    <main className={styles.page}>
-      <section className={styles.content}>
-        <Navigation />
-        <div className={styles.heading}>
-          <div>
-            <h1>{project?.name || '数据标注平台'}</h1>
-            {project?.description && (
-              <Paragraph type="secondary">{project.description}</Paragraph>
-            )}
+    <WorkspaceLayout project={project}>
+      <div className={styles.heading}>
+        <div>
+          <div className={styles.eyebrow}>
+            数据标注平台 / {projectId ? '规范与数据' : '我的项目'}
           </div>
-          {project && (
-            <Tag>{statusNames[project.status] || project.status}</Tag>
+          <h1>
+            {project?.name || (projectId ? '正在读取项目' : '图片分类工作空间')}
+          </h1>
+          {!projectId && (
+            <p className={styles.headingHint}>
+              选择项目进入结果与审核工作台，或管理规范、图片和范围发布。
+            </p>
+          )}
+          {project?.description && (
+            <Paragraph type="secondary">{project.description}</Paragraph>
           )}
         </div>
-        {identityError && (
-          <Alert
-            type="error"
-            showIcon
-            message="无法连接标注服务"
-            description={identityError}
-            action={
-              <Button onClick={() => setIdentityRetry(identityRetry + 1)}>
-                重试
-              </Button>
-            }
-          />
+        {project && (
+          <Space wrap>
+            <Tag>{statusNames[project.status] || project.status}</Tag>
+            <Link
+              to={`/labeling/projects/${encodeURIComponent(project.projectId)}/workbench`}
+            >
+              <Button type="primary">进入需求方结果工作台</Button>
+            </Link>
+          </Space>
         )}
-        {error && (
-          <Alert
-            type="error"
-            showIcon
-            message={error}
-            closable
-            onClose={() => setError('')}
-          />
-        )}
-        {!identity && !identityError && (
-          <Spin tip="正在验证标注平台身份">
-            <div style={{ height: 180 }} />
-          </Spin>
-        )}
-        {identity && !projectId && (
+      </div>
+      {identityError && (
+        <Alert
+          type="error"
+          showIcon
+          message="无法连接标注服务"
+          description={identityError}
+          action={
+            <Button onClick={() => setIdentityRetry(identityRetry + 1)}>
+              重试
+            </Button>
+          }
+        />
+      )}
+      {error && (
+        <Alert
+          type="error"
+          showIcon
+          message={error}
+          closable
+          onClose={() => setError('')}
+        />
+      )}
+      {!identity && !identityError && (
+        <Spin tip="正在验证标注平台身份">
+          <div style={{ height: 180 }} />
+        </Spin>
+      )}
+      {identity && !projectId && (
+        <>
+          <section className={styles.projectStats} aria-label="已加载项目统计">
+            {[
+              ['已加载项目', projects.length],
+              ['开放项目', projects.filter((p) => p.status === 'OPEN').length],
+              ['草稿项目', projects.filter((p) => p.status === 'DRAFT').length],
+              [
+                '已归档',
+                projects.filter((p) => p.status === 'ARCHIVED').length,
+              ],
+            ].map(([label, value]) => (
+              <div key={label}>
+                <span>{label}</span>
+                <strong>{loading ? '—' : value}</strong>
+              </div>
+            ))}
+          </section>
           <Card
             title="我创建的项目"
             extra={
@@ -598,7 +637,7 @@ export default function Labeling() {
                   dataIndex: 'name',
                   render: (name: string, item) => (
                     <Link
-                      to={`/labeling/projects/${encodeURIComponent(item.projectId)}`}
+                      to={`/labeling/projects/${encodeURIComponent(item.projectId)}/workbench`}
                     >
                       {name}
                     </Link>
@@ -624,6 +663,24 @@ export default function Labeling() {
                   render: (date: string) =>
                     new Date(date).toLocaleString('zh-CN'),
                 },
+                {
+                  title: '项目操作',
+                  key: 'actions',
+                  render: (_, item) => (
+                    <Space wrap>
+                      <Link
+                        to={`/labeling/projects/${encodeURIComponent(item.projectId)}/workbench`}
+                      >
+                        进入工作台
+                      </Link>
+                      <Link
+                        to={`/labeling/projects/${encodeURIComponent(item.projectId)}`}
+                      >
+                        规范与数据
+                      </Link>
+                    </Space>
+                  ),
+                },
               ]}
               scroll={{ x: 700 }}
             />
@@ -637,299 +694,301 @@ export default function Labeling() {
               </Button>
             )}
           </Card>
-        )}
-        {identity && projectId && loading && (
-          <Spin>
-            <div style={{ height: 180 }} />
-          </Spin>
-        )}
-        {identity && projectId && !loading && !project && (
-          <Button onClick={() => history.replace('/labeling')}>
-            返回项目列表
-          </Button>
-        )}
-        {project && project.taskType !== taskType && (
-          <Alert
-            type="info"
-            message="当前工作台仅支持图片分类，请创建 IMAGE_CLASSIFICATION 项目。"
-          />
-        )}
-        {project?.taskType === taskType && (
-          <>
-            {!writable && (
-              <Alert
-                type="info"
-                showIcon
-                message="当前项目不能上传或修改规范"
-                description={
-                  project.status === 'PAUSED'
-                    ? '项目暂停期间不能读取原始图片。'
-                    : '已归档项目只读。'
-                }
+        </>
+      )}
+      {identity && projectId && loading && (
+        <Spin>
+          <div style={{ height: 180 }} />
+        </Spin>
+      )}
+      {identity && projectId && !loading && !project && (
+        <Button onClick={() => history.replace('/labeling')}>
+          返回项目列表
+        </Button>
+      )}
+      {project && project.taskType !== taskType && (
+        <Alert
+          type="info"
+          message="当前工作台仅支持图片分类，请创建 IMAGE_CLASSIFICATION 项目。"
+        />
+      )}
+      {project?.taskType === taskType && (
+        <>
+          {!writable && (
+            <Alert
+              type="info"
+              showIcon
+              message="当前项目不能上传或修改规范"
+              description={
+                project.status === 'PAUSED'
+                  ? '项目暂停期间不能读取原始图片。'
+                  : '已归档项目只读。'
+              }
+            />
+          )}
+          <div className={styles.setup}>
+            <SpecVersions
+              key={project.projectId}
+              project={project}
+              writable={Boolean(writable)}
+              selectedId={selectedSpecId}
+              onSelect={setSelectedSpecId}
+              onUpdated={setProject}
+            />
+            <Card title="2. 导入图片">
+              <Paragraph>
+                仅导入未标注的 JPEG / PNG
+                图片；压缩包内已有标签不会采用。非支持文件由批次错误明细报告未导入。上传
+                ZIP 压缩包。上传后由服务器解析，部分图片失败时可查看明细。
+              </Paragraph>
+              <input
+                ref={fileInput}
+                type="file"
+                accept=".zip,application/zip"
+                hidden
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  event.target.value = '';
+                  if (file) void upload(file);
+                }}
               />
-            )}
-            <div className={styles.setup}>
-              <SpecVersions
-                key={project.projectId}
-                project={project}
-                writable={Boolean(writable)}
-                selectedId={selectedSpecId}
-                onSelect={setSelectedSpecId}
-                onUpdated={setProject}
-              />
-              <Card title="2. 导入图片">
-                <Paragraph>
-                  仅导入未标注的 JPEG / PNG
-                  图片；压缩包内已有标签不会采用。非支持文件由批次错误明细报告未导入。上传
-                  ZIP 压缩包。上传后由服务器解析，部分图片失败时可查看明细。
-                </Paragraph>
-                <input
-                  ref={fileInput}
-                  type="file"
-                  accept=".zip,application/zip"
-                  hidden
-                  onChange={(event) => {
-                    const file = event.target.files?.[0];
-                    event.target.value = '';
-                    if (file) void upload(file);
-                  }}
-                />
-                <Space wrap>
-                  <Button
-                    type="primary"
-                    icon={<CloudUploadOutlined />}
-                    loading={uploadBusy}
-                    disabled={!writable || batchBusy}
-                    onClick={() => fileInput.current?.click()}
-                  >
-                    选择 ZIP 并上传
-                  </Button>
-                  {uploadBusy && (
-                    <Button onClick={() => uploadController.current?.abort()}>
-                      暂停上传
-                    </Button>
-                  )}
-                </Space>
+              <Space wrap>
+                <Button
+                  type="primary"
+                  icon={<CloudUploadOutlined />}
+                  loading={uploadBusy}
+                  disabled={!writable || batchBusy}
+                  onClick={() => fileInput.current?.click()}
+                >
+                  选择 ZIP 并上传
+                </Button>
                 {uploadBusy && (
-                  <div className={styles.uploadProgress}>
-                    <Text>{uploadStage}</Text>
-                    <Progress percent={progress} />
-                  </div>
-                )}
-                <Paragraph className={styles.hint} type="secondary">
-                  上传异常后重新选择同一文件可继续当前上传。刷新页面后可用批次编号找回已上传的图片。
-                </Paragraph>
-                <Typography.Paragraph type="secondary">
-                  完整批次历史待后端接入；下列仅为本机已知批次，点击后查询真实详情。
-                </Typography.Paragraph>
-                <Select
-                  aria-label="本机已知批次"
-                  placeholder="选择本机已知批次"
-                  style={{ width: '100%', marginBottom: 16 }}
-                  value={
-                    knownBatchIds.includes(batchInput) ? batchInput : undefined
-                  }
-                  disabled={uploadBusy || batchBusy}
-                  onChange={(id) => void restoreBatch(id)}
-                  options={knownBatchIds.map((value) => ({
-                    value,
-                    label: value,
-                  }))}
-                />
-                <Space.Compact block>
-                  <Input
-                    aria-label="导入批次编号"
-                    value={batchInput}
-                    onChange={(e) => setBatchInput(e.target.value)}
-                    placeholder="输入批次编号，查询已有导入"
-                    disabled={uploadBusy || batchBusy}
-                  />
-                  <Button
-                    loading={batchBusy}
-                    disabled={uploadBusy || !batchInput.trim()}
-                    onClick={() => void restoreBatch(batchInput)}
-                  >
-                    查询批次
+                  <Button onClick={() => uploadController.current?.abort()}>
+                    暂停上传
                   </Button>
-                </Space.Compact>
-              </Card>
-            </div>
-            {batch && (
+                )}
+              </Space>
+              {uploadBusy && (
+                <div className={styles.uploadProgress}>
+                  <Text>{uploadStage}</Text>
+                  <Progress percent={progress} />
+                </div>
+              )}
+              <Paragraph className={styles.hint} type="secondary">
+                上传异常后重新选择同一文件可继续当前上传。刷新页面后可用批次编号找回已上传的图片。
+              </Paragraph>
+              <Typography.Paragraph type="secondary">
+                完整批次历史待后端接入；下列仅为本机已知批次，点击后查询真实详情。
+              </Typography.Paragraph>
+              <Select
+                aria-label="本机已知批次"
+                placeholder="选择本机已知批次"
+                style={{ width: '100%', marginBottom: 16 }}
+                value={
+                  knownBatchIds.includes(batchInput) ? batchInput : undefined
+                }
+                disabled={uploadBusy || batchBusy}
+                onChange={(id) => void restoreBatch(id)}
+                options={knownBatchIds.map((value) => ({
+                  value,
+                  label: value,
+                }))}
+              />
+              <Space.Compact block>
+                <Input
+                  aria-label="导入批次编号"
+                  value={batchInput}
+                  onChange={(e) => setBatchInput(e.target.value)}
+                  placeholder="输入批次编号，查询已有导入"
+                  disabled={uploadBusy || batchBusy}
+                />
+                <Button
+                  loading={batchBusy}
+                  disabled={uploadBusy || !batchInput.trim()}
+                  onClick={() => void restoreBatch(batchInput)}
+                >
+                  查询批次
+                </Button>
+              </Space.Compact>
+            </Card>
+          </div>
+          {batch && (
+            <Card
+              title="导入批次"
+              extra={
+                <Button
+                  icon={<ReloadOutlined />}
+                  disabled={uploadBusy}
+                  loading={batchBusy}
+                  onClick={() => void restoreBatch(batch.batchId)}
+                >
+                  刷新批次
+                </Button>
+              }
+            >
+              <Space wrap>
+                <Tag
+                  color={
+                    batch.status === 'READY'
+                      ? 'green'
+                      : batch.status === 'FAILED'
+                        ? 'red'
+                        : 'blue'
+                  }
+                >
+                  {statusNames[batch.status]}
+                </Tag>
+                <Text>有效图片 {batch.validSampleCount} 张</Text>
+                <Text>错误 {batch.errorCount} 项</Text>
+                <Text copyable>{batch.batchId}</Text>
+              </Space>
+              {batch.status === 'UPLOADING' && (
+                <Progress
+                  percent={Math.floor(
+                    (batch.receivedBytes / batch.sizeBytes) * 100,
+                  )}
+                />
+              )}
+              {batch.status === 'PROCESSING' && (
+                <Paragraph className={styles.hint}>
+                  图片解析中，页面会自动查询进度。
+                </Paragraph>
+              )}
+              {batch.status === 'FAILED' && (
+                <Alert
+                  className={styles.hint}
+                  type="error"
+                  showIcon
+                  message={batch.errorCode || '导入失败'}
+                  description="可重试的完整原包允许重新解析；若文件内容有误，请修正 ZIP 后创建新导入。"
+                  action={
+                    batch.originalComplete ? (
+                      <Button
+                        loading={batchBusy}
+                        onClick={() => void retryImport()}
+                      >
+                        重试解析
+                      </Button>
+                    ) : undefined
+                  }
+                />
+              )}
+              {batch.errorCount > 0 && (
+                <details className={styles.hint}>
+                  <summary>
+                    查看导入错误（显示 {batch.errors?.length || 0} /{' '}
+                    {batch.errorCount} 项）
+                  </summary>
+                  <Table
+                    rowKey={(_, index) => String(index)}
+                    dataSource={batch.errors}
+                    size="small"
+                    pagination={{ pageSize: 5 }}
+                    columns={[
+                      { title: '文件', dataIndex: 'sourcePath' },
+                      { title: '错误码', dataIndex: 'code' },
+                      { title: '原因', dataIndex: 'message' },
+                    ]}
+                  />
+                </details>
+              )}
+            </Card>
+          )}
+          {batch?.status === 'READY' && (
+            <div className={styles.workspace}>
               <Card
-                title="导入批次"
+                title="3. 图片列表"
                 extra={
                   <Button
-                    icon={<ReloadOutlined />}
-                    disabled={uploadBusy}
-                    loading={batchBusy}
-                    onClick={() => void restoreBatch(batch.batchId)}
+                    loading={sampleBusy}
+                    onClick={() => void listSamples()}
                   >
-                    刷新批次
+                    刷新
                   </Button>
                 }
               >
-                <Space wrap>
-                  <Tag
-                    color={
-                      batch.status === 'READY'
-                        ? 'green'
-                        : batch.status === 'FAILED'
-                          ? 'red'
-                          : 'blue'
-                    }
-                  >
-                    {statusNames[batch.status]}
-                  </Tag>
-                  <Text>有效图片 {batch.validSampleCount} 张</Text>
-                  <Text>错误 {batch.errorCount} 项</Text>
-                  <Text copyable>{batch.batchId}</Text>
-                </Space>
-                {batch.status === 'UPLOADING' && (
-                  <Progress
-                    percent={Math.floor(
-                      (batch.receivedBytes / batch.sizeBytes) * 100,
-                    )}
-                  />
-                )}
-                {batch.status === 'PROCESSING' && (
-                  <Paragraph className={styles.hint}>
-                    图片解析中，页面会自动查询进度。
-                  </Paragraph>
-                )}
-                {batch.status === 'FAILED' && (
-                  <Alert
-                    className={styles.hint}
-                    type="error"
-                    showIcon
-                    message={batch.errorCode || '导入失败'}
-                    description="可重试的完整原包允许重新解析；若文件内容有误，请修正 ZIP 后创建新导入。"
-                    action={
-                      batch.originalComplete ? (
+                <Table<Sample>
+                  rowKey="sampleId"
+                  dataSource={samples}
+                  loading={sampleBusy}
+                  pagination={false}
+                  size="small"
+                  columns={[
+                    {
+                      title: '图片',
+                      dataIndex: 'sourcePath',
+                      render: (path: string, item) => (
                         <Button
-                          loading={batchBusy}
-                          onClick={() => void retryImport()}
+                          type="link"
+                          className={styles.sampleButton}
+                          onClick={() => {
+                            setSelected(item);
+                          }}
                         >
-                          重试解析
+                          {path}
                         </Button>
-                      ) : undefined
-                    }
-                  />
-                )}
-                {batch.errorCount > 0 && (
-                  <details className={styles.hint}>
-                    <summary>
-                      查看导入错误（显示 {batch.errors?.length || 0} /{' '}
-                      {batch.errorCount} 项）
-                    </summary>
-                    <Table
-                      rowKey={(_, index) => String(index)}
-                      dataSource={batch.errors}
-                      size="small"
-                      pagination={{ pageSize: 5 }}
-                      columns={[
-                        { title: '文件', dataIndex: 'sourcePath' },
-                        { title: '错误码', dataIndex: 'code' },
-                        { title: '原因', dataIndex: 'message' },
-                      ]}
-                    />
-                  </details>
+                      ),
+                    },
+                    {
+                      title: '尺寸',
+                      render: (_, item) =>
+                        `${item.metadata.width} × ${item.metadata.height}`,
+                    },
+                  ]}
+                  rowClassName={(item) =>
+                    item.sampleId === selected?.sampleId
+                      ? styles.selectedRow
+                      : ''
+                  }
+                  scroll={{ x: 300, y: 480 }}
+                />
+                {sampleCursor && (
+                  <Button
+                    className={styles.more}
+                    loading={sampleBusy}
+                    onClick={() => void listSamples(sampleCursor)}
+                  >
+                    加载更多图片
+                  </Button>
                 )}
               </Card>
-            )}
-            {batch?.status === 'READY' && (
-              <div className={styles.workspace}>
-                <Card
-                  title="3. 图片列表"
-                  extra={
-                    <Button
-                      loading={sampleBusy}
-                      onClick={() => void listSamples()}
-                    >
-                      刷新
-                    </Button>
-                  }
-                >
-                  <Table<Sample>
-                    rowKey="sampleId"
-                    dataSource={samples}
-                    loading={sampleBusy}
-                    pagination={false}
-                    size="small"
-                    columns={[
-                      {
-                        title: '图片',
-                        dataIndex: 'sourcePath',
-                        render: (path: string, item) => (
-                          <Button
-                            type="link"
-                            className={styles.sampleButton}
-                            onClick={() => {
-                              setSelected(item);
-                            }}
-                          >
-                            {path}
-                          </Button>
-                        ),
-                      },
-                      {
-                        title: '尺寸',
-                        render: (_, item) =>
-                          `${item.metadata.width} × ${item.metadata.height}`,
-                      },
-                    ]}
-                    rowClassName={(item) =>
-                      item.sampleId === selected?.sampleId
-                        ? styles.selectedRow
-                        : ''
-                    }
-                    scroll={{ x: 300, y: 480 }}
-                  />
-                  {sampleCursor && (
-                    <Button
-                      className={styles.more}
-                      loading={sampleBusy}
-                      onClick={() => void listSamples(sampleCursor)}
-                    >
-                      加载更多图片
-                    </Button>
-                  )}
-                </Card>
-                <Card title="图片预览">
-                  {selected ? (
-                    <>
-                      <Paragraph ellipsis={{ tooltip: selected.sourcePath }}>
-                        {selected.sourcePath}
-                      </Paragraph>
-                      {project.status === 'PAUSED' ? (
-                        <Alert type="info" message="项目已暂停，原图不可读取" />
-                      ) : (
-                        <Preview
-                          key={selected.sampleId}
-                          sample={selected}
-                          projectId={project.projectId}
-                        />
-                      )}
-                      <Alert
-                        style={{ marginTop: 20 }}
-                        type="info"
-                        showIcon
-                        message="此处是需求方图片预览"
-                        description={
-                          <span>
-                            保存分类需要先发布任务包并领取，进入
-                            <Link to="/labeling/assignments">我的任务</Link>
-                            完成逐张草稿保存与整包提交。
-                          </span>
-                        }
+              <Card title="图片预览">
+                {selected ? (
+                  <>
+                    <Paragraph ellipsis={{ tooltip: selected.sourcePath }}>
+                      {selected.sourcePath}
+                    </Paragraph>
+                    {project.status === 'PAUSED' ? (
+                      <Alert type="info" message="项目已暂停，原图不可读取" />
+                    ) : (
+                      <Preview
+                        key={selected.sampleId}
+                        sample={selected}
+                        projectId={project.projectId}
                       />
-                    </>
-                  ) : (
-                    <Empty description="此批次暂无图片" />
-                  )}
-                </Card>
-              </div>
-            )}
-            {batch?.status === 'READY' && (
+                    )}
+                    <Alert
+                      style={{ marginTop: 20 }}
+                      type="info"
+                      showIcon
+                      message="此处是需求方图片预览"
+                      description={
+                        <span>
+                          保存分类需要先发布任务包并领取，进入
+                          <Link to="/labeling/assignments">我的任务</Link>
+                          完成逐张草稿保存与整包提交。
+                        </span>
+                      }
+                    />
+                  </>
+                ) : (
+                  <Empty description="此批次暂无图片" />
+                )}
+              </Card>
+            </div>
+          )}
+          {batch?.status === 'READY' && (
+            <div id="labeling-publish" style={{ scrollMarginTop: 80 }}>
               <PublishPlan
                 key={`${project.projectId}:${batch.batchId}`}
                 projectId={project.projectId}
@@ -949,20 +1008,20 @@ export default function Labeling() {
                     .catch((e: unknown) => setError(errorText(e)));
                 }}
               />
-            )}
-            <Link
-              to={`/labeling/projects/${encodeURIComponent(project.projectId)}/workbench`}
-            >
-              进入需求方结果工作台
-            </Link>
-            <CapabilitiesNotice />
-            <ProjectSubmissions
-              key={project.projectId}
-              projectId={project.projectId}
-            />
-          </>
-        )}
-      </section>
+            </div>
+          )}
+          <Link
+            to={`/labeling/projects/${encodeURIComponent(project.projectId)}/workbench`}
+          >
+            进入需求方结果工作台
+          </Link>
+          <CapabilitiesNotice />
+          <ProjectSubmissions
+            key={project.projectId}
+            projectId={project.projectId}
+          />
+        </>
+      )}
       <Modal
         title="创建图片分类项目"
         open={creating}
@@ -1006,6 +1065,6 @@ export default function Labeling() {
           />
         </Form>
       </Modal>
-    </main>
+    </WorkspaceLayout>
   );
 }

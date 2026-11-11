@@ -8,9 +8,11 @@ import { strFromU8, unzipSync } from 'fflate';
 const require = createRequire(import.meta.url);
 const { chromium } = require('../../.qa/node_modules/playwright');
 const base = process.env.LABELING_UI_BASE || 'http://127.0.0.1:8001';
-const out = fileURLToPath(
-  new URL('../../docs/labeling-review-evidence/', import.meta.url),
-);
+const out =
+  process.env.LABELING_REVIEW_EVIDENCE ||
+  fileURLToPath(
+    new URL('../../docs/labeling-review-evidence/', import.meta.url),
+  );
 await mkdir(out, { recursive: true });
 const browser = await chromium.launch({ channel: 'chrome', headless: true });
 const page = await browser.newPage({ viewport: { width: 1586, height: 1100 } });
@@ -494,6 +496,37 @@ try {
               },
             },
           });
+    if (p === '/submissions/fixture-submission')
+      return route.fulfill({
+        json: {
+          data: {
+            submissionId: 'fixture-submission',
+            projectId: 'fixture-project',
+            assignmentId: 'fixture-assignment',
+            packageId: 'fixture-package',
+            submittedBy: 'fixture-human',
+            submittedAt: '2026-01-02T08:00:00Z',
+            specVersionId: 'fixture-spec',
+            contentHash: 'fixture-hash',
+            items: [
+              {
+                sampleId: 'fixture-sample',
+                revision: 1,
+                resultFormat: 'image-classification-v1',
+                result: { labelId: 'fixture-label' },
+              },
+            ],
+          },
+        },
+      });
+    if (p === '/projects/fixture-project/samples/fixture-sample/file')
+      return route.fulfill({
+        contentType: 'image/png',
+        body: Buffer.from(
+          'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j8ioAAAAASUVORK5CYII=',
+          'base64',
+        ),
+      });
     report.unexpectedRequests.push(p);
     return route.abort();
   });
@@ -507,13 +540,29 @@ try {
       .getAttribute('href'),
     /labeling\/submissions\/fixture-submission/,
   );
-  for (const name of ['AI范围执行', '需求方审核', '需求方修订', '成果CSV导出'])
+  for (const name of ['确认采用', '标记待修正', '修订为新候选'])
     assert.equal(
       await real
-        .getByRole('button', { name: `${name} · 待后端接入`, exact: true })
+        .getByRole('region', { name: '审核详情', exact: true })
+        .getByRole('button', { name, exact: true })
         .isDisabled(),
       true,
     );
+  await real.getByRole('button', { name: 'AI进度与分档', exact: true }).click();
+  assert.equal(
+    await real
+      .getByRole('button', { name: 'AI范围执行 · 待后端接入', exact: true })
+      .isDisabled(),
+    true,
+  );
+  await real.getByRole('link', { name: '成果导出', exact: true }).click();
+  assert.equal(
+    await real
+      .getByRole('button', { name: '成果CSV导出 · 待后端接入', exact: true })
+      .isDisabled(),
+    true,
+  );
+  await real.getByRole('link', { name: '结果审核', exact: true }).click();
   await real.screenshot({
     path: `${out}/real-workbench-1586.png`,
     fullPage: true,
@@ -529,7 +578,7 @@ try {
     ),
   );
   denied = true;
-  await real.getByRole('button', { name: '刷新结果', exact: true }).click();
+  await real.getByRole('button', { name: /刷新结果/ }).click();
   await real.getByText('review-real-403', { exact: false }).waitFor();
   assert.equal(
     await real.evaluate(() => JSON.parse(sessionStorage.getItem('token'))),

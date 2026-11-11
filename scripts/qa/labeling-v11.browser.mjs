@@ -10,9 +10,12 @@ import { deflateSync } from 'node:zlib';
 const require = createRequire(import.meta.url);
 const { chromium } = require('../../.qa/node_modules/playwright');
 const base = process.env.LABELING_UI_BASE || 'http://127.0.0.1:8001';
-const output = fileURLToPath(
-  new URL('../../docs/labeling-v11-template-evidence/', import.meta.url),
-);
+const coreOnly = process.env.LABELING_CORE_ONLY === 'true';
+const output =
+  process.env.LABELING_BROWSER_OUTPUT ||
+  fileURLToPath(
+    new URL('../../docs/labeling-v11-template-evidence/', import.meta.url),
+  );
 await mkdir(output, { recursive: true });
 const browser = await chromium.launch({ channel: 'chrome', headless: true });
 const context = await browser.newContext({
@@ -462,12 +465,14 @@ try {
       .getByRole('dialog')
       .getByRole('button', { name: /取.*消/ })
       .click();
-    await visit(`/labeling/projects/${pid}/workbench`, '结果工作台');
+    await visit(`/labeling/projects/${pid}/workbench`, '结果审核');
     await capture('real-workbench-pending', width);
-    await visit('/labeling/demo', '需求方工作台 · 合成流程演示');
-    await page.getByRole('button', { name: '查看种子 PARTIAL 批次' }).click();
-    await page.getByRole('spinbutton', { name: '低边界L' }).waitFor();
-    await capture('owner-workflow', width);
+    if (!coreOnly) {
+      await visit('/labeling/demo', '需求方工作台 · 合成流程演示');
+      await page.getByRole('button', { name: '查看种子 PARTIAL 批次' }).click();
+      await page.getByRole('spinbutton', { name: '低边界L' }).waitFor();
+      await capture('owner-workflow', width);
+    }
   }
   report.checks.push(
     '1280 / 768 / 390 core pages and inline editor; no iframe; 6/10 incomplete package cannot submit; viewport overflow asserted',
@@ -630,206 +635,210 @@ try {
   await visit('/labeling/tasks', '暂无可领取任务');
   await capture('empty-pool', 390);
   empty = false;
-  await page.setViewportSize({ width: 1280, height: 900 });
-  await visit('/labeling/demo', '需求方工作台 · 合成流程演示');
-  await page.getByRole('button', { name: '查看种子 PARTIAL 批次' }).click();
-  assert.equal(
+  if (!coreOnly) {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await visit('/labeling/demo', '需求方工作台 · 合成流程演示');
+    await page.getByRole('button', { name: '查看种子 PARTIAL 批次' }).click();
+    assert.equal(
+      await page
+        .getByRole('button', { name: '保存阈值策略（不审核）' })
+        .isDisabled(),
+      true,
+    );
+    await page.getByRole('spinbutton', { name: '低边界L' }).fill('0.6');
+    await page.getByRole('spinbutton', { name: '高边界H' }).fill('0.9');
+    await page.getByRole('button', { name: '保存阈值策略（不审核）' }).click();
     await page
-      .getByRole('button', { name: '保存阈值策略（不审核）' })
-      .isDisabled(),
-    true,
-  );
-  await page.getByRole('spinbutton', { name: '低边界L' }).fill('0.6');
-  await page.getByRole('spinbutton', { name: '高边界H' }).fill('0.9');
-  await page.getByRole('button', { name: '保存阈值策略（不审核）' }).click();
-  await page
-    .getByText('阈值策略已保存，没有产生任何审核决定', { exact: true })
-    .waitFor();
-  await page.getByRole('button', { name: /MEDIUM · 已载成功项 2/ }).waitFor();
-  await page.getByRole('spinbutton', { name: '高边界H' }).fill('0.61');
-  assert.equal(
-    await page.getByRole('button', { name: /MEDIUM · 已载成功项 2/ }).count(),
-    1,
-  );
-  await page.getByRole('button', { name: /MEDIUM · 已载成功项 2/ }).click();
-  await page
-    .getByRole('textbox', { name: '全部筛选结果排除样本' })
-    .fill('demo-sample-4');
-  await page.getByRole('button', { name: '固定全部筛选结果并预览' }).click();
-  await page.getByRole('dialog', { name: '固定选择预览 · 1 项' }).waitFor();
-  await page.getByRole('button', { name: '完成范围预览' }).click();
-  await page.getByRole('button', { name: '明确确认所选结果' }).click();
-  await page
-    .getByRole('dialog')
-    .getByRole('button', { name: '确认操作' })
-    .click();
-  await page
-    .getByText('已明确审核 1 项；尚未形成最终成果。', { exact: true })
-    .waitFor();
-  const resultTable = page.locator('.ant-table-wrapper').first();
-  await resultTable
-    .locator('tr[data-row-key="demo-sample-3"]')
-    .getByRole('checkbox')
-    .check();
-  await page
-    .getByRole('combobox', { name: '固定选择用途' })
-    .locator('xpath=../..')
-    .click();
-  await page
-    .locator('.ant-select-item-option-content')
-    .getByText('FINALIZE', { exact: true })
-    .click();
-  await page.getByRole('button', { name: '固定勾选样本并预览' }).click();
-  await page.getByRole('button', { name: '完成范围预览' }).click();
-  await page.getByRole('button', { name: '确认形成范围成果' }).click();
-  await page
-    .getByRole('dialog')
-    .getByRole('button', { name: /确.*定|确.*认|OK/ })
-    .last()
-    .click();
-  await page
-    .getByText('已固定范围成果，项目其他未完成项仍保留', { exact: true })
-    .waitFor();
-  const finalTable = page.locator('.ant-table-wrapper').filter({
-    has: page.getByRole('columnheader', { name: '成果快照', exact: true }),
-  });
-  await finalTable
-    .locator('tbody tr.ant-table-row')
-    .first()
-    .getByRole('checkbox')
-    .check();
-  await page.getByRole('button', { name: '创建成果导出', exact: true }).click();
-  await page.getByRole('button', { name: '查询导出状态' }).click();
-  await page.getByRole('button', { name: '查询导出状态' }).click();
-  const downloadPromise = page.waitForEvent('download');
-  await page.getByRole('button', { name: '下载分类 ZIP' }).click();
-  await (await downloadPromise).saveAs(
-    `${output}/confirmed-classification-export.zip`,
-  );
-  await capture('confirmed-final-export', 1280);
-  report.checks.push(
-    'No default thresholds; editing unsaved thresholds does not change saved policy; fixed medium-band selection excludes one item; explicit review then final snapshot then CSV ZIP',
-  );
-  await page.getByRole('button', { name: '重置合成种子' }).click();
-  const allRowsTable = page.locator('.ant-table-wrapper').first();
-  await allRowsTable
-    .locator('tr[data-row-key="demo-sample-1"]')
-    .getByRole('button', { name: '来源历史' })
-    .click();
-  const historyTable = page.locator('.ant-table-wrapper').filter({
-    has: page.getByRole('columnheader', { name: '来源身份', exact: true }),
-  });
-  await historyTable
-    .locator('tbody tr.ant-table-row')
-    .getByRole('checkbox')
-    .nth(0)
-    .check();
-  await historyTable
-    .locator('tbody tr.ant-table-row')
-    .getByRole('checkbox')
-    .nth(1)
-    .check();
-  await historyTable
-    .locator('tbody tr.ant-table-row')
-    .getByRole('checkbox')
-    .nth(2)
-    .check();
-  await page.getByRole('button', { name: '生成集成建议（不审核）' }).click();
-  await page.getByText('CONSENSUS', { exact: true }).waitFor();
-  await capture('majority-suggestion', 1280);
-  report.checks.push(
-    'Three independent fixed result versions produce strict-majority suggestion without automatic acceptance',
-  );
-  await page.getByRole('button', { name: '重置合成种子' }).click();
-  await page
-    .getByRole('combobox', { name: '固定选择用途' })
-    .locator('xpath=../..')
-    .click();
-  await page
-    .locator('.ant-select-item-option-content')
-    .getByText('PUBLISH', { exact: true })
-    .click();
-  await page.getByRole('button', { name: '固定全部筛选结果并预览' }).click();
-  await page.getByRole('button', { name: '完成范围预览' }).click();
-  await page.getByRole('button', { name: '预览人工打包' }).click();
-  await page.getByText('各包 10 / 2', { exact: false }).waitFor();
-  await page.getByRole('button', { name: '确认发布人工包' }).click();
-  await page
-    .getByRole('dialog')
-    .getByRole('button', { name: /确.*定/ })
-    .click();
-  await page
-    .getByRole('button', { name: '模拟本包全部完成并交回' })
-    .first()
-    .click();
-  const packagesTable = page.locator('.ant-table-wrapper').filter({
-    has: page.getByRole('columnheader', { name: '新人工包', exact: true }),
-  });
-  await packagesTable.getByText('SUBMITTED', { exact: true }).waitFor();
-  assert.equal(
-    await packagesTable.getByText('OPEN', { exact: true }).count(),
-    1,
-  );
-  await capture('human-republish-10-plus-2', 1280);
-  await page.getByRole('button', { name: '重置合成种子' }).click();
-  await page
-    .getByRole('combobox', { name: '固定选择用途' })
-    .locator('xpath=../..')
-    .click();
-  await page
-    .locator('.ant-select-item-option-content')
-    .getByText('PUBLISH', { exact: true })
-    .click();
-  await page
-    .getByRole('combobox', { name: '答案筛选' })
-    .locator('xpath=../..')
-    .click();
-  await page
-    .locator('.ant-select-item-option-content')
-    .getByText('没有答案', { exact: true })
-    .click();
-  await page.getByRole('button', { name: '固定全部筛选结果并预览' }).click();
-  await page.getByRole('button', { name: '完成范围预览' }).click();
-  await page.getByRole('button', { name: '创建合成 AI 执行' }).click();
-  await page.getByText('QUEUED · revision 1', { exact: false }).waitFor();
-  await page.getByRole('button', { name: '查询执行进度' }).click();
-  await page.getByText('RUNNING · revision', { exact: false }).waitFor();
-  await page.getByRole('button', { name: '查询执行进度' }).click();
-  await page.getByText('PARTIAL · revision', { exact: false }).waitFor();
-  await page
-    .locator('#workflow-step-3')
-    .getByText('SYNTHETIC_MODEL_FAILURE', { exact: true })
-    .waitFor();
-  await capture('ai-partial-fixed-output', 1280);
-  await page.getByRole('button', { name: '仅重试该批次失败/取消项' }).click();
-  await page.getByText('QUEUED · revision 1', { exact: false }).waitFor();
-  await page
-    .getByRole('textbox', { name: '操作原因', exact: true })
-    .fill('取消合成重试');
-  await page.getByRole('button', { name: '取消执行', exact: true }).click();
-  await page
-    .getByRole('dialog')
-    .getByRole('button', { name: /确.*定/ })
-    .click();
-  await page.getByText('CANCELLED · revision', { exact: false }).waitFor();
-  report.checks.push(
-    'UI publishes 10+2 independent packages; one handed back while other remains open; AI executes directly on fixed samples, partial outputs, failure-only retry, cancellation',
-  );
-  const anonymous = await browser.newPage();
-  const anonymousRequests = [];
-  await anonymous.route('**/api/**', (route) => {
-    anonymousRequests.push(new URL(route.request().url()).pathname);
-    return route.abort();
-  });
-  await anonymous.goto(`${base}/#/labeling/demo`);
-  await anonymous
-    .getByRole('button', { name: '查看种子 PARTIAL 批次' })
-    .waitFor();
-  await anonymous.close();
-  assert.deepEqual(anonymousRequests, []);
-  report.checks.push(
-    'Synthetic workflow requires no login/backend; no legacy editor session/sync/assets requests; no external model calls',
-  );
+      .getByText('阈值策略已保存，没有产生任何审核决定', { exact: true })
+      .waitFor();
+    await page.getByRole('button', { name: /MEDIUM · 已载成功项 2/ }).waitFor();
+    await page.getByRole('spinbutton', { name: '高边界H' }).fill('0.61');
+    assert.equal(
+      await page.getByRole('button', { name: /MEDIUM · 已载成功项 2/ }).count(),
+      1,
+    );
+    await page.getByRole('button', { name: /MEDIUM · 已载成功项 2/ }).click();
+    await page
+      .getByRole('textbox', { name: '全部筛选结果排除样本' })
+      .fill('demo-sample-4');
+    await page.getByRole('button', { name: '固定全部筛选结果并预览' }).click();
+    await page.getByRole('dialog', { name: '固定选择预览 · 1 项' }).waitFor();
+    await page.getByRole('button', { name: '完成范围预览' }).click();
+    await page.getByRole('button', { name: '明确确认所选结果' }).click();
+    await page
+      .getByRole('dialog')
+      .getByRole('button', { name: '确认操作' })
+      .click();
+    await page
+      .getByText('已明确审核 1 项；尚未形成最终成果。', { exact: true })
+      .waitFor();
+    const resultTable = page.locator('.ant-table-wrapper').first();
+    await resultTable
+      .locator('tr[data-row-key="demo-sample-3"]')
+      .getByRole('checkbox')
+      .check();
+    await page
+      .getByRole('combobox', { name: '固定选择用途' })
+      .locator('xpath=../..')
+      .click();
+    await page
+      .locator('.ant-select-item-option-content')
+      .getByText('FINALIZE', { exact: true })
+      .click();
+    await page.getByRole('button', { name: '固定勾选样本并预览' }).click();
+    await page.getByRole('button', { name: '完成范围预览' }).click();
+    await page.getByRole('button', { name: '确认形成范围成果' }).click();
+    await page
+      .getByRole('dialog')
+      .getByRole('button', { name: /确.*定|确.*认|OK/ })
+      .last()
+      .click();
+    await page
+      .getByText('已固定范围成果，项目其他未完成项仍保留', { exact: true })
+      .waitFor();
+    const finalTable = page.locator('.ant-table-wrapper').filter({
+      has: page.getByRole('columnheader', { name: '成果快照', exact: true }),
+    });
+    await finalTable
+      .locator('tbody tr.ant-table-row')
+      .first()
+      .getByRole('checkbox')
+      .check();
+    await page
+      .getByRole('button', { name: '创建成果导出', exact: true })
+      .click();
+    await page.getByRole('button', { name: '查询导出状态' }).click();
+    await page.getByRole('button', { name: '查询导出状态' }).click();
+    const downloadPromise = page.waitForEvent('download');
+    await page.getByRole('button', { name: '下载分类 ZIP' }).click();
+    await (await downloadPromise).saveAs(
+      `${output}/confirmed-classification-export.zip`,
+    );
+    await capture('confirmed-final-export', 1280);
+    report.checks.push(
+      'No default thresholds; editing unsaved thresholds does not change saved policy; fixed medium-band selection excludes one item; explicit review then final snapshot then CSV ZIP',
+    );
+    await page.getByRole('button', { name: '重置合成种子' }).click();
+    const allRowsTable = page.locator('.ant-table-wrapper').first();
+    await allRowsTable
+      .locator('tr[data-row-key="demo-sample-1"]')
+      .getByRole('button', { name: '来源历史' })
+      .click();
+    const historyTable = page.locator('.ant-table-wrapper').filter({
+      has: page.getByRole('columnheader', { name: '来源身份', exact: true }),
+    });
+    await historyTable
+      .locator('tbody tr.ant-table-row')
+      .getByRole('checkbox')
+      .nth(0)
+      .check();
+    await historyTable
+      .locator('tbody tr.ant-table-row')
+      .getByRole('checkbox')
+      .nth(1)
+      .check();
+    await historyTable
+      .locator('tbody tr.ant-table-row')
+      .getByRole('checkbox')
+      .nth(2)
+      .check();
+    await page.getByRole('button', { name: '生成集成建议（不审核）' }).click();
+    await page.getByText('CONSENSUS', { exact: true }).waitFor();
+    await capture('majority-suggestion', 1280);
+    report.checks.push(
+      'Three independent fixed result versions produce strict-majority suggestion without automatic acceptance',
+    );
+    await page.getByRole('button', { name: '重置合成种子' }).click();
+    await page
+      .getByRole('combobox', { name: '固定选择用途' })
+      .locator('xpath=../..')
+      .click();
+    await page
+      .locator('.ant-select-item-option-content')
+      .getByText('PUBLISH', { exact: true })
+      .click();
+    await page.getByRole('button', { name: '固定全部筛选结果并预览' }).click();
+    await page.getByRole('button', { name: '完成范围预览' }).click();
+    await page.getByRole('button', { name: '预览人工打包' }).click();
+    await page.getByText('各包 10 / 2', { exact: false }).waitFor();
+    await page.getByRole('button', { name: '确认发布人工包' }).click();
+    await page
+      .getByRole('dialog')
+      .getByRole('button', { name: /确.*定/ })
+      .click();
+    await page
+      .getByRole('button', { name: '模拟本包全部完成并交回' })
+      .first()
+      .click();
+    const packagesTable = page.locator('.ant-table-wrapper').filter({
+      has: page.getByRole('columnheader', { name: '新人工包', exact: true }),
+    });
+    await packagesTable.getByText('SUBMITTED', { exact: true }).waitFor();
+    assert.equal(
+      await packagesTable.getByText('OPEN', { exact: true }).count(),
+      1,
+    );
+    await capture('human-republish-10-plus-2', 1280);
+    await page.getByRole('button', { name: '重置合成种子' }).click();
+    await page
+      .getByRole('combobox', { name: '固定选择用途' })
+      .locator('xpath=../..')
+      .click();
+    await page
+      .locator('.ant-select-item-option-content')
+      .getByText('PUBLISH', { exact: true })
+      .click();
+    await page
+      .getByRole('combobox', { name: '答案筛选' })
+      .locator('xpath=../..')
+      .click();
+    await page
+      .locator('.ant-select-item-option-content')
+      .getByText('没有答案', { exact: true })
+      .click();
+    await page.getByRole('button', { name: '固定全部筛选结果并预览' }).click();
+    await page.getByRole('button', { name: '完成范围预览' }).click();
+    await page.getByRole('button', { name: '创建合成 AI 执行' }).click();
+    await page.getByText('QUEUED · revision 1', { exact: false }).waitFor();
+    await page.getByRole('button', { name: '查询执行进度' }).click();
+    await page.getByText('RUNNING · revision', { exact: false }).waitFor();
+    await page.getByRole('button', { name: '查询执行进度' }).click();
+    await page.getByText('PARTIAL · revision', { exact: false }).waitFor();
+    await page
+      .locator('#workflow-step-3')
+      .getByText('SYNTHETIC_MODEL_FAILURE', { exact: true })
+      .waitFor();
+    await capture('ai-partial-fixed-output', 1280);
+    await page.getByRole('button', { name: '仅重试该批次失败/取消项' }).click();
+    await page.getByText('QUEUED · revision 1', { exact: false }).waitFor();
+    await page
+      .getByRole('textbox', { name: '操作原因', exact: true })
+      .fill('取消合成重试');
+    await page.getByRole('button', { name: '取消执行', exact: true }).click();
+    await page
+      .getByRole('dialog')
+      .getByRole('button', { name: /确.*定/ })
+      .click();
+    await page.getByText('CANCELLED · revision', { exact: false }).waitFor();
+    report.checks.push(
+      'UI publishes 10+2 independent packages; one handed back while other remains open; AI executes directly on fixed samples, partial outputs, failure-only retry, cancellation',
+    );
+    const anonymous = await browser.newPage();
+    const anonymousRequests = [];
+    await anonymous.route('**/api/**', (route) => {
+      anonymousRequests.push(new URL(route.request().url()).pathname);
+      return route.abort();
+    });
+    await anonymous.goto(`${base}/#/labeling/demo`);
+    await anonymous
+      .getByRole('button', { name: '查看种子 PARTIAL 批次' })
+      .waitFor();
+    await anonymous.close();
+    assert.deepEqual(anonymousRequests, []);
+    report.checks.push(
+      'Synthetic workflow requires no login/backend; no legacy editor session/sync/assets requests; no external model calls',
+    );
+  }
   assert.deepEqual(report.unexpectedRequests, []);
   assert.deepEqual(report.pageErrors, []);
   console.log(

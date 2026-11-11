@@ -38,8 +38,8 @@ import type {
   SaveInput,
 } from './ClassificationEditorAdapter';
 import styles from './index.less';
-import Navigation from './Navigation';
 import { ClassificationTaskEditor } from './TaskEditorHost';
+import WorkspaceLayout from './WorkspaceLayout';
 
 const { Paragraph, Text } = Typography;
 function describe(error: unknown): string {
@@ -514,272 +514,266 @@ export default function ClassificationAssignment() {
     recoveryError ||
     !identity?.canAnnotate;
   return (
-    <main className={styles.page}>
-      <section className={styles.content}>
-        <Navigation beforeAccountAction={canLeave} />
-        <h1>图片分类标注</h1>
-        {error && (
-          <Alert
-            type="error"
-            showIcon
-            message={error}
-            style={{ marginBottom: 16 }}
-          />
-        )}
-        {draftError && (
-          <Alert
-            type="error"
-            showIcon
-            message={draftError}
-            action={
+    <WorkspaceLayout beforeAccountAction={canLeave}>
+      <h1>图片分类标注</h1>
+      {error && (
+        <Alert
+          type="error"
+          showIcon
+          message={error}
+          style={{ marginBottom: 16 }}
+        />
+      )}
+      {draftError && (
+        <Alert
+          type="error"
+          showIcon
+          message={draftError}
+          action={
+            <Button
+              disabled={draftLoading}
+              onClick={() => setDraftRetry((n) => n + 1)}
+            >
+              重新读取草稿
+            </Button>
+          }
+        />
+      )}
+      {draftLoading && (
+        <Spin tip="正在读取当前图片的平台草稿">
+          <div style={{ height: 60 }} />
+        </Spin>
+      )}
+      {loading && (
+        <Spin tip="正在读取任务包全部图片">
+          <div style={{ height: 180 }} />
+        </Spin>
+      )}
+      {!loading && !work && (
+        <Button onClick={() => setRefresh(refresh + 1)}>重新加载任务</Button>
+      )}
+      {work && (
+        <>
+          <Card style={{ marginBottom: 20 }}>
+            <Space wrap>
+              <Tag color={readOnly ? 'green' : 'blue'}>
+                {readOnly ? '已交回 · 待需求方审核 · 只读' : '标注中'}
+              </Tag>
+              <Text>
+                草稿已完成 {completed} / {work.items.length} 张
+              </Text>
               <Button
-                disabled={draftLoading}
-                onClick={() => setDraftRetry((n) => n + 1)}
+                disabled={saving || submitting}
+                onClick={() => {
+                  void canLeave().then((ok) => {
+                    if (ok) setRefresh(refresh + 1);
+                  });
+                }}
               >
-                重新读取草稿
+                重新加载整包
               </Button>
-            }
-          />
-        )}
-        {draftLoading && (
-          <Spin tip="正在读取当前图片的平台草稿">
-            <div style={{ height: 60 }} />
-          </Spin>
-        )}
-        {loading && (
-          <Spin tip="正在读取任务包全部图片">
-            <div style={{ height: 180 }} />
-          </Spin>
-        )}
-        {!loading && !work && (
-          <Button onClick={() => setRefresh(refresh + 1)}>重新加载任务</Button>
-        )}
-        {work && (
-          <>
-            <Card style={{ marginBottom: 20 }}>
-              <Space wrap>
-                <Tag color={readOnly ? 'green' : 'blue'}>
-                  {readOnly ? '已交回 · 待需求方审核 · 只读' : '标注中'}
-                </Tag>
-                <Text>
-                  草稿已完成 {completed} / {work.items.length} 张
-                </Text>
-                <Button
-                  disabled={saving || submitting}
-                  onClick={() => {
-                    void canLeave().then((ok) => {
-                      if (ok) setRefresh(refresh + 1);
-                    });
-                  }}
+              {receiptId && (
+                <Link
+                  to={`/labeling/submissions/${encodeURIComponent(receiptId)}`}
                 >
-                  重新加载整包
-                </Button>
-                {receiptId && (
-                  <Link
-                    to={`/labeling/submissions/${encodeURIComponent(receiptId)}`}
-                  >
-                    查看冻结提交结果
-                  </Link>
-                )}
-              </Space>
-              <Progress
-                percent={
-                  work.items.length
-                    ? Math.round((completed / work.items.length) * 100)
-                    : 0
-                }
+                  查看冻结提交结果
+                </Link>
+              )}
+            </Space>
+            <Progress
+              percent={
+                work.items.length
+                  ? Math.round((completed / work.items.length) * 100)
+                  : 0
+              }
+            />
+            {pending && !receiptId && (
+              <Alert
+                type="warning"
+                showIcon
+                message="上一次提交结果待确认，编辑暂时锁定"
+                description="可安全重放原版本清单与幂等键，确认服务器是否已经接受。"
+                style={{ marginBottom: 16 }}
               />
-              {pending && !receiptId && (
-                <Alert
-                  type="warning"
-                  showIcon
-                  message="上一次提交结果待确认，编辑暂时锁定"
-                  description="可安全重放原版本清单与幂等键，确认服务器是否已经接受。"
-                  style={{ marginBottom: 16 }}
-                />
-              )}
-              {(!readOnly || pending) && (
-                <Button
-                  type="primary"
-                  loading={submitting || preparing}
-                  disabled={
-                    saving ||
-                    preparing ||
-                    loading ||
-                    dirty ||
-                    needsReadback ||
-                    needsRefresh ||
-                    recoveryError ||
-                    (!pending && (!complete || Boolean(draftError)))
-                  }
-                  onClick={() => void submit()}
-                >
-                  {pending ? '确认本次提交' : '提交整个任务包'}
-                </Button>
-              )}
-            </Card>
-            <Card title="本任务绑定的分类规范">
-              <Space wrap>
-                {work.specification.labels.map((label) => (
-                  <Tag key={label.id}>{label.name}</Tag>
-                ))}
-              </Space>
-              <Paragraph
-                ellipsis={{ rows: 4, expandable: true, symbol: '展开说明' }}
-                style={{ whiteSpace: 'pre-wrap', marginTop: 16 }}
-              >
-                {work.specification.instructions || '暂无补充说明'}
-              </Paragraph>
-            </Card>
-            <div className={styles.workspace}>
-              <Card title="包内图片">
-                <Table<WorkSample>
-                  rowKey="sampleId"
-                  dataSource={work.items}
-                  size="small"
-                  pagination={{ pageSize: 20 }}
-                  scroll={{ x: 300, y: 480 }}
-                  columns={[
-                    {
-                      title: '图片',
-                      dataIndex: 'sourcePath',
-                      render: (value: string, item) => (
-                        <Button
-                          type="link"
-                          className={styles.sampleButton}
-                          disabled={saving || submitting}
-                          onClick={() => {
-                            if (item.sampleId !== selectedId)
-                              void canLeave().then((ok) => {
-                                if (ok) setSelectedId(item.sampleId);
-                              });
-                          }}
-                        >
-                          {value}
-                        </Button>
-                      ),
-                    },
-                    {
-                      title: '草稿',
-                      render: (_, item) => (
-                        <Tag color={item.explicitDone ? 'green' : 'default'}>
-                          {item.explicitDone ? '已保存' : '未完成'}
-                        </Tag>
-                      ),
-                    },
-                  ]}
-                  rowClassName={(item) =>
-                    item.sampleId === selectedId ? styles.selectedRow : ''
-                  }
-                />
-              </Card>
-              <Card
-                title={
-                  <Paragraph
-                    ellipsis={{
-                      rows: 2,
-                      expandable: true,
-                      tooltip: selected?.sourcePath,
-                      symbol: '展开文件名',
-                    }}
-                    style={{ margin: 0, overflowWrap: 'anywhere' }}
-                  >
-                    {selected?.sourcePath || '图片预览'}
-                  </Paragraph>
+            )}
+            {(!readOnly || pending) && (
+              <Button
+                type="primary"
+                loading={submitting || preparing}
+                disabled={
+                  saving ||
+                  preparing ||
+                  loading ||
+                  dirty ||
+                  needsReadback ||
+                  needsRefresh ||
+                  recoveryError ||
+                  (!pending && (!complete || Boolean(draftError)))
                 }
+                onClick={() => void submit()}
               >
-                {selected && (
-                  <>
-                    <Space wrap style={{ marginBottom: 16 }}>
-                      {[-1, 1].map((delta) => {
-                        const index = work.items.findIndex(
-                          (item) => item.sampleId === selectedId,
-                        );
-                        const next = work.items[index + delta];
-                        return (
-                          <Button
-                            key={delta}
-                            disabled={!next || saving || submitting}
-                            onClick={async () => {
-                              if (await canLeave())
-                                setSelectedId(next.sampleId);
-                            }}
-                          >
-                            {delta < 0 ? '上一张' : '下一张'}
-                          </Button>
-                        );
-                      })}
-                      <Text>
-                        第{' '}
-                        {work.items.findIndex(
-                          (item) => item.sampleId === selectedId,
-                        ) + 1}{' '}
-                        / {work.items.length} 张
-                      </Text>
+                {pending ? '确认本次提交' : '提交整个任务包'}
+              </Button>
+            )}
+          </Card>
+          <Card title="本任务绑定的分类规范">
+            <Space wrap>
+              {work.specification.labels.map((label) => (
+                <Tag key={label.id}>{label.name}</Tag>
+              ))}
+            </Space>
+            <Paragraph
+              ellipsis={{ rows: 4, expandable: true, symbol: '展开说明' }}
+              style={{ whiteSpace: 'pre-wrap', marginTop: 16 }}
+            >
+              {work.specification.instructions || '暂无补充说明'}
+            </Paragraph>
+          </Card>
+          <div className={styles.workspace}>
+            <Card title="包内图片">
+              <Table<WorkSample>
+                rowKey="sampleId"
+                dataSource={work.items}
+                size="small"
+                pagination={{ pageSize: 20 }}
+                scroll={{ x: 300, y: 480 }}
+                columns={[
+                  {
+                    title: '图片',
+                    dataIndex: 'sourcePath',
+                    render: (value: string, item) => (
                       <Button
-                        disabled={saving || submitting || draftLoading}
+                        type="link"
+                        className={styles.sampleButton}
+                        disabled={saving || submitting}
                         onClick={() => {
-                          if (
-                            !editorRef.current?.getState().dirty ||
-                            window.confirm(
-                              '重新读取将替换未保存选择，是否继续？',
-                            )
-                          )
-                            setDraftRetry((n) => n + 1);
+                          if (item.sampleId !== selectedId)
+                            void canLeave().then((ok) => {
+                              if (ok) setSelectedId(item.sampleId);
+                            });
                         }}
                       >
-                        重新读取草稿
+                        {value}
                       </Button>
-                    </Space>
-                    {draft?.sampleId === selected.sampleId && !draftLoading && (
-                      <WorkImage
-                        key={`${assignmentId}:${selected.sampleId}`}
-                        assignmentId={assignmentId}
-                        sample={selected}
-                        render={(url) => (
-                          <ClassificationTaskEditor
-                            binding={work.specification}
-                            key={`${assignmentId}:${selected.sampleId}:${work.specification.specVersionId}`}
-                            ref={editorRef}
-                            assignmentId={assignmentId}
-                            sampleId={selected.sampleId}
-                            specVersionId={work.specification.specVersionId}
-                            imageUrl={url}
-                            labels={work.specification.labels}
-                            instructions={work.specification.instructions}
-                            draft={draft}
-                            reference={
-                              selected.referenceResult &&
-                              selected.referenceResultId &&
-                              selected.sourceKind
-                                ? {
-                                    resultId: selected.referenceResultId,
-                                    result: selected.referenceResult,
-                                    sourceKind: selected.sourceKind,
-                                    modelVersion: selected.modelVersion,
-                                    confidence: selected.confidence,
-                                  }
-                                : null
-                            }
-                            readOnly={Boolean(readOnly)}
-                            disabled={editingDisabled}
-                            onStateChange={setEditorState}
-                            onSave={save}
-                            onError={(value) => {
-                              setNeedsReadback(true);
-                              setDraftError(value.message);
-                            }}
-                          />
-                        )}
-                      />
-                    )}
-                  </>
-                )}
-              </Card>
-            </div>
-          </>
-        )}
-      </section>
-    </main>
+                    ),
+                  },
+                  {
+                    title: '草稿',
+                    render: (_, item) => (
+                      <Tag color={item.explicitDone ? 'green' : 'default'}>
+                        {item.explicitDone ? '已保存' : '未完成'}
+                      </Tag>
+                    ),
+                  },
+                ]}
+                rowClassName={(item) =>
+                  item.sampleId === selectedId ? styles.selectedRow : ''
+                }
+              />
+            </Card>
+            <Card
+              title={
+                <Paragraph
+                  ellipsis={{
+                    rows: 2,
+                    expandable: true,
+                    tooltip: selected?.sourcePath,
+                    symbol: '展开文件名',
+                  }}
+                  style={{ margin: 0, overflowWrap: 'anywhere' }}
+                >
+                  {selected?.sourcePath || '图片预览'}
+                </Paragraph>
+              }
+            >
+              {selected && (
+                <>
+                  <Space wrap style={{ marginBottom: 16 }}>
+                    {[-1, 1].map((delta) => {
+                      const index = work.items.findIndex(
+                        (item) => item.sampleId === selectedId,
+                      );
+                      const next = work.items[index + delta];
+                      return (
+                        <Button
+                          key={delta}
+                          disabled={!next || saving || submitting}
+                          onClick={async () => {
+                            if (await canLeave()) setSelectedId(next.sampleId);
+                          }}
+                        >
+                          {delta < 0 ? '上一张' : '下一张'}
+                        </Button>
+                      );
+                    })}
+                    <Text>
+                      第{' '}
+                      {work.items.findIndex(
+                        (item) => item.sampleId === selectedId,
+                      ) + 1}{' '}
+                      / {work.items.length} 张
+                    </Text>
+                    <Button
+                      disabled={saving || submitting || draftLoading}
+                      onClick={() => {
+                        if (
+                          !editorRef.current?.getState().dirty ||
+                          window.confirm('重新读取将替换未保存选择，是否继续？')
+                        )
+                          setDraftRetry((n) => n + 1);
+                      }}
+                    >
+                      重新读取草稿
+                    </Button>
+                  </Space>
+                  {draft?.sampleId === selected.sampleId && !draftLoading && (
+                    <WorkImage
+                      key={`${assignmentId}:${selected.sampleId}`}
+                      assignmentId={assignmentId}
+                      sample={selected}
+                      render={(url) => (
+                        <ClassificationTaskEditor
+                          binding={work.specification}
+                          key={`${assignmentId}:${selected.sampleId}:${work.specification.specVersionId}`}
+                          ref={editorRef}
+                          assignmentId={assignmentId}
+                          sampleId={selected.sampleId}
+                          specVersionId={work.specification.specVersionId}
+                          imageUrl={url}
+                          labels={work.specification.labels}
+                          instructions={work.specification.instructions}
+                          draft={draft}
+                          reference={
+                            selected.referenceResult &&
+                            selected.referenceResultId &&
+                            selected.sourceKind
+                              ? {
+                                  resultId: selected.referenceResultId,
+                                  result: selected.referenceResult,
+                                  sourceKind: selected.sourceKind,
+                                  modelVersion: selected.modelVersion,
+                                  confidence: selected.confidence,
+                                }
+                              : null
+                          }
+                          readOnly={Boolean(readOnly)}
+                          disabled={editingDisabled}
+                          onStateChange={setEditorState}
+                          onSave={save}
+                          onError={(value) => {
+                            setNeedsReadback(true);
+                            setDraftError(value.message);
+                          }}
+                        />
+                      )}
+                    />
+                  )}
+                </>
+              )}
+            </Card>
+          </div>
+        </>
+      )}
+    </WorkspaceLayout>
   );
 }

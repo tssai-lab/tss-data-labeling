@@ -1,17 +1,31 @@
+import {
+  AppstoreOutlined,
+  CheckSquareOutlined,
+  DatabaseOutlined,
+  DownloadOutlined,
+  ExperimentOutlined,
+  ExportOutlined,
+  SendOutlined,
+  TeamOutlined,
+  UserOutlined,
+} from '@ant-design/icons';
 import { Link, useLocation, useModel } from '@umijs/max';
 import { type MouseEvent, useEffect, useState } from 'react';
 import { AvatarDropdown, AvatarName } from '@/components';
+import type { Project } from '@/services/labeling';
 import { tasks } from '@/services/labelingTasks';
 import styles from './index.less';
 
 export default function Navigation({
+  project,
   canLeave = () => true,
   beforeAccountAction,
 }: {
+  project?: Project;
   canLeave?: () => boolean;
   beforeAccountAction?: () => boolean | Promise<boolean>;
 }) {
-  const { pathname } = useLocation();
+  const { pathname, search } = useLocation();
   const [admin, setAdmin] = useState(false);
   useEffect(() => {
     const abort = new AbortController();
@@ -25,60 +39,142 @@ export default function Navigation({
   }, [pathname]);
   const { initialState } = useModel('@@initialState');
   const user = initialState?.currentUser;
-  const active =
-    pathname === '/labeling/admin/users'
-      ? pathname
+  const routeProject = pathname.match(/^\/labeling\/projects\/([^/]+)/)?.[1];
+  const projectId = project?.projectId
+    ? encodeURIComponent(project.projectId)
+    : routeProject;
+  const data = projectId ? `/labeling/projects/${projectId}` : '/labeling';
+  const workbench = projectId ? `${data}/workbench` : '/labeling';
+  const view = new URLSearchParams(search).get('view') || 'review';
+  const inWorkbench = pathname.endsWith('/workbench');
+  const active = inWorkbench
+    ? view
+    : pathname === '/labeling/admin/users'
+      ? 'users'
       : pathname.startsWith('/labeling/assignments')
-        ? '/labeling/assignments'
+        ? 'mine'
         : pathname.startsWith('/labeling/tasks')
-          ? '/labeling/tasks'
-          : '/labeling';
-
+          ? 'pool'
+          : new URLSearchParams(search).get('panel') === 'publish'
+            ? 'publish'
+            : 'data';
+  const links = [
+    { key: 'data', to: data, name: '项目数据', icon: <DatabaseOutlined /> },
+    {
+      key: 'publish',
+      to: `${data}?panel=publish`,
+      name: '任务发布',
+      icon: <SendOutlined />,
+    },
+    {
+      key: 'pool',
+      to: '/labeling/tasks',
+      name: '任务广场',
+      icon: <AppstoreOutlined />,
+    },
+    {
+      key: 'review',
+      to: workbench,
+      name: '结果审核',
+      icon: <CheckSquareOutlined />,
+    },
+    {
+      key: 'export',
+      to: `${workbench}?view=export`,
+      name: '成果导出',
+      icon: <DownloadOutlined />,
+    },
+  ];
+  const secondary = [
+    {
+      key: 'mine',
+      to: '/labeling/assignments',
+      name: '我的任务',
+      icon: <UserOutlined />,
+    },
+    ...(admin
+      ? [
+          {
+            key: 'users',
+            to: '/labeling/admin/users',
+            name: '用户管理',
+            icon: <TeamOutlined />,
+          },
+        ]
+      : []),
+    {
+      key: 'legacy',
+      to: '/label-projects',
+      name: '旧版 Demo',
+      icon: <ExperimentOutlined />,
+    },
+    ...(process.env.NODE_ENV !== 'production' &&
+    process.env.LABELING_GAP_MOCK === 'true'
+      ? [
+          {
+            key: 'demo',
+            to: '/labeling/demo',
+            name: '本地能力演示',
+            icon: <ExperimentOutlined />,
+          },
+        ]
+      : []),
+    {
+      key: 'platforms',
+      to: '/platforms',
+      name: '切换平台',
+      icon: <ExportOutlined />,
+    },
+  ];
   return (
     <>
       <header className={styles.workspaceHeader}>
-        <div className={styles.brand}>
-          TSS <span>/</span> <small>DATA ANNOTATION</small>
+        <Link to="/labeling" className={styles.workspaceBrand}>
+          <span className={styles.brandTile}>T</span>
+          <strong>TSSAI 数据标注平台</strong>
+        </Link>
+        <Link to="/labeling" className={styles.projectSwitcher}>
+          项目：{project?.name || '选择项目'} <span aria-hidden="true">⌄</span>
+        </Link>
+        <div className={styles.headerAccount}>
+          {user && (
+            <AvatarDropdown beforeAction={beforeAccountAction}>
+              <button
+                className={styles.account}
+                type="button"
+                aria-label="当前登录用户"
+              >
+                <AvatarName />
+              </button>
+            </AvatarDropdown>
+          )}
         </div>
-        {user && (
-          <AvatarDropdown beforeAction={beforeAccountAction}>
-            <button
-              className={styles.account}
-              type="button"
-              aria-label="当前登录用户"
-            >
-              <AvatarName />
-            </button>
-          </AvatarDropdown>
-        )}
       </header>
-      <nav className={styles.navigation} aria-label="标注平台导航">
-        <div className={styles.navTabs}>
-          {[
-            ['/labeling', '我的项目'],
-            ['/labeling/tasks', '任务广场'],
-            ['/labeling/assignments', '我的任务'],
-            ...(admin ? [['/labeling/admin/users', '用户管理']] : []),
-            ...(process.env.LABELING_GAP_MOCK === 'true' &&
-            process.env.NODE_ENV !== 'production'
-              ? [['/labeling/demo', '本地能力演示']]
-              : []),
-            ['/platforms', '切换平台'],
-          ].map(([to, name]) => (
-            <Link
-              key={to}
-              to={to}
-              aria-current={active === to ? 'page' : undefined}
-              className={`${styles.navTab} ${active === to ? styles.navTabActive : ''}`}
-              onClick={(event: MouseEvent<HTMLAnchorElement>) => {
-                if (!canLeave()) event.preventDefault();
-              }}
+      <aside className={styles.sidebar}>
+        <nav className={styles.navigation} aria-label="标注平台导航">
+          {[links, secondary].map((group, index) => (
+            <div
+              className={styles.navGroup}
+              key={index === 0 ? 'primary' : 'secondary'}
             >
-              {name}
-            </Link>
+              {group.map((item) => (
+                <Link
+                  key={item.key}
+                  to={item.to}
+                  aria-current={active === item.key ? 'page' : undefined}
+                  className={`${styles.navTab} ${active === item.key ? styles.navTabActive : ''}`}
+                  onClick={(event: MouseEvent<HTMLAnchorElement>) => {
+                    if (!canLeave()) event.preventDefault();
+                  }}
+                >
+                  <span aria-hidden="true">{item.icon}</span>
+                  <span>{item.name}</span>
+                </Link>
+              ))}
+            </div>
           ))}
-        </div>
-      </nav>
+        </nav>
+      </aside>
     </>
   );
 }

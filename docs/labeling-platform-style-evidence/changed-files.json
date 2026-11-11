@@ -1,0 +1,142 @@
+[
+  {
+    "path": "scripts/qa/labeling-review-mode.browser.mjs",
+    "status": "M"
+  },
+  {
+    "path": "scripts/qa/labeling-review.browser.mjs",
+    "status": "M"
+  },
+  {
+    "path": "scripts/qa/labeling-v11.browser.mjs",
+    "status": "M"
+  },
+  {
+    "path": "src/pages/labeling/Navigation.tsx",
+    "status": "M"
+  },
+  {
+    "path": "src/pages/labeling/ProjectWorkflow.tsx",
+    "status": "M"
+  },
+  {
+    "path": "src/pages/labeling/admin.tsx",
+    "status": "M"
+  },
+  {
+    "path": "src/pages/labeling/assignment.tsx",
+    "status": "M"
+  },
+  {
+    "path": "src/pages/labeling/index.less",
+    "status": "M"
+  },
+  {
+    "path": "src/pages/labeling/index.tsx",
+    "status": "M"
+  },
+  {
+    "path": "src/pages/labeling/submission.tsx",
+    "status": "M"
+  },
+  {
+    "path": "src/pages/labeling/taskList.tsx",
+    "status": "M"
+  },
+  {
+    "path": "src/pages/platforms/index.tsx",
+    "status": "M"
+  },
+  {
+    "path": "docs/labeling-platform-style-evidence/assignments-390.png",
+    "status": "??"
+  },
+  {
+    "path": "docs/labeling-platform-style-evidence/browser-report.json",
+    "status": "??"
+  },
+  {
+    "path": "docs/labeling-platform-style-evidence/changed-files.json",
+    "status": "??"
+  },
+  {
+    "path": "docs/labeling-platform-style-evidence/core-regression.json",
+    "status": "??"
+  },
+  {
+    "path": "docs/labeling-platform-style-evidence/owner-regression.json",
+    "status": "??"
+  },
+  {
+    "path": "docs/labeling-platform-style-evidence/platforms-1586.png",
+    "status": "??"
+  },
+  {
+    "path": "docs/labeling-platform-style-evidence/platforms-390.png",
+    "status": "??"
+  },
+  {
+    "path": "docs/labeling-platform-style-evidence/production-forced-flag-report.json",
+    "status": "??"
+  },
+  {
+    "path": "docs/labeling-platform-style-evidence/project-setup-390.png",
+    "status": "??"
+  },
+  {
+    "path": "docs/labeling-platform-style-evidence/projects-1586.png",
+    "status": "??"
+  },
+  {
+    "path": "docs/labeling-platform-style-evidence/projects-390.png",
+    "status": "??"
+  },
+  {
+    "path": "docs/labeling-platform-style-evidence/submission-a-390.png",
+    "status": "??"
+  },
+  {
+    "path": "docs/labeling-platform-style-evidence/tasks-390.png",
+    "status": "??"
+  },
+  {
+    "path": "docs/labeling-platform-style-evidence/users-390.png",
+    "status": "??"
+  },
+  {
+    "path": "docs/labeling-platform-style-evidence/validation.json",
+    "status": "??"
+  },
+  {
+    "path": "docs/labeling-platform-style-evidence/workbench-1586.png",
+    "status": "??"
+  },
+  {
+    "path": "docs/labeling-platform-style-evidence/workbench-390.png",
+    "status": "??"
+  },
+  {
+    "path": "docs/labeling-platform-style.md",
+    "status": "??"
+  },
+  {
+    "path": "scripts/qa/labeling-platform.browser.mjs",
+    "status": "??"
+  },
+  {
+    "path": "src/pages/labeling/ProjectReviewWorkbench.tsx",
+    "status": "??"
+  },
+  {
+    "path": "src/pages/labeling/WorkspaceLayout.tsx",
+    "status": "??"
+  },
+  {
+    "path": "src/pages/labeling/projectReview.less",
+    "status": "??"
+  },
+  {
+    "path": "src/pages/labeling/projectReview.less.d.ts",
+    "status": "??"
+  }
+]

@@ -1,0 +1,73 @@
+{
+  "date": "2026-11-11",
+  "branch": "feat/labeling-v11-frontend-gap",
+  "baseline": "3287eb391a010d39390bd1f9b32a09eb120c3d0f",
+  "reference": "工业零件质检审核台.png (latest user reference)",
+  "scope": "Real labeling platform: sidebar, result table, sample inspector; retain legacy Demo card and routes",
+  "checks": [
+    {
+      "exitCode": 0,
+      "command": "npm run tsc"
+    },
+    {
+      "command": "npm test",
+      "passed": 303,
+      "skipped": 0,
+      "exitCode": 0,
+      "failed": 0
+    },
+    {
+      "command": "npm run lint:governance",
+      "existingInfo": 5,
+      "exitCode": 0
+    },
+    {
+      "command": "npm run build",
+      "environment": "LABELING_GAP_MOCK=true; production demo remains closed",
+      "exitCode": 0
+    },
+    {
+      "exitCode": 0,
+      "command": "Biome check on changed TSX, declarations and browser scripts"
+    },
+    {
+      "command": "node scripts/qa/labeling-platform.browser.mjs",
+      "mode": "Final production build on 127.0.0.1:8004",
+      "report": "browser-report.json",
+      "exitCode": 0
+    },
+    {
+      "command": "LABELING_CORE_ONLY=true node scripts/qa/labeling-v11.browser.mjs",
+      "report": "core-regression.json",
+      "captures": 24,
+      "exitCode": 0
+    },
+    {
+      "command": "node scripts/qa/labeling-review.browser.mjs",
+      "report": "owner-regression.json",
+      "exitCode": 0
+    },
+    {
+      "command": "LABELING_REVIEW_MODE=production-forced-flag node scripts/qa/labeling-review-mode.browser.mjs",
+      "report": "production-forced-flag-report.json",
+      "exitCode": 0
+    },
+    {
+      "exitCode": 0,
+      "command": "git diff --check"
+    }
+  ],
+  "preserved": [
+    "Legacy /label-projects and /manual-label-server code and API requests unchanged",
+    "Training APIs, labeling services, lockfile and routes unchanged",
+    "Synthetic owner workflow remains separate and disabled in production",
+    "Existing historical evidence directories unchanged"
+  ],
+  "limitations": [
+    "Screenshots and browser checks use isolated HTTP fixtures, not authenticated production data.",
+    "No live backend credentials were supplied; no production business writes performed.",
+    "Real owner review/revision, AI execution/confidence policy and final export remain pending backend and disabled.",
+    "Statistics cover the selected frozen human submission and its filters, not all project samples.",
+    "No PR, merge or deployment performed in this round."
+  ]
+}
