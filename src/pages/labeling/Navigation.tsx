@@ -1,9 +1,7 @@
 import {
   AppstoreOutlined,
   CheckSquareOutlined,
-  DatabaseOutlined,
   DownloadOutlined,
-  ExperimentOutlined,
   ExportOutlined,
   SendOutlined,
   TeamOutlined,
@@ -15,6 +13,7 @@ import { AvatarDropdown, AvatarName } from '@/components';
 import type { Project } from '@/services/labeling';
 import { tasks } from '@/services/labelingTasks';
 import styles from './index.less';
+import PlatformBrand from './PlatformBrand';
 
 export default function Navigation({
   project,
@@ -44,7 +43,7 @@ export default function Navigation({
     ? encodeURIComponent(project.projectId)
     : routeProject;
   const data = projectId ? `/labeling/projects/${projectId}` : '/labeling';
-  const workbench = projectId ? `${data}/workbench` : '/labeling';
+  const workbench = `${data}/workbench`;
   const view = new URLSearchParams(search).get('view') || 'review';
   const inWorkbench = pathname.endsWith('/workbench');
   const active = inWorkbench
@@ -55,14 +54,11 @@ export default function Navigation({
         ? 'mine'
         : pathname.startsWith('/labeling/tasks')
           ? 'pool'
-          : new URLSearchParams(search).get('panel') === 'publish'
-            ? 'publish'
-            : 'data';
+          : 'publish';
   const links = [
-    { key: 'data', to: data, name: '项目数据', icon: <DatabaseOutlined /> },
     {
       key: 'publish',
-      to: `${data}?panel=publish`,
+      to: projectId ? `${data}?panel=publish` : '/labeling',
       name: '任务发布',
       icon: <SendOutlined />,
     },
@@ -72,18 +68,22 @@ export default function Navigation({
       name: '任务广场',
       icon: <AppstoreOutlined />,
     },
-    {
-      key: 'review',
-      to: workbench,
-      name: '结果审核',
-      icon: <CheckSquareOutlined />,
-    },
-    {
-      key: 'export',
-      to: `${workbench}?view=export`,
-      name: '成果导出',
-      icon: <DownloadOutlined />,
-    },
+    ...(projectId
+      ? [
+          {
+            key: 'review',
+            to: workbench,
+            name: '结果审核',
+            icon: <CheckSquareOutlined />,
+          },
+          {
+            key: 'export',
+            to: `${workbench}?view=export`,
+            name: '成果导出',
+            icon: <DownloadOutlined />,
+          },
+        ]
+      : []),
   ];
   const secondary = [
     {
@@ -103,23 +103,6 @@ export default function Navigation({
         ]
       : []),
     {
-      key: 'legacy',
-      to: '/label-projects',
-      name: '旧版 Demo',
-      icon: <ExperimentOutlined />,
-    },
-    ...(process.env.NODE_ENV !== 'production' &&
-    process.env.LABELING_GAP_MOCK === 'true'
-      ? [
-          {
-            key: 'demo',
-            to: '/labeling/demo',
-            name: '本地能力演示',
-            icon: <ExperimentOutlined />,
-          },
-        ]
-      : []),
-    {
       key: 'platforms',
       to: '/platforms',
       name: '切换平台',
@@ -129,10 +112,7 @@ export default function Navigation({
   return (
     <>
       <header className={styles.workspaceHeader}>
-        <Link to="/labeling" className={styles.workspaceBrand}>
-          <span className={styles.brandTile}>T</span>
-          <strong>TSSAI 数据标注平台</strong>
-        </Link>
+        <PlatformBrand />
         <Link to="/labeling" className={styles.projectSwitcher}>
           项目：{project?.name || '选择项目'} <span aria-hidden="true">⌄</span>
         </Link>

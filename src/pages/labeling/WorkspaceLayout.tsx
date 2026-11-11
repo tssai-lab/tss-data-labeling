@@ -18,11 +18,16 @@ export default function WorkspaceLayout({
     <ConfigProvider
       theme={{
         token: {
-          colorPrimary: '#5145f5',
-          colorBorder: '#dadcea',
-          borderRadius: 8,
+          colorPrimary: '#3765d9',
+          colorInfo: '#3765d9',
+          colorText: '#172b45',
+          colorTextSecondary: '#718096',
+          colorBgLayout: '#f3f6fb',
+          colorBorder: '#dce3ec',
+          colorBorderSecondary: '#e8edf4',
+          borderRadius: 10,
           fontSize: 14,
-          controlHeight: 32,
+          controlHeight: 38,
         },
       }}
     >

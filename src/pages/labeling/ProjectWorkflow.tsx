@@ -1,4 +1,4 @@
-import { Link, useParams } from '@umijs/max';
+import { history, Link, useParams } from '@umijs/max';
 import { Alert, Button, Card, Space, Spin } from 'antd';
 import { useEffect, useState } from 'react';
 import {
@@ -34,12 +34,14 @@ export function CapabilitiesNotice({
           '成果CSV导出',
         ].map((name) => (
           <Button key={name} disabled>
-            {name} · 待后端接入
+            {name}
           </Button>
         ))}
         {process.env.NODE_ENV !== 'production' &&
           process.env.LABELING_GAP_MOCK === 'true' && (
-            <Link to="/labeling/demo">独立合成工作台演示</Link>
+            <Link to="/labeling/demo">
+              <Button>预览审核、AI与成果流程</Button>
+            </Link>
           )}
       </Space>
     </Card>
@@ -50,6 +52,13 @@ export default function ProjectWorkflow() {
   const [project, setProject] = useState<Project>();
   const [error, setError] = useState('');
   const [retry, setRetry] = useState(0);
+  useEffect(() => {
+    if (project?.status === 'DRAFT') {
+      history.replace(
+        `/labeling/projects/${encodeURIComponent(project.projectId)}?panel=publish`,
+      );
+    }
+  }, [project?.projectId, project?.status]);
   useEffect(() => {
     const abort = new AbortController();
     setProject(undefined);
@@ -87,12 +96,13 @@ export default function ProjectWorkflow() {
         </div>
       )}
       {project &&
+        project.status !== 'DRAFT' &&
         (project.taskType === 'IMAGE_CLASSIFICATION' ? (
           <ProjectReviewWorkbench key={project.projectId} project={project} />
         ) : (
           <Alert
             type="info"
-            message="此工作台仅支持图片单标签分类，请从项目数据查看当前项目。"
+            message="该任务模板的结果工作台尚未接入，请从任务发布查看当前项目。"
           />
         ))}
     </WorkspaceLayout>
