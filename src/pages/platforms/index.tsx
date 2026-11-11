@@ -2,6 +2,7 @@ import {
   AppstoreOutlined,
   ArrowRightOutlined,
   DeploymentUnitOutlined,
+  EditOutlined,
 } from '@ant-design/icons';
 import { Link, useModel } from '@umijs/max';
 import { useEffect } from 'react';
@@ -90,6 +91,31 @@ export default function Platforms() {
             </div>
             <div className={styles.cardBottom}>
               <span>进入数据标注平台</span>
+              <ArrowRightOutlined />
+            </div>
+          </Link>
+          <Link
+            to="/label-projects"
+            className={`${styles.card} ${styles.pending}`}
+          >
+            <div className={styles.cardTop}>
+              <EditOutlined />
+              <span className={styles.badge}>旧版 Demo</span>
+            </div>
+            <div className={styles.visual} aria-hidden="true">
+              <div className={styles.annotation}>
+                <span />
+                <span />
+                <span />
+              </div>
+            </div>
+            <div className={styles.cardBody}>
+              <small>DATA ANNOTATION DEMO</small>
+              <h2>数据标注平台 Demo</h2>
+              <p>导入数据，手动标注，保存工作成果</p>
+            </div>
+            <div className={styles.cardBottom}>
+              <span>进入旧版 Demo</span>
               <ArrowRightOutlined />
             </div>
           </Link>
