@@ -393,6 +393,20 @@ export default function ProjectReviewWorkbench({
     );
   return (
     <>
+      <Alert
+        style={{ margin: '20px 22px 0' }}
+        showIcon
+        type="info"
+        message="当前展示已交回的人工结果；审核、修订、AI与成果接口尚未接入。"
+        action={
+          process.env.NODE_ENV !== 'production' &&
+          process.env.LABELING_GAP_MOCK === 'true' ? (
+            <Link to="/labeling/demo">
+              <Button size="small">预览完整流程</Button>
+            </Link>
+          ) : undefined
+        }
+      />
       <section
         className={`${a.layout} ${!inspectorOpen ? a.fullWidth : ''}`}
         aria-label="真实结果审核工作台"

@@ -27,6 +27,7 @@ import {
   type QualityPlan,
 } from '@/services/labelingQuality.mjs';
 import styles from './index.less';
+import PlatformBrand from './PlatformBrand';
 import { EnergyTaskEditor } from './TaskEditorHost';
 
 const enabled =
@@ -162,9 +163,7 @@ export default function EnergyDemo() {
     <main className={styles.page}>
       <section className={styles.content}>
         <header className={styles.workspaceHeader}>
-          <div className={styles.brand}>
-            TSS <span>/</span> <small>ENERGY TRIAL</small>
-          </div>
+          <PlatformBrand />
         </header>
         <nav className={styles.navigation}>
           <Space wrap>

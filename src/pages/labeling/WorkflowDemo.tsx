@@ -35,6 +35,7 @@ import {
   confidenceBand,
   createWorkflowMock,
 } from '@/services/labelingWorkflowMock.mjs';
+import PlatformBrand from './PlatformBrand';
 import ReviewWorkbench, {
   confidenceText,
   ReviewStatus,
@@ -471,10 +472,7 @@ export default function WorkflowDemo() {
     <main className={wb.page}>
       <header className={wb.topbar}>
         <div className={wb.topbarInner}>
-          <div className={wb.brand}>
-            TSS <span>/</span>
-            <small>DATA ANNOTATION</small>
-          </div>
+          <PlatformBrand />
           <div className={wb.headerActions}>
             <Link to="/labeling">真实标注平台</Link>
             <Link to="/platforms">切换平台</Link>

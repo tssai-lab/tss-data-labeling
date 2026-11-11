@@ -28,6 +28,10 @@ export default function PublishPlan({
   onPublished: () => void;
 }) {
   const [plan, setPlan] = useState<Plan>();
+  const [previewSpecId, setPreviewSpecId] = useState<string>();
+  const busyRef = useRef(false);
+  const draftSpecChanged =
+    plan?.status === 'DRAFT' && previewSpecId !== specVersionId;
   const incompatibleDraft =
     plan?.status === 'DRAFT' && plan.totalWorkload !== plan.sampleCount;
   const [error, setError] = useState('');
@@ -55,7 +59,17 @@ export default function PublishPlan({
       tasks
         .getPlan(id, abort.signal)
         .then((value) => {
-          if (!abort.signal.aborted) setPlan(value);
+          if (!abort.signal.aborted) {
+            setPlan(value);
+            if (value.status === 'PUBLISHED') onPublished();
+            try {
+              setPreviewSpecId(
+                localStorage.getItem(`${bookmark}:spec`) || undefined,
+              );
+            } catch {
+              /* Re-preview when version is unknown. */
+            }
+          }
         })
         .catch((e: unknown) => {
           if (!abort.signal.aborted) setError(describeLabelingError(e));
@@ -71,9 +85,13 @@ export default function PublishPlan({
   }, [bookmark]);
 
   async function preview() {
-    if (!specVersionId || busy) return;
+    if (!specVersionId || busyRef.current || busy || !writable) return;
+    busyRef.current = true;
     const values = await form.validateFields().catch(() => null);
-    if (!values) return;
+    if (!values) {
+      busyRef.current = false;
+      return;
+    }
     const body = { ...values, batchId, specVersionId };
     const payload = JSON.stringify(body);
     if (attempt.current?.payload !== payload)
@@ -84,35 +102,56 @@ export default function PublishPlan({
       const value = await tasks.plan(projectId, body, attempt.current.key);
       if (!alive.current) return;
       setPlan(value);
+      setPreviewSpecId(specVersionId);
       try {
         localStorage.setItem(bookmark, value.planId);
+        localStorage.setItem(`${bookmark}:spec`, specVersionId);
       } catch {
         /* Plan remains on this page. */
       }
     } catch (e) {
       if (alive.current) setError(describeLabelingError(e));
     } finally {
+      busyRef.current = false;
       if (alive.current) setBusy(false);
     }
   }
   async function publish() {
-    if (!plan || busy) return;
+    if (
+      !plan ||
+      busyRef.current ||
+      busy ||
+      !writable ||
+      draftSpecChanged ||
+      incompatibleDraft
+    )
+      return;
+    busyRef.current = true;
     setBusy(true);
     setError('');
     try {
       const value = await tasks.publish(plan, `publish-${plan.planId}`);
-      const current = await tasks.getPlan(value.planId);
       if (!alive.current) return;
-      setPlan(current);
+      setPlan(value);
       onPublished();
+      try {
+        const current = await tasks.getPlan(value.planId);
+        if (alive.current) setPlan(current);
+      } catch (e) {
+        if (alive.current)
+          setError(
+            `任务已发布，读取最新包列表失败，可刷新页面核对：${describeLabelingError(e)}`,
+          );
+      }
     } catch (e) {
       if (alive.current) setError(describeLabelingError(e));
     } finally {
+      busyRef.current = false;
       if (alive.current) setBusy(false);
     }
   }
   return (
-    <Card title="发布图片分类任务包" style={{ marginBottom: 20 }}>
+    <Card title="3. 发布图片分类任务包" style={{ marginBottom: 20 }}>
       {error && (
         <Alert
           type="error"
@@ -125,8 +164,7 @@ export default function PublishPlan({
         <Alert type="info" message="请先保存分类规范，再预览任务包。" />
       )}
       <Typography.Paragraph type="secondary">
-        当前选择规范：{specVersionId || '尚未选择'}
-        。已生成的预览及已发布任务包保留创建时的冻结规范；换版本请先调整打包参数重新预览。
+        任务包使用生成预览时选择的规范。更换规范后请重新预览；已发布任务包继续使用原冻结版本。
       </Typography.Paragraph>
       <Alert
         type="info"
@@ -173,6 +211,13 @@ export default function PublishPlan({
           message="本机旧预览不是本轮每包1人的规则，请先调整参数重新生成。"
         />
       )}
+      {draftSpecChanged && (
+        <Alert
+          type="warning"
+          showIcon
+          message="规范已更换或旧预览规范未知，请调整打包参数并重新生成预览后发布。"
+        />
+      )}
       {plan && (
         <>
           <Typography.Paragraph style={{ marginTop: 20 }}>
@@ -206,7 +251,7 @@ export default function PublishPlan({
               <Button
                 type="primary"
                 loading={busy}
-                disabled={!writable || incompatibleDraft}
+                disabled={!writable || incompatibleDraft || draftSpecChanged}
                 onClick={() => void publish()}
               >
                 确认发布此预览
@@ -217,6 +262,7 @@ export default function PublishPlan({
                   setPlan(undefined);
                   try {
                     localStorage.removeItem(bookmark);
+                    localStorage.removeItem(`${bookmark}:spec`);
                   } catch {
                     /* Optional bookmark. */
                   }
