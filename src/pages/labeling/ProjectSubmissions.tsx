@@ -80,7 +80,19 @@ export default function ProjectSubmissions({
       (!packageFilter || r.packageId === packageFilter) &&
       (!actorFilter || r.submittedBy === actorFilter),
   );
-  const packages = plans.flatMap((p) => p.packages);
+  const knownPackages = plans.flatMap((p) => p.packages);
+  const packages = [
+    ...new Set([
+      ...knownPackages.map((p) => p.packageId),
+      ...rows.map((row) => row.packageId),
+    ]),
+  ].map(
+    (packageId) =>
+      knownPackages.find((p) => p.packageId === packageId) || {
+        packageId,
+        requiredCount: null,
+      },
+  );
   return (
     <Card
       title="人工包已交回结果 · 尚无需求方审核记录"
@@ -100,7 +112,8 @@ export default function ProjectSubmissions({
         />
       )}
       <Typography.Paragraph type="secondary">
-        已读取 {rows.length} 份提交；
+        已读取 {rows.length} 份提交、
+        {new Set(rows.map((row) => row.packageId)).size} 个已交回人工包；
         {cursor
           ? '仍有后续页，筛选仅针对当前已加载数据。'
           : loaded
@@ -141,7 +154,11 @@ export default function ProjectSubmissions({
           scroll={{ x: 650 }}
           columns={[
             { title: '已知任务包', dataIndex: 'packageId', ellipsis: true },
-            { title: '所需人数', dataIndex: 'requiredCount' },
+            {
+              title: '所需人数',
+              dataIndex: 'requiredCount',
+              render: (value) => value ?? '未知（未读取计划）',
+            },
             {
               title: '已提交人数',
               render: (_, p) =>

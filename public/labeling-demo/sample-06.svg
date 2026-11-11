@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="800" viewBox="0 112 1024 800" role="img" aria-label="本地合成零件样本6"><defs>
+<radialGradient id="bg"><stop stop-color="#535a58"/><stop offset="1" stop-color="#242b2a"/></radialGradient>
+<linearGradient id="metal" x1=".1" y1="0" x2=".9" y2="1"><stop stop-color="#a9ada9"/><stop offset=".25" stop-color="#e6e6da"/><stop offset=".48" stop-color="#858c88"/><stop offset=".7" stop-color="#d1d3ca"/><stop offset="1" stop-color="#6b7472"/></linearGradient>
+<linearGradient id="rim"><stop stop-color="#dbdfd9"/><stop offset=".5" stop-color="#737b79"/><stop offset="1" stop-color="#b9bfb7"/></linearGradient>
+<radialGradient id="inner"><stop stop-color="#2a302d"/><stop offset=".68" stop-color="#535a55"/><stop offset=".8" stop-color="#9da299"/><stop offset="1" stop-color="#d1d1c4"/></radialGradient>
+<radialGradient id="hole"><stop stop-color="#151b19"/><stop offset=".8" stop-color="#262e2a"/><stop offset="1" stop-color="#65706a"/></radialGradient>
+<filter id="noise"><feTurbulence type="fractalNoise" baseFrequency=".65" numOctaves="3" seed="6"/><feColorMatrix type="saturate" values="0"/><feComponentTransfer><feFuncA type="linear" slope=".1"/></feComponentTransfer><feBlend in="SourceGraphic" mode="soft-light"/></filter><filter id="shadow"><feGaussianBlur stdDeviation="15"/></filter></defs>
+<rect width="1024" height="1024" fill="url(#bg)"/><g filter="url(#noise)"><rect x="175" y="255" width="674" height="490" rx="26" fill="url(#metal)" opacity=".18"/></g><text x="32" y="980" font-family="sans-serif" font-size="19" fill="#bdc7c2" opacity=".65">SYNTHETIC SAMPLE 06</text></svg>

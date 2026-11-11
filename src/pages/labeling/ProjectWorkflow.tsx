@@ -6,23 +6,30 @@ import {
   labelingJson,
   type Project,
 } from '@/services/labeling';
-import styles from './index.less';
 import Navigation from './Navigation';
 import ProjectSubmissions from './ProjectSubmissions';
+import styles from './reviewWorkbench.less';
 
-export function CapabilitiesNotice() {
+export function CapabilitiesNotice({
+  withNotice = true,
+}: {
+  withNotice?: boolean;
+} = {}) {
   return (
     <Card title="需求方处理与成果">
-      <Alert
-        showIcon
-        type="info"
-        message="人工结果交回后仍待需求方审核，不代表任务完成"
-        description="当前 backend 尚无选择快照、AI执行、审核/修订、再次发布、集成、成果及导出接口。真实模式显示待接入；旧版按全部已提交导出已停用。"
-      />
-      <Space wrap style={{ marginTop: 16 }}>
+      {withNotice && (
+        <Alert
+          showIcon
+          type="info"
+          message="人工结果交回后仍待需求方审核，不代表任务完成"
+          description="下方展示真实已交回记录。AI、审核、修订与成果导出待后端接入；接口请求失败时显示实际错误。"
+        />
+      )}
+      <Space wrap style={{ marginTop: withNotice ? 16 : 0 }}>
         {[
           'AI范围执行',
           '需求方审核',
+          '需求方修订',
           '再次发布',
           '集成建议',
           '成果CSV导出',
@@ -61,9 +68,26 @@ export default function ProjectWorkflow() {
   }, [projectId, retry]);
   return (
     <main className={styles.page}>
-      <section className={styles.content}>
-        <Navigation />
-        <h1>{project?.name || '需求方'} · 结果工作台</h1>
+      <div className={styles.topbar}>
+        <div
+          className={`${styles.content} ${styles.realHeader}`}
+          style={{ paddingTop: 16, paddingBottom: 0 }}
+        >
+          <Navigation />
+        </div>
+      </div>
+      <section className={`${styles.content} ${styles.realBody}`}>
+        <div className={styles.breadcrumb}>
+          <span>
+            <Link to="/labeling">我的项目</Link> / 结果与审核
+          </span>
+        </div>
+        <div className={styles.heading}>
+          <h1>需求方审核工作台</h1>
+          <span className={styles.projectName}>
+            {project?.name || (error ? '项目读取失败' : '正在读取项目')}
+          </span>
+        </div>
         {error && (
           <Alert
             type="error"
@@ -79,7 +103,30 @@ export default function ProjectWorkflow() {
             <Link to={`/labeling/projects/${encodeURIComponent(projectId)}`}>
               返回规范与数据
             </Link>
-            <CapabilitiesNotice />
+            <Alert
+              className={styles.notice}
+              type="info"
+              showIcon
+              message="真实项目 · 仅展示已交回人工包与提交记录"
+              description="交回不等于需求方确认。审核、修订、AI与导出待后端接入，当前不可写入。"
+            />
+            <div
+              className={styles.tabs}
+              role="tablist"
+              aria-label="真实工作台功能"
+            >
+              <Button type="text" role="tab" aria-selected="true">
+                结果与审核
+              </Button>
+              {['范围发布', 'AI进度与分档', '来源与集成', '成果导出'].map(
+                (name) => (
+                  <Button key={name} disabled role="tab" aria-selected="false">
+                    {name} · 待后端接入
+                  </Button>
+                ),
+              )}
+            </div>
+            <CapabilitiesNotice withNotice={false} />
             <ProjectSubmissions projectId={projectId} />
           </>
         )}
