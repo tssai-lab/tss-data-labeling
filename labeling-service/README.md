@@ -92,3 +92,26 @@ POST 均需 Idempotency-Key。完整字段、上限和错误码见 `../docs/labe
 当前 resultFormat 为 image-classification-v1，结果为 {"labelId":"规范标签ID"}。
 Label Studio 原始 JSON 需适配器校验转换，尚未接入 editor-sync；导出与验收尚未实现。
 调用示例、冲突处理和权限边界见接口文档末尾“草稿与提交首轮实现”。
+
+## 需求方审核（V7，本地实现）
+
+- `GET /api/labeling/v1/submissions/{submissionId}/review`：owner 或提交者查看审核状态与逐样本结论，状态为 OPEN/ACCEPTED/REJECTED/CORRECTION/PARTIAL。
+- `PUT /api/labeling/v1/submissions/{submissionId}/review/items`：owner 逐样本接受/修改/退回/待修正（需 Idempotency-Key）。action ∈ ACCEPT/MODIFY/REJECT/CORRECTION，MODIFY 需 result，接受沿用冻结答案。
+- `POST /api/labeling/v1/submissions/{submissionId}/review/decide`：owner 对整份提交一次接受/退回/待修正（需 Idempotency-Key）。
+- `GET /api/labeling/v1/submissions/{submissionId}/review/audit`：按时间升序分页读取只增审计记录。
+
+审核不覆盖标注员答案；修改结果必须属于提交绑定的规范版本。
+
+## 发布轮次与再次发布（V8，本地实现）
+
+首次发布和再次发布都会创建 `publication_round`，同一样本同一时间只能属于一个 OPEN 轮次（`sample_work_claim` 防重叠），提交后轮次自动关闭并释放占用，需求方即可再次发布这些样本。
+
+- `POST /api/labeling/v1/projects/{projectId}/package-plans`：创建打包预览。首次发布传 `batchId`；按样本范围再次发布传 `samples:[{sampleId, referenceResultId?}]`（两者二选一），可选 `instructions`。
+- `POST /api/labeling/v1/package-plans/{planId}/publish`：发布计划，返回各 packageId/roundId。
+- `POST /api/labeling/v1/packages/{packageId}/rounds`：整包重发（复用原包，round_no 递增）。
+- `GET /api/labeling/v1/rounds/{roundId}`：owner 或本轮参与者查看轮次状态。
+- `POST /api/labeling/v1/rounds/{roundId}/claims`：仅人工轮次领取。
+- `POST /api/labeling/v1/rounds/{roundId}/cancel`：owner 结束轮次、释放样本占用并拒绝迟到写入（baseRevision + reason）。
+- `GET /api/labeling/v1/assignments/{assignmentId}/items`：新增 `roundId` 和每样本 `referenceResult`。
+
+按样本范围再次发布当前用显式 `samples[]` 冻结范围；待 B 的 `result_selection`（选择快照）就绪后，入口改为 `selectionId`。

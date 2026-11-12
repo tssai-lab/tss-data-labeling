@@ -7,11 +7,14 @@ import com.tss.labeling.identity.IdentityClient;
 import com.tss.labeling.identity.MeController;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
+import jakarta.validation.constraints.Size;
 import org.springframework.core.io.Resource;
 import org.springframework.http.*;
 import org.springframework.web.bind.annotation.*;
+import java.util.List;
 import java.util.UUID;
 
 @RestController
@@ -29,7 +32,7 @@ public class TaskController {
     public ApiResponse<JsonNode> create(@RequestHeader(value="Authorization",required=false) String auth,
             @PathVariable UUID projectId,@RequestHeader("Idempotency-Key") String key,
             @Valid @RequestBody PlanRequest body,HttpServletRequest request){
-        return response(tasks.createPlan(actor(auth),projectId,new TaskService.PlanInput(body.batchId(),body.specVersionId(),body.packageSize(),body.annotatorsPerSample()),key),request);
+        return response(tasks.createPlan(actor(auth),projectId,new TaskService.PlanInput(body.batchId(),body.specVersionId(),body.packageSize(),body.annotatorsPerSample(),body.samples(),body.instructions()),key),request);
     }
     @PostMapping("/package-plans/{planId}/publish")
     public ApiResponse<JsonNode> publish(@RequestHeader(value="Authorization",required=false) String auth,
@@ -71,6 +74,47 @@ public class TaskController {
         return ResponseEntity.ok().contentType(MediaType.parseMediaType(file.mediaType())).contentLength(file.sizeBytes())
                 .header("Cache-Control","private, no-store").header("X-Content-Type-Options","nosniff").body(file.resource());
     }
-    public record PlanRequest(@NotNull UUID batchId,@NotNull UUID specVersionId,Integer packageSize,Integer annotatorsPerSample){}
-    public record PublishRequest(@NotNull @Pattern(regexp="[0-9a-f]{64}") String selectionHash){}
+    @PostMapping("/assignments/{assignmentId}/release")
+    public ApiResponse<JsonNode> release(@RequestHeader(value="Authorization",required=false) String auth,
+            @PathVariable UUID assignmentId,@RequestHeader("Idempotency-Key") String key,
+            @Valid @RequestBody ReleaseRequest body,HttpServletRequest request){
+        return response(tasks.releaseAssignment(actor(auth),assignmentId,body.baseRevision(),body.reason(),key),request);
+    }
+    @PostMapping("/admin/assignments/{assignmentId}/revoke")
+    public ApiResponse<JsonNode> revoke(@RequestHeader(value="Authorization",required=false) String auth,
+            @PathVariable UUID assignmentId,@RequestHeader("Idempotency-Key") String key,
+            @Valid @RequestBody ReleaseRequest body,HttpServletRequest request){
+        return response(tasks.revokeAssignment(actor(auth),assignmentId,body.baseRevision(),body.reason(),key),request);
+    }
+    @PostMapping("/packages/{packageId}/rounds")
+    @ResponseStatus(HttpStatus.CREATED)
+    public ApiResponse<JsonNode> reRound(@RequestHeader(value="Authorization",required=false) String auth,
+            @PathVariable UUID packageId,@RequestHeader("Idempotency-Key") String key,
+            @RequestBody(required=false) ReRoundRequest body,HttpServletRequest request){
+        var input = body == null || body.instructions() == null ? "" : body.instructions();
+        return response(tasks.reRoundPackage(actor(auth),packageId,new TaskService.ReRoundInput(input),key),request);
+    }
+    @GetMapping("/rounds/{roundId}")
+    public ApiResponse<JsonNode> round(@RequestHeader(value="Authorization",required=false) String auth,
+            @PathVariable UUID roundId,HttpServletRequest request){return response(tasks.round(actor(auth),roundId),request);}
+    @PostMapping("/rounds/{roundId}/claims")
+    @ResponseStatus(HttpStatus.CREATED)
+    public ApiResponse<JsonNode> claimRound(@RequestHeader(value="Authorization",required=false) String auth,
+            @PathVariable UUID roundId,@RequestHeader("Idempotency-Key") String key,
+            @RequestBody(required=false) JsonNode body,HttpServletRequest request){
+        var current=actor(auth);
+        if(body!=null&&(!body.isObject()||!body.isEmpty()))throw TaskService.error(400,"INVALID_REQUEST","领取请求只接受空对象");
+        return response(tasks.claimRound(current,roundId,key),request);
+    }
+    @PostMapping("/rounds/{roundId}/cancel")
+    public ApiResponse<JsonNode> cancelRound(@RequestHeader(value="Authorization",required=false) String auth,
+            @PathVariable UUID roundId,@RequestHeader("Idempotency-Key") String key,
+            @Valid @RequestBody CancelRoundRequest body,HttpServletRequest request){
+        return response(tasks.cancelRound(actor(auth),roundId,body.baseRevision(),body.reason(),key),request);
+    }
+    public record PlanRequest(UUID batchId, @NotNull UUID specVersionId, Integer packageSize, Integer annotatorsPerSample, @Size(max=10000) List<TaskService.SelectionSample> samples, @Size(max=500) String instructions) {}
+    public record PublishRequest(@NotNull @Pattern(regexp="[0-9a-f]{64}") String selectionHash) {}
+    public record ReRoundRequest(@Size(max=500) String instructions) {}
+    public record CancelRoundRequest(@NotNull @Min(1) Long baseRevision, @Size(max=1000) String reason) {}
+    public record ReleaseRequest(@NotNull @Min(1) Long baseRevision, @Size(max=1000) String reason) {}
 }
