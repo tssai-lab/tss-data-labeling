@@ -65,7 +65,7 @@ mvn test
 mvn package
 ```
 
-集成测试自行启动临时 PostgreSQL 和身份服务桩，不连接现有业务数据库。Linux 必须以普通用户运行。正式联调仍需用真实统一登录和选定的数据集复验。领取、Label Studio、草稿提交与导出仍未实现；导入通过不能代表标注全链路已经完成。
+集成测试自行启动临时 PostgreSQL 和身份服务桩，不连接现有业务数据库。Linux 必须以普通用户运行。正式联调仍需用真实统一登录和选定的数据集复验。领取、平台分类草稿与提交已有本地实现；Label Studio 和导出仍未实现，导入通过不能代表标注全链路已经完成。
 
 ## 任务包与领取（本地已实现，需部署 V4）
 
@@ -79,4 +79,39 @@ mvn package
 - `GET /api/labeling/v1/assignments/{assignmentId}/samples/{sampleId}/file`：授权读取包内图片。
 
 POST 均需 Idempotency-Key。完整字段、上限和错误码见 `../docs/labeling-v1.1/04-api.md` 的任务包首轮实现。
-本轮不包含放弃/回收领取、Label Studio、标注结果保存或导出。
+任务包阶段不包含结果保存；后续 V5 已补上平台草稿与提交，见下一节。放弃/回收领取、Label Studio 和导出仍未实现。
+
+## 草稿与正式提交（V5，本地实现）
+
+- `PUT /api/labeling/v1/assignments/{assignmentId}/drafts/{sampleId}`：版本校验后保存本人图片分类草稿。
+- `GET /api/labeling/v1/assignments/{assignmentId}/drafts/{sampleId}`：刷新后读回；包内 items 也带草稿。
+- `POST /api/labeling/v1/assignments/{assignmentId}/submissions`：携带幂等键与整包样本版本清单，冻结个人提交。
+- `GET /api/labeling/v1/submissions/{submissionId}`：提交人/owner 查看冻结结果。
+- `GET /api/labeling/v1/projects/{projectId}/submissions`：owner 分页查看提交。
+
+当前 resultFormat 为 image-classification-v1，结果为 {"labelId":"规范标签ID"}。
+Label Studio 原始 JSON 需适配器校验转换，尚未接入 editor-sync；导出与验收尚未实现。
+调用示例、冲突处理和权限边界见接口文档末尾“草稿与提交首轮实现”。
+
+## 需求方审核（V7，本地实现）
+
+- `GET /api/labeling/v1/submissions/{submissionId}/review`：owner 或提交者查看审核状态与逐样本结论，状态为 OPEN/ACCEPTED/REJECTED/CORRECTION/PARTIAL。
+- `PUT /api/labeling/v1/submissions/{submissionId}/review/items`：owner 逐样本接受/修改/退回/待修正（需 Idempotency-Key）。action ∈ ACCEPT/MODIFY/REJECT/CORRECTION，MODIFY 需 result，接受沿用冻结答案。
+- `POST /api/labeling/v1/submissions/{submissionId}/review/decide`：owner 对整份提交一次接受/退回/待修正（需 Idempotency-Key）。
+- `GET /api/labeling/v1/submissions/{submissionId}/review/audit`：按时间升序分页读取只增审计记录。
+
+审核不覆盖标注员答案；修改结果必须属于提交绑定的规范版本。
+
+## 发布轮次与再次发布（V8，本地实现）
+
+首次发布和再次发布都会创建 `publication_round`，同一样本同一时间只能属于一个 OPEN 轮次（`sample_work_claim` 防重叠），提交后轮次自动关闭并释放占用，需求方即可再次发布这些样本。
+
+- `POST /api/labeling/v1/projects/{projectId}/package-plans`：创建打包预览。首次发布传 `batchId`；按样本范围再次发布传 `samples:[{sampleId, referenceResultId?}]`（两者二选一），可选 `instructions`。
+- `POST /api/labeling/v1/package-plans/{planId}/publish`：发布计划，返回各 packageId/roundId。
+- `POST /api/labeling/v1/packages/{packageId}/rounds`：整包重发（复用原包，round_no 递增）。
+- `GET /api/labeling/v1/rounds/{roundId}`：owner 或本轮参与者查看轮次状态。
+- `POST /api/labeling/v1/rounds/{roundId}/claims`：仅人工轮次领取。
+- `POST /api/labeling/v1/rounds/{roundId}/cancel`：owner 结束轮次、释放样本占用并拒绝迟到写入（baseRevision + reason）。
+- `GET /api/labeling/v1/assignments/{assignmentId}/items`：新增 `roundId` 和每样本 `referenceResult`。
+
+按样本范围再次发布当前用显式 `samples[]` 冻结范围；待 B 的 `result_selection`（选择快照）就绪后，入口改为 `selectionId`。
