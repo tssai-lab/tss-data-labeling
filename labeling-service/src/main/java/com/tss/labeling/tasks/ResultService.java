@@ -103,7 +103,7 @@ public class ResultService {
                 FROM submission s JOIN project p ON p.id=s.project_id
                 WHERE s.id=? AND (s.submitted_by=? OR p.owner_actor_id=?)
                 """,id,actor.actorId(),actor.actorId());
-        var items=db.queryForList("SELECT sample_id AS \"sampleId\",draft_revision AS revision,result_format AS \"resultFormat\",result::text AS result FROM submission_item WHERE submission_id=? ORDER BY sample_id",id);
+        var items=db.queryForList("SELECT sample_id AS \"sampleId\",result_id AS \"resultId\",draft_revision AS revision,result_format AS \"resultFormat\",result::text AS result FROM submission_item WHERE submission_id=? ORDER BY sample_id",id);
         for(var item:items)item.put("result",read((String)item.get("result")));
         result.put("items",items);
         result.put("reviewStatus",reviewStatus(id));
