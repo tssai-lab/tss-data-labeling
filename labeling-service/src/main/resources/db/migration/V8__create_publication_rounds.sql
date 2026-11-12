@@ -130,6 +130,13 @@ DELETE FROM sample_work_claim c
 USING publication_round r
 WHERE c.round_id = r.id AND r.status <> 'OPEN';
 
+-- 编辑器映射保留为历史数据，随 assignment 一起绑定到新的轮次唯一键。
+ALTER TABLE editor_mapping ADD COLUMN round_id UUID;
+UPDATE editor_mapping em SET round_id = a.round_id
+FROM assignment a WHERE a.id = em.assignment_id;
+ALTER TABLE editor_mapping ALTER COLUMN round_id SET NOT NULL;
+ALTER TABLE editor_mapping DROP CONSTRAINT editor_mapping_assignment_id_package_id_actor_id_fkey;
+
 DROP INDEX uq_assignment_actor_package_reserved;
 ALTER TABLE assignment DROP CONSTRAINT uq_assignment_author;
 ALTER TABLE assignment DROP CONSTRAINT assignment_slot_id_package_id_fkey;
@@ -138,6 +145,9 @@ ALTER TABLE assignment ADD CONSTRAINT assignment_slot_round_package_fkey
 ALTER TABLE assignment ADD CONSTRAINT assignment_round_package_fkey
     FOREIGN KEY (round_id, package_id) REFERENCES publication_round(id, package_id);
 ALTER TABLE assignment ADD CONSTRAINT uq_assignment_author_round UNIQUE (id, round_id, package_id, actor_id);
+ALTER TABLE editor_mapping ADD CONSTRAINT editor_mapping_assignment_round_package_actor_fkey
+    FOREIGN KEY (assignment_id, round_id, package_id, actor_id)
+    REFERENCES assignment(id, round_id, package_id, actor_id);
 CREATE UNIQUE INDEX uq_assignment_actor_round_reserved ON assignment(round_id, actor_id)
     WHERE status IN ('CLAIMED', 'IN_PROGRESS', 'SUBMITTED');
 
