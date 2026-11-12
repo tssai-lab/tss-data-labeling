@@ -79,15 +79,16 @@ public class ResultService {
         }
         UUID id=UUID.randomUUID();
         db.update("""
-                INSERT INTO submission(id,assignment_id,package_id,plan_id,project_id,spec_version_id,submitted_by,content_hash)
-                VALUES (?,?,?,?,?,?,?,?)
-                """,id,assignment,a.get("package_id"),a.get("plan_id"),a.get("project_id"),a.get("spec_version_id"),actor.actorId(),hash(write(rows)));
+                INSERT INTO submission(id,assignment_id,round_id,package_id,plan_id,project_id,spec_version_id,submitted_by,content_hash)
+                VALUES (?,?,?,?,?,?,?,?,?)
+                """,id,assignment,a.get("round_id"),a.get("package_id"),a.get("plan_id"),a.get("project_id"),a.get("spec_version_id"),actor.actorId(),hash(write(rows)));
         db.update("""
                 INSERT INTO submission_item(submission_id,package_id,sample_id,draft_revision,result_format,result)
                 SELECT ?,package_id,sample_id,revision,result_format,result FROM annotation_draft WHERE assignment_id=?
                 """,id,assignment);
         db.update("UPDATE assignment SET status='SUBMITTED',revision=revision+1,ended_at=CURRENT_TIMESTAMP WHERE id=?",assignment);
-        JsonNode response=json.valueToTree(Map.of("submissionId",id,"assignmentId",assignment,"status","SUBMITTED","sampleCount",rows.size()));
+        maybeCloseRound((UUID) a.get("round_id"));
+        JsonNode response=json.valueToTree(Map.of("submissionId",id,"assignmentId",assignment,"roundId",a.get("round_id"),"status","SUBMITTED","sampleCount",rows.size()));
         db.update("INSERT INTO idempotency_record(actor_id,operation,idempotency_key,request_hash,resource_id,response_body) VALUES (?,?,?,?,?,?::jsonb)",actor.actorId(),op,key,requestHash,id,write(response));
         return response;
     }
@@ -105,6 +106,7 @@ public class ResultService {
         var items=db.queryForList("SELECT sample_id AS \"sampleId\",draft_revision AS revision,result_format AS \"resultFormat\",result::text AS result FROM submission_item WHERE submission_id=? ORDER BY sample_id",id);
         for(var item:items)item.put("result",read((String)item.get("result")));
         result.put("items",items);
+        result.put("reviewStatus",reviewStatus(id));
         return json.valueToTree(result);
     }
 
@@ -119,6 +121,7 @@ public class ResultService {
         var rows=db.queryForList("SELECT id AS \"submissionId\",assignment_id AS \"assignmentId\",package_id AS \"packageId\",submitted_by AS \"submittedBy\",submitted_at::text AS \"submittedAt\" FROM submission WHERE project_id=? AND id>? ORDER BY id LIMIT ?",project,after,limit+1);
         boolean more=rows.size()>limit;
         var items=more?rows.subList(0,limit):rows;
+        for(var item:items)item.put("reviewStatus",reviewStatus((UUID)item.get("submissionId")));
         Map<String,Object> response=new LinkedHashMap<>();response.put("items",items);
         response.put("nextCursor",more?items.get(items.size()-1).get("submissionId").toString():null);
         return json.valueToTree(response);
@@ -127,7 +130,7 @@ public class ResultService {
     private Map<String,Object> lockedAssignment(ActorContext actor,UUID id,boolean writing) {
         enabled(actor.actorId());
         Map<String,Object> a=one("""
-                SELECT a.package_id,p.project_id,p.spec_version_id,p.id AS plan_id
+                SELECT a.package_id,a.round_id,p.project_id,p.spec_version_id,p.id AS plan_id
                 FROM assignment a JOIN task_package t ON t.id=a.package_id JOIN package_plan p ON p.id=t.plan_id
                 WHERE a.id=? AND a.actor_id=?
                 """,id,actor.actorId());
@@ -139,6 +142,35 @@ public class ResultService {
         return a;
     }
     private void active(Map<String,Object> a){if(!List.of("CLAIMED","IN_PROGRESS").contains(a.get("status")))throw error(409,"ASSIGNMENT_CLOSED","领取已结束，结果不能覆盖");}
+    /** 仅当本轮既无进行中的领取、也无空余可领取席位时，才关闭轮次并释放样本占用。 */
+    private void maybeCloseRound(UUID roundId) {
+        db.queryForObject("SELECT id FROM publication_round WHERE id=? FOR UPDATE", UUID.class, roundId);
+        boolean active = Boolean.TRUE.equals(db.queryForObject(
+                "SELECT EXISTS(SELECT 1 FROM assignment WHERE round_id=? AND status IN ('CLAIMED','IN_PROGRESS'))", Boolean.class, roundId));
+        boolean claimable = Boolean.TRUE.equals(db.queryForObject(
+                "SELECT EXISTS(SELECT 1 FROM package_slot s WHERE s.round_id=? AND NOT EXISTS(SELECT 1 FROM assignment a WHERE a.slot_id=s.id AND a.status='SUBMITTED'))", Boolean.class, roundId));
+        if (!active && !claimable) {
+            db.update("UPDATE publication_round SET status='CLOSED', revision=revision+1 WHERE id=? AND status='OPEN'", roundId);
+            db.update("DELETE FROM sample_work_claim WHERE round_id=?", roundId);
+        }
+    }
+    /** 由逐样本审核结论推导提交整体审核状态。 */
+    private String reviewStatus(UUID submissionId) {
+        return db.query("""
+                SELECT CASE
+                  WHEN r.reviewed = 0 THEN 'OPEN'
+                  WHEN r.reviewed = s.total AND r.accepted = s.total THEN 'ACCEPTED'
+                  WHEN r.reviewed = s.total AND r.rejected = s.total THEN 'REJECTED'
+                  WHEN r.reviewed = s.total AND r.correction = s.total THEN 'CORRECTION'
+                  ELSE 'PARTIAL' END
+                FROM (SELECT count(*) AS total FROM submission_item WHERE submission_id=?) s
+                CROSS JOIN (SELECT count(*) AS reviewed,
+                      count(*) FILTER (WHERE action IN ('ACCEPT','MODIFY')) AS accepted,
+                      count(*) FILTER (WHERE action = 'REJECT') AS rejected,
+                      count(*) FILTER (WHERE action = 'CORRECTION') AS correction
+                    FROM review_item WHERE submission_id=?) r
+                """, rs -> rs.next() ? rs.getString(1) : "OPEN", submissionId, submissionId);
+    }
     private void validate(Map<String,Object> a,String format,JsonNode result,boolean done){
         Map<String,Object> spec=one("SELECT task_type,labels::text AS labels FROM spec_version WHERE id=?",a.get("spec_version_id"));
         if(!"IMAGE_CLASSIFICATION".equals(spec.get("task_type"))||!"image-classification-v1".equals(format))throw error(422,"UNSUPPORTED_FORMAT","首期仅支持图片单标签分类结果");
