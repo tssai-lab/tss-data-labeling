@@ -555,6 +555,9 @@ class ImportIntegrationTest {
         String id = receipt.path("submissionId").asText();
         JsonNode frozen = resultGet("/submissions/" + id, "author-a", 200);
         assertEquals(2, frozen.path("items").size());
+        UUID firstResult = UUID.fromString(frozen.path("items").get(0).path("resultId").asText());
+        UUID secondResult = UUID.fromString(frozen.path("items").get(1).path("resultId").asText());
+        assertNotEquals(firstResult, secondResult);
         assertEquals("normal", frozen.path("items").get(0).path("result").path("labelId").asText());
         assertEquals(frozen, resultGet("/submissions/" + id, "owner", 200));
         resultGet("/submissions/" + id, "author-b", 404);
@@ -568,6 +571,69 @@ class ImportIntegrationTest {
         resultGet("/assignments/" + first + "/drafts/" + sample, "author-a", 200);
         saveDraft(second, sample, "author-b", 0, true, "normal", 409);
         assertThrows(org.springframework.dao.DataAccessException.class, () -> db.update("UPDATE submission_item SET result='{}' WHERE submission_id=?", UUID.fromString(id)));
+    }
+
+    @Test void projectResultsIncludeUnsubmittedSamplesAndFreezeTheFilteredSelection() throws Exception {
+        JsonNode plan = taskPlan(1);
+        String pkg = publishTask(plan).path("packages").get(0).path("packageId").asText();
+        String assignment = taskPost("/packages/" + pkg + "/claims", "author-a", UUID.randomUUID().toString(),
+                Map.of(), 201).path("assignmentId").asText();
+        var submitted = new java.util.ArrayList<Map<String, Object>>();
+        for (JsonNode item : resultGet("/assignments/" + assignment + "/items", "author-a", 200).path("items")) {
+            String sample = item.path("sampleId").asText();
+            saveDraft(assignment, sample, "author-a", 0, true, "normal", 200);
+            submitted.add(Map.of("sampleId", sample, "revision", 1));
+        }
+        String submission = taskPost("/assignments/" + assignment + "/submissions", "author-a",
+                UUID.randomUUID().toString(), Map.of("items", submitted), 201).path("submissionId").asText();
+        JsonNode detail = resultGet("/submissions/" + submission, "owner", 200);
+        String project = detail.path("projectId").asText();
+        String spec = detail.path("specVersionId").asText();
+        String projects = "/projects/" + project;
+        String results = projects + "/results?specVersionId=" + spec;
+        resultGet(results, "author-a", 404);
+        assertEquals(3, resultGet(results, "owner", 200).path("items").size());
+        JsonNode page = resultGet(results + "&hasResult=true&limit=1", "owner", 200);
+        String excluded = page.path("items").get(0).path("sampleId").asText();
+        JsonNode next = resultGet(results + "&hasResult=true&limit=1&cursor=" + page.path("nextCursor").asText(),
+                "owner", 200).path("items").get(0);
+        assertNotEquals(excluded, next.path("sampleId").asText());
+        String selectedSample = next.path("sampleId").asText();
+        String selectedResult = next.path("resultId").asText();
+        assertEquals(1, resultGet(results + "&hasResult=false", "owner", 200).path("items").size());
+        assertEquals(3, resultGet(results + "&reviewStatus=UNREVIEWED", "owner", 200).path("items").size());
+        assertEquals(2, resultGet(projects + "/result-statistics?specVersionId=" + spec,
+                "owner", 200).path("hasResultCount").asInt());
+        assertEquals(selectedResult, resultGet(projects + "/samples/" + selectedSample + "/results", "owner", 200)
+                .path("items").get(0).path("resultId").asText());
+
+        var request = Map.of("purpose", "PUBLISH", "specVersionId", spec,
+                "filter", Map.of("hasResult", true), "excludeSampleIds", java.util.List.of(excluded));
+        String key = UUID.randomUUID().toString();
+        JsonNode selection = taskPost(projects + "/result-selections", "owner", key, request, 201);
+        assertEquals(selection, taskPost(projects + "/result-selections", "owner", key, request, 201));
+        taskPost(projects + "/result-selections", "owner", key,
+                Map.of("purpose", "PUBLISH", "specVersionId", spec, "filter", Map.of()), 409);
+        String snapshot = "/result-selections/" + selection.path("selectionId").asText();
+        JsonNode preview = resultGet(snapshot + "/items", "owner", 200);
+        assertEquals(1, selection.path("count").asInt());
+        assertEquals(1, resultGet(snapshot + "/statistics", "owner", 200).path("total").asInt());
+        assertEquals(next.path("sampleId"), preview.path("items").get(0).path("sampleId"));
+        assertEquals(next.path("resultId"), preview.path("items").get(0).path("resultId"));
+        resultGet(snapshot + "/items", "author-a", 404);
+
+        taskPost(projects + "/sample-reviews", "owner", UUID.randomUUID().toString(),
+                Map.of("items", java.util.List.of(Map.of("sampleId", selectedSample,
+                        "specVersionId", spec, "action", "NEEDS_REVISION"))), 200);
+        assertEquals(1, resultGet(results + "&reviewStatus=NEEDS_REVISION", "owner", 200).path("items").size());
+        assertEquals(preview, resultGet(snapshot + "/items", "owner", 200));
+        taskPost(projects + "/result-selections", "owner", UUID.randomUUID().toString(),
+                Map.of("purpose", "REVIEW", "reviewAction", "ACCEPT", "specVersionId", spec,
+                        "items", java.util.List.of(Map.of("sampleId", selectedSample, "resultId", selectedResult, "reviewRevision", 0))), 409);
+        JsonNode explicit = taskPost(projects + "/result-selections", "owner", UUID.randomUUID().toString(),
+                Map.of("purpose", "REVIEW", "reviewAction", "ACCEPT", "specVersionId", spec,
+                        "items", java.util.List.of(Map.of("sampleId", selectedSample, "resultId", selectedResult, "reviewRevision", 1))), 201);
+        assertEquals(1, explicit.path("count").asInt());
     }
 
     @Test void concurrentDraftSavesUseCompareAndSet() throws Exception {

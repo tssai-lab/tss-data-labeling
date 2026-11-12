@@ -1,6 +1,6 @@
 # 接口契约｜已有接口与待开发方案
 
-更新：2026-11-11。统一前缀 /api/labeling/v1。依据 Controller/Service 和最新业务规则整理。**第 2—6 节列现有能力；第 7—11 节是待实现契约；第 12 节说明旧编辑器接口停用方向。** 第 6 节的按范围再次发布当前以显式样本清单 `samples[]` 实现，选择快照 `selectionId` 依赖 B 的 `result_selection`（第 8 节），尚待实现。第15节补充模板与时序扩展，仍待实现。出现示例不代表接口已经可调用。
+更新：2026-11-12。统一前缀 /api/labeling/v1。第 8 节记录项目结果查询及选择快照的创建、预览接口。各节的实现状态以对应说明为准。第 6 节的按范围再次发布仍使用显式样本清单 `samples[]`。第 15 节的模板与时序扩展待实现。
 
 ## 1. 通用协议、权限与字段
 
@@ -231,7 +231,7 @@ POST /assignments/{id}/submissions，带幂等键：
 
 每个领取包分别调用一次提交接口；10 张完成 6 张只能保存草稿，不能提交该包，但不会阻止其他已完成包提交。成功响应只表示这个包的人工结果已交回，不表示 owner 已审核通过，也不表示整个任务完成。AI 不调用这个接口。
 
-GET /submissions/{id} 供提交人或 owner 查看不可变内容；GET /projects/{id}/submissions?limit=20&cursor=... 为 owner 列表。当前没有 packageId/actorId 筛选参数，不按旧设计假设已实现。
+GET /submissions/{id} 供提交人或 owner 查看不可变内容，`items[].resultId` 标识样本的这版正式提交结果。V14 为已有正式提交明细补齐 UUID，并在同一次提交事务中为新明细生成 UUID。GET /projects/{id}/submissions?limit=20&cursor=... 为 owner 列表，当前支持游标分页。
 
 POST /assignments/{id}/release 和 POST /admin/assignments/{id}/revoke 尚未在当前 Controller 实现。待实现请求为 baseRevision、reason，返回状态/revision；不接受已提交记录，回收不删除草稿，旧页面写入拒绝。
 
@@ -239,7 +239,7 @@ POST /assignments/{id}/release 和 POST /admin/assignments/{id}/revoke 尚未在
 
 发布轮次由 `publication_round` 表示：首次发布和再次发布都会冻结本轮样本范围（`round_item`），同一样本同一时间只能属于一个 OPEN 轮次（`sample_work_claim`）。本轮全部提交后轮次自动关闭并释放样本占用，需求方即可再次发布这些样本。历史结果不覆盖。
 
-选择快照 `result_selection`（第8节，B 负责）尚未实现；当前按范围再次发布使用显式样本清单 `samples[]`，待 B 提供选择快照后入口改为 `selectionId`。
+选择快照 `result_selection` 的创建和预览见第 8 节。当前按范围再次发布使用显式样本清单 `samples[]`，按 `selectionId` 发布待接入。
 
 ### 6.1 按显式样本清单再次发布
 
@@ -353,15 +353,17 @@ Worker 使用受限内部服务调用，executionId、generation、sampleId 必�
 
 ## 8. 结果查询、选择快照与分档
 
-置信度分档已实现：`POST /rounds/{id}/confidence-policies`（owner，绑定终结快照，0≤L<H≤1，追加版本不改历史）、`GET /rounds/{id}/confidence-policies`。结果查询与选择快照 `result_selection` 仍待 B。
+项目结果列表、样本历史、基本统计和选择快照预览已在后端实现。选择快照可供前端预览固定范围，后续审核、再发布或成果接口消费 `selectionId` 待接入。置信度策略由 `POST /rounds/{id}/confidence-policies` 保存，`GET /rounds/{id}/confidence-policies` 查询。
 
 GET /projects/{id}/results：owner，筛选 specVersionId、packageId（可选）、roundId、executionId、sourceKind、reviewStatus、hasResult、confidencePolicyId＋band、limit/cursor。
+
+省略 `specVersionId` 时，优先采用筛选中的任务包、轮次或执行关联的规范版本，否则用项目最新规范版本。`hasResult` 可传 `true` 或 `false`，`reviewStatus` 可传 `UNREVIEWED`、`PENDING`、`NEEDS_REVISION`、`ACCEPTED`。没有审核记录时状态为 `UNREVIEWED`，版本为 0。列表的游标是上一页返回的 `nextCursor`。样本历史可用 `specVersionId` 缩小范围，省略时返回该样本各规范版本的历史结果。
 
 返回 items 含 sampleId、sourcePath、resultId（可空）、result、sourceKind、sourceActor、modelVersion、confidence、reviewStatus、reviewRevision、hasResult、activeProcessing；另含nextCursor。单个样本有多份候选时默认返回当前选定结果，未选定且多候选时提示需选，不按最新时间猜测正确答案。GET /projects/{id}/samples/{sampleId}/results 列来源历史。
 
 结果列表每行对应一个样本，增加selectedResultId、candidateCount、requiresResultSelection。hasResult表示当前筛选范围内存在可审核候选，不等于已确认；无候选时resultId=null、candidateCount=0。存在明确executionId等来源筛选时，只在该范围内选展示候选；否则优先展示当前selectedResultId。未选定且只有一份候选可展示该候选，但不自动改变审核指针；多份且无法确定时resultId=null、requiresResultSelection=true，调用方必须从样本历史中明确选择resultId，不能按时间猜测。reviewStatus/reviewRevision描述样本在该规范下的当前审核状态；仅当展示resultId等于selectedResultId且状态ACCEPTED时才能给该答案显示“已确认”。
 
-GET /projects/{id}/result-statistics 使用相同筛选，返回total、hasResultCount、noResultCount、needsRevisionCount、acceptedCount、activeCount；状态计数可能重叠，不相加当总数。AI执行统计另返回successCount/failedCount/pendingCount/cancelledCount。置信度统计仅针对选定execution的成功结果，HIGH/MEDIUM/LOW/UNKNOWN互斥；未设policy仅展示分数直方图及unknown，不默认分档。
+GET /projects/{id}/result-statistics 使用相同筛选，返回 `total`、`hasResultCount`、`noResultCount`、`needsRevisionCount`、`acceptedCount`、`activeCount`。AI 执行的成功、失败、等待和取消数量由执行详情接口返回。结果列表支持按指定执行和策略筛选置信度分档，分档汇总及分数直方图待开发。
 
 普通分页和统计为实时视图，不承诺跨请求一致。生成selection后，GET /result-selections/{id}/items分页及GET /result-selections/{id}/statistics只读固定清单和创建时统计；C必须用它们做最终预览，不再用实时统计冒充确认数量。审核消费时A重新校验当前状态和revision。
 
@@ -382,6 +384,21 @@ POST /projects/{id}/result-selections，owner＋幂等键：
 选择快照固定projectId、specVersionId、createdBy、purpose、reviewAction（仅REVIEW）、筛选与policyId、每项sampleId/resultId/reviewRevision、selectionHash、count、createdAt、expiresAt；无审核行时revision=0。默认有效期30分钟，过期重新生成，不延长旧预览。hash按稳定sampleId顺序计算，覆盖范围、答案、revision及用途。空集合拒绝422 EMPTY_SELECTION，多候选未明确选答案且用途需要答案时拒绝422 RESULT_SELECTION_REQUIRED；未知筛选字段拒绝，不能静默忽略。referenceMode=SELECTED可有部分样本resultId为空，表示该样本无参考；NONE不向执行者展示任何已有答案。消费时不自动换用新答案。
 
 选择本页只传本页items；选择全部筛选结果由后端快照，不反复抓分页猜集合。选择过期410 SELECTION_EXPIRED；创建和消费都检查权限，变更范围须新建selection。发布消费时重查审核revision和活动状态。
+
+### 图片项目联调示例
+
+使用项目 owner 的 `Authorization: Bearer <token>` 请求。先调用 `GET /projects/<projectId>/results?specVersionId=<specVersionId>&hasResult=true&limit=20`，从返回的 `data.items` 取得要排除的 `sampleId`。再调用 `POST /projects/<projectId>/result-selections`，带 `Content-Type: application/json` 和本次操作的 `Idempotency-Key`。
+
+```json
+{
+  "purpose": "PUBLISH",
+  "specVersionId": "<specVersionId>",
+  "filter": {"hasResult": true},
+  "excludeSampleIds": ["<排除的sampleId>"]
+}
+```
+
+响应为 HTTP 201，读取 `data.selectionId` 和 `data.count`。随后查询 `GET /result-selections/<selectionId>/items?limit=20` 和 `GET /result-selections/<selectionId>/statistics`。如果有 10 张带结果的图片并排除 2 张，预览 `total` 和创建响应 `count` 均为 8。翻页使用预览响应的 `nextCursor`，每项包括 `sampleId`、`resultId`、`reviewRevision`。如只勾选指定行，请将 `filter` 和 `excludeSampleIds` 换成 `items`，并原样带上列表中的这三个字段。
 
 POST /rounds/{id}/confidence-policies：仅AI轮次owner＋幂等键，body snapshotId、lowerThreshold、upperThreshold。执行ID从轮次关联的执行记录取得；snapshotId必须是该执行的终结快照。201 返回 policyId、revision、模型及阈值；0≤L<H≤1。策略新建版本，不改历史。
 
