@@ -1,6 +1,43 @@
 # 接口契约｜已有接口与待开发方案
 
-更新：2026-11-12。统一前缀 /api/labeling/v1。第 8 节记录项目结果查询及选择快照的创建、预览接口。各节的实现状态以对应说明为准。第 6 节的按范围再次发布仍使用显式样本清单 `samples[]`。第 15 节的模板与时序扩展待实现。
+更新：2026-11-14。统一前缀 /api/labeling/v1。第 8 节记录项目结果查询及选择快照的创建、预览接口。各节的实现状态以对应说明为准。第 6 节的按范围再次发布仍使用显式样本清单 `samples[]`。第 15 节的模板与时序扩展待实现。
+
+### 能耗首轮联调契约（2026-11-14，团队实施基线）
+
+以下技术字段和交互规则作为 A、B、C、D 首轮实现的共同基线；发生兼容性问题时由 A 协调并版本化调整。它是待实现契约，不代表代码已经支持或成员已经联调。先导入交付包 `sample/station_day_tasks_2k.csv`，一行对应一个站点日；完整小时/日表及历史基线另行接入。复用第15节路径，公共响应、认证、幂等和分页遵循第1节。
+
+| 对象 | 字段及约束 | 责任与来源 |
+|---|---|---|
+| 模板 | `templateId=energy-station-day`、`templateVersion=1.0.0`、`taskType=TIMESERIES_ANNOTATION`、`editorKey=energy-station-day-editor`、`inputFormat=energy-station-day-input-v1`、`inputSchemaId=energy-station-day-input@1.0.0`、`resultFormat=annotation-record-v1`、`resultSchemaId=energy-station-day-result@1.0.0`；冻结各 schema 摘要 | A 实现注册和服务端校验分派；B/D 按这些标识实现。注册接口当前待开发 |
+| 样本 | 平台 `sampleId` 为 UUID；`sourceTaskId` 对应 CSV 的 `task_id`，并保留数据集版本、来源文件及行定位、`stationKey`、`enterpriseKey`、`stationLevel`、`dateLocal`、`timezone=Asia/Shanghai` 和输入摘要 | B 导入并生成映射；来源 ID 不当作全局唯一 ID，重试应保持相同样本身份 |
+| 能耗输入 | `dailyKwh` 独立于 `series`；`series.name=load_curve`、`channel=value_kwh`、`unit=kWh`、`start` 为带时区的当天零点、`periodSeconds=3600`、`values` 为 24 个有限非负数或明确的 `null`；0 保留为 0 | B 提供授权读取接口；日值不当作第25个小时。缺失和重复处理按下列导入规则执行 |
+| 标注结果 | 使用 `annotation-record-v1` 的 `result.schemaVersion` 和 `annotations[]`，每项含 `id`、`from_name`、`to_name=load_curve`、`type`、`value`；主标签示例为 `primary_label/choices/value.labelIds`；点和区间分别使用 `timeseries_point` 与 `timeseries_interval` | D 提供转换和校验；A 在草稿、提交及 AI 成功结果统一按冻结规范校验。点必须落在样本日，区间采用 `[start,end)`，标签必须在该规范中 |
+| 置信度 | AI `confidence` 为实际可解释的 0—1 分数或 `null`；另保存 `modelVersion`、规则/模型版本和 `confidenceDescription`。人工自评放结果的独立字段，不能写成模型分数 | D 提供真实含义、版本和标签映射；A 校验并绑定执行记录；没有可信分数时保持未知 |
+| 需求方审核 | 结果保留 `sampleId`、规范版本、来源（人工提交或 AI execution）、结果版本及审核 revision；owner 执行接受、修改或标记待修正，记录操作人、原因和时间 | A 负责授权及审核记录，B 对齐结果列表/快照；AI 分档阈值仅用于筛选，不自动确认。现有 `POST /projects/{id}/sample-reviews` 的实际字段见9.3，按 resultId/selectionId 审核仍属待实现契约 |
+
+项目创建时选择已启用模板；创建 `specVersionId` 时冻结模板 ID/版本、输入和结果 schema ID/摘要、标签与完成规则。`publication_round.spec_version_id` 绑定该规范，`round_item` 固定样本范围和可选参考结果；人工包的 assignment、草稿和 submission，以及 AI execution/结果应继续引用同一规范，并由服务端通过规范解析冻结的模板与 schema。已有图片分类项目保留原格式和语义；运行中或历史规范不可原地改模板，升级须创建新规范版本并说明兼容策略。当前代码尚未完整保存和验证上述模板/schema 冻结字段。
+
+#### 固定导入与校验规则
+
+1. B 使用受控导入器读取归档内的 `sample/station_day_tasks_2k.csv`，忽略 `preview` 和其他文件作为样本来源；数据集版本来自归档 manifest。`task_id`、站点、企业、层级、日期、`h00`—`h23`、`daily_kwh` 列必须存在。空小时值转 `null`，零保留为数值 0；非空值须为有限非负数。日值空时为 `null`，非空值同样须为有限非负数。
+2. 空的 `label`、`label_detail`、`annotator`、`confidence`、`notes` 列是正常输入；任一行这些列有非空内容时拒绝该导入批次，提示不支持导入已有标注。缺必需列或值格式非法拒绝批次并报告文件、行号、字段和错误码；同一项目、数据集版本中重复 `task_id` 或重复站点日拒绝批次。导入失败不发布部分样本；同一批次重试使用原样本 ID，已存在的不同批次重复导入返回冲突，不静默生成重复样本。
+3. 导入数据映射：`task_id→sourceTaskId`、`station_key→stationKey`、`enterprise_key→enterpriseKey`、`station_level→stationLevel`、`date_local→dateLocal`、`h00`—`h23→series.values[0..23]`、`daily_kwh→dailyKwh`。`stationLevel` 仅接受 `enterprise` 或 `device`；日期须为有效 `YYYY-MM-DD`。`sourceTaskId` 和站点日按项目及数据集版本限定作用域。
+4. owner 使用 `GET /projects/{id}/samples/{sampleId}/data`，人工使用 `GET /assignments/{id}/samples/{sampleId}/data`，Worker 使用第15节内部路径。成功响应统一为 `data` 对象：`sampleId`、`inputFormat`、`schemaId`、`inputHash`、`source`、`payload`、`context`。`source` 含 `datasetVersion`、`sourceTaskId`、`sourceFile`、`sourceRow`；`payload` 含 `stationKey`、`enterpriseKey`、`stationLevel`、`dateLocal`、`timezone`、`dailyKwh` 和 `series`。`context` 初期固定为 `{ "status": "NOT_PROVIDED", "availableHistoryDays": 0 }`，不伪造历史统计。三个路径数据结构相同，分别执行 owner、领取范围或 Worker 租约授权。
+5. 数据错误按统一错误包返回：缺列/非法值为 `422 INVALID_ENERGY_INPUT`，已有标签为 `422 EXISTING_ANNOTATIONS_UNSUPPORTED`，重复来源为 `409 DUPLICATE_ENERGY_SAMPLE`；错误详情包含 `file`、`row`、`field`，不暴露其他项目数据。异步导入在批次状态中保存同样的错误信息，不因上传成功显示解析成功。
+
+#### 固定结果和完成规则
+
+`annotations` 中 ID 在当前结果内唯一；`to_name` 固定为 `load_curve`。`primary_label` 使用 `choices` 且 `value.labelIds` 恰有一个规范内标签；`secondary_labels` 使用 `choices` 且不含重复或主标签；`point_labels` 使用 `timeseries_point`，其 `value` 带 `timestamp`、`channel=value_kwh` 和含一个标签的 `labelIds` 数组；`interval_labels` 使用 `timeseries_interval`，其 `value` 带 `start`、`end`、`channel=value_kwh` 和含一个标签的 `labelIds` 数组，区间为样本日内的 `[start,end)` 且起点小于终点。`notes` 和 `whole_day_reason` 为 `text`；人工自评 `self_reported_certainty` 为 `choices`，值为 `HIGH`、`MEDIUM`、`LOW` 或 `UNKNOWN`，与 AI confidence 分开。点、区间和标签的完整结构与 [14 的结果示例](14-task-plugins-and-energy-acceptance.md) 一致。
+
+草稿允许没有主标签、`explicitDone=false`，但已有字段必须类型正确且不越界；正式完成必须 `explicitDone=true`，有且仅有一个规范内主标签，所有标注均合法。人工提交检查当前包的每条样本，其他包不阻塞；AI 每条成功结果执行相同完成检查，失败项不生成假标签。空小时和未知置信度本身不判为完成或未完成。正式业务标签含义、异常是否必须定位、备注/自评是否必填和 Agent 规则阈值由业务专家确认；本基线只固定最小技术完成条件，不将建议规则当作正式判定标准。
+
+#### 审核与交付衔接
+
+初期沿用已实现的 `POST /projects/{id}/sample-reviews`，人工提交/AI 终结成功结果的来源字段以9.3为准。owner 修改内容产生新结果版本的完整接口仍须实现；不能把 `resultId` 或 selectionId 审核的目标契约当成现成接口。设置置信度阈值仅生成策略，owner 须显式确认结果；未知置信度单列，人工修订不继承 AI 分数。
+
+A 负责模板、规范、权限、结果校验分派、迁移与审核；B 负责导入、授权样本读取、统计及导出；D 负责编辑器结果转换和真实 Agent，C 负责界面与接入。B/D 依本节和第15节直接开发，样例数据以 [14 的输入和结果示例](14-task-plugins-and-energy-acceptance.md) 为基础；A 汇总实际联调产生的不兼容并维护契约版本。业务标签需确认时先用显式标注的试标规范联调，不冒称正式验收规范。
+
+迁移实施顺序：① A 先核对共享分支、部署包中 V1—V14 的脚本及各环境 `flyway_schema_history` 的版本、checksum 和成功状态；服务器此前 V6 已存在，V8 涉及 V6 编辑器外键依赖，须在有历史 V6 数据的独立数据库验证完整升级链。② 以实际最新迁移号为准分配新版本（若仍为 V14，可提议 V15，尚未预留），先为既有图片记录增加可空字段并回填明确的历史模板/schema，再验证数据和约束，最后按兼容需求收紧非空/唯一/外键及格式校验。③ 以新迁移增加通用结构化输入与结果格式支持，保留图片历史数据、旧读取和授权；必要时分多个迁移，不重写 V5/V6/V8，不使用 `repair`、删除历史或 `CASCADE` 绕过失败。④ 在独立副本验证空库与含旧项目、V6 映射的数据升级及旧图片读写，再核对服务器备份、迁移记录和应用启动。此处仅为设计检查，本轮未执行迁移。
 
 ## 1. 通用协议、权限与字段
 
