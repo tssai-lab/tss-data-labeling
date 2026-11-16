@@ -79,7 +79,7 @@ mvn package
 - `GET /api/labeling/v1/assignments/{assignmentId}/samples/{sampleId}/file`：授权读取包内图片。
 
 POST 均需 Idempotency-Key。完整字段、上限和错误码见 `../docs/labeling-v1.1/04-api.md` 的任务包首轮实现。
-任务包阶段不包含结果保存；后续 V5 已补上平台草稿与提交，见下一节。放弃/回收领取、Label Studio 和导出仍未实现。
+任务包阶段不包含结果保存；后续 V5 已补上平台草稿与提交，见下一节。放弃/回收领取及成果导出已补齐；不部署 Label Studio 服务。
 
 ## 草稿与正式提交（V5，本地实现）
 
@@ -90,7 +90,7 @@ POST 均需 Idempotency-Key。完整字段、上限和错误码见 `../docs/labe
 - `GET /api/labeling/v1/projects/{projectId}/submissions`：owner 分页查看提交。
 
 当前 resultFormat 为 image-classification-v1，结果为 {"labelId":"规范标签ID"}。
-Label Studio 原始 JSON 需适配器校验转换，尚未接入 editor-sync；导出与验收尚未实现。
+Label Studio 原始 JSON 需适配器校验转换，尚未接入 editor-sync；正式导出已见 V15；真实模型与专家业务验收仍需独立证据。
 调用示例、冲突处理和权限边界见接口文档末尾“草稿与提交首轮实现”。
 
 ## 需求方审核（V7，本地实现）
@@ -114,4 +114,15 @@ Label Studio 原始 JSON 需适配器校验转换，尚未接入 editor-sync；�
 - `POST /api/labeling/v1/rounds/{roundId}/cancel`：owner 结束轮次、释放样本占用并拒绝迟到写入（baseRevision + reason）。
 - `GET /api/labeling/v1/assignments/{assignmentId}/items`：新增 `roundId` 和每样本 `referenceResult`。
 
-按样本范围再次发布当前用显式 `samples[]` 冻结范围；待 B 的 `result_selection`（选择快照）就绪后，入口改为 `selectionId`。
+按样本范围再次发布兼容显式 samples[]，并已支持固定 selectionId。
+
+
+## 2026-11-16 工作流与能耗接口（V15/V16）
+
+实际请求/响应以 [04-api.md](../docs/labeling-v1.1/04-api.md) 为准。本轮增加：逐结果 CAS 审核与 OWNER 修订、固定范围消费与新答案参考、完整操作历史/本人回执、草稿逻辑删除与状态审计、AI 失败子集重试、独立答案多数表决、真实异步 ZIP 导出，以及能耗 CSV → 授权 data → 草稿/提交/AI校验 → 审核/快照 → JSONL ZIP。兼容旧图片和历史数据，不改 V1—V14。
+
+运行 `LABELING_NODE_E2E=true mvn -B -ntp verify` 验证临时 PostgreSQL、迁移、权限、并发和 Node HTTP 导入，不使用共享服务的数据或账号。Windows PowerShell 使用 `$env:LABELING_NODE_E2E='true'; mvn -B -ntp verify`。CI 同样启用该测试。
+
+导出 Worker 默认开启（`labeling.exports.worker-enabled=true`，poll-delay-ms=1000），作业/归档持久存在专用数据库；一次最多10000条、展开导出数据64MiB，7天后拒绝下载。设置 worker-enabled=false 可由调度方显式调用 runOnce；GET 查询不推进状态。逻辑删除/归档保留原始文件和审计，本轮不自动物理清理或更改保留期。
+
+能耗归档根 manifest.json 需 datasetVersion，样本仅取 sample/station_day_tasks_2k.csv；首轮没有历史上下文、金标准/质检 API 或真实 Agent 模型，不能把技术链路测试当作模型质量验收。
