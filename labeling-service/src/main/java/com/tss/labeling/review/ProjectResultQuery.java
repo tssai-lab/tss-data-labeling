@@ -19,79 +19,81 @@ class ProjectResultQuery {
     private static final Set<String> FILTER_KEYS = Set.of("specVersionId", "packageId", "roundId",
             "executionId", "sourceKind", "reviewStatus", "hasResult", "confidencePolicyId", "band");
     private static final List<String> CANDIDATE_FIELDS = List.of("resultId", "result", "sourceKind",
-            "sourceActor", "packageId", "assignmentId", "roundId", "executionId", "modelVersion", "confidence", "band");
+            "sourceActor",
+                    "submissionId", "packageId", "assignmentId", "roundId", "executionId", "modelVersion", "confidence", "band");
 
-    private static final String RESULT_SCOPE = """
-            WITH scope AS (
-                SELECT s.id, s.project_id, s.source_path, sr.source_kind, sr.submission_id, sr.execution_id,
-                       COALESCE(sr.status, 'UNREVIEWED') AS review_status, COALESCE(sr.revision, 0) AS review_revision,
-                       EXISTS (
-                           SELECT 1 FROM sample_work_claim wc JOIN publication_round pr ON pr.id=wc.round_id
-                           WHERE wc.project_id=s.project_id AND wc.sample_id=s.id AND pr.spec_version_id=:spec
-                             AND (CAST(:packageId AS uuid) IS NULL OR pr.package_id=:packageId)
-                             AND (CAST(:roundId AS uuid) IS NULL OR pr.id=:roundId)
-                             AND (CAST(:executionId AS uuid) IS NULL OR pr.id=(SELECT round_id FROM ai_execution WHERE id=:executionId))
-                       ) AS active_processing
-                FROM sample s
-                LEFT JOIN sample_review sr ON sr.project_id=s.project_id AND sr.sample_id=s.id AND sr.spec_version_id=:spec
-                WHERE s.project_id=:project
-                  AND (CAST(:packageId AS uuid) IS NULL OR EXISTS (
-                      SELECT 1 FROM package_item pi WHERE pi.package_id=:packageId AND pi.sample_id=s.id))
-                  AND (CAST(:roundId AS uuid) IS NULL OR EXISTS (
-                      SELECT 1 FROM round_item ri WHERE ri.round_id=:roundId AND ri.sample_id=s.id))
-                  AND (CAST(:executionId AS uuid) IS NULL OR EXISTS (
-                      SELECT 1 FROM ai_execution e JOIN round_item ri ON ri.round_id=e.round_id
-                      WHERE e.id=:executionId AND ri.sample_id=s.id))
-                  AND (CAST(:include AS text) IS NULL OR s.id=ANY(CAST(string_to_array(:include, ',') AS uuid[])))
-                  AND (CAST(:exclude AS text) IS NULL OR NOT (s.id=ANY(CAST(string_to_array(:exclude, ',') AS uuid[]))))
-            ), candidates AS (
-                SELECT x.id AS "sampleId", x.source_path AS "sourcePath", CAST(:spec AS uuid) AS "specVersionId",
-                       x.review_status AS "reviewStatus", x.review_revision AS "reviewRevision",
-                       x.active_processing AS "activeProcessing", selected.result_id AS "selectedResultId",
-                       COALESCE(candidate.candidate_count, 0) AS "candidateCount",
-                       candidate.result_id AS "resultId", candidate.result::text AS result,
-                       candidate.source_kind AS "sourceKind", candidate.source_actor AS "sourceActor",
-                       candidate.package_id AS "packageId", candidate.assignment_id AS "assignmentId",
-                       candidate.round_id AS "roundId", candidate.execution_id AS "executionId",
-                       candidate.model_version AS "modelVersion", candidate.confidence, candidate.band,
-                       failed.error_code AS "errorCode"
-                FROM scope x
-                LEFT JOIN LATERAL (
-                    SELECT c.result_id FROM project_result_candidate c
-                    WHERE c.project_id=x.project_id AND c.sample_id=x.id AND c.spec_version_id=:spec AND c.current_version
-                      AND ((x.source_kind='HUMAN' AND c.submission_id=x.submission_id)
-                        OR (x.source_kind='AI' AND c.execution_id=x.execution_id))
-                    ORDER BY c.result_id LIMIT 1
-                ) selected ON true
-                LEFT JOIN LATERAL (
-                    SELECT c.*, count(*) OVER () AS candidate_count, tier.band
-                    FROM project_result_candidate c
-                    LEFT JOIN confidence_policy cp ON cp.id=:policyId AND cp.execution_id=c.execution_id
-                    CROSS JOIN LATERAL (
-                        SELECT CASE WHEN cp.id IS NULL THEN NULL
-                            WHEN c.confidence IS NULL THEN 'UNKNOWN'
-                            WHEN c.confidence >= cp.upper_threshold THEN 'HIGH'
-                            WHEN c.confidence >= cp.lower_threshold THEN 'MEDIUM'
-                            ELSE 'LOW' END AS band
-                    ) tier
-                    WHERE c.project_id=x.project_id AND c.sample_id=x.id AND c.spec_version_id=:spec
-                      AND (CAST(:packageId AS uuid) IS NULL OR c.package_id=:packageId)
-                      AND (CAST(:roundId AS uuid) IS NULL OR c.round_id=:roundId)
-                      AND (CAST(:executionId AS uuid) IS NULL OR c.execution_id=:executionId)
-                      AND (CAST(:sourceKind AS text) IS NULL OR c.source_kind=:sourceKind)
-                      AND (CAST(:band AS text) IS NULL OR tier.band=:band)
-                    ORDER BY (c.result_id=selected.result_id) DESC NULLS LAST, c.result_id
-                    LIMIT 1
-                ) candidate ON true
-                LEFT JOIN ai_item_output failed ON failed.execution_id=:executionId
-                    AND failed.sample_id=x.id AND failed.status='FAILED'
-            ), filtered AS (
-                SELECT * FROM candidates
-                WHERE (CAST(:reviewStatus AS text) IS NULL OR "reviewStatus"=:reviewStatus)
-                  AND (CAST(:hasResult AS boolean) IS NULL OR ("candidateCount" > 0)=:hasResult)
-                  AND (CAST(:band AS text) IS NULL OR "candidateCount" > 0)
-            )
-            """;
+    private static final String RESULT_SCOPE =
+            """
+WITH scope AS (
+    SELECT s.id, s.project_id, s.source_path, sr.result_id, sr.source_kind, sr.submission_id, sr.execution_id,
+           COALESCE(sr.status, 'UNREVIEWED') AS review_status, COALESCE(sr.revision, 0) AS review_revision,
+           EXISTS (
+               SELECT 1 FROM sample_work_claim wc JOIN publication_round pr ON pr.id=wc.round_id
+               WHERE wc.project_id=s.project_id AND wc.sample_id=s.id AND pr.spec_version_id=:spec
+                 AND (CAST(:packageId AS uuid) IS NULL OR pr.package_id=:packageId)
+                 AND (CAST(:roundId AS uuid) IS NULL OR pr.id=:roundId)
+                 AND (CAST(:executionId AS uuid) IS NULL OR pr.id=(SELECT round_id FROM ai_execution WHERE id=:executionId))
+           ) AS active_processing
+    FROM sample s
+    LEFT JOIN sample_review sr ON sr.project_id=s.project_id AND sr.sample_id=s.id AND sr.spec_version_id=:spec
+    WHERE s.project_id=:project
+      AND (CAST(:packageId AS uuid) IS NULL OR EXISTS (
+          SELECT 1 FROM package_item pi WHERE pi.package_id=:packageId AND pi.sample_id=s.id))
+      AND (CAST(:roundId AS uuid) IS NULL OR EXISTS (
+          SELECT 1 FROM round_item ri WHERE ri.round_id=:roundId AND ri.sample_id=s.id))
+      AND (CAST(:executionId AS uuid) IS NULL OR EXISTS (
+          SELECT 1 FROM ai_execution e JOIN round_item ri ON ri.round_id=e.round_id
+          WHERE e.id=:executionId AND ri.sample_id=s.id))
+      AND (CAST(:include AS text) IS NULL OR s.id=ANY(CAST(string_to_array(:include, ',') AS uuid[])))
+      AND (CAST(:exclude AS text) IS NULL OR NOT (s.id=ANY(CAST(string_to_array(:exclude, ',') AS uuid[]))))
+), candidates AS (
+    SELECT x.id AS "sampleId", x.source_path AS "sourcePath", CAST(:spec AS uuid) AS "specVersionId",
+           x.review_status AS "reviewStatus", x.review_revision AS "reviewRevision",
+           x.active_processing AS "activeProcessing", selected.result_id AS "selectedResultId",
+           COALESCE(candidate.candidate_count, 0) AS "candidateCount",
+           candidate.result_id AS "resultId", candidate.result::text AS result,
+           candidate.source_kind AS "sourceKind", candidate.source_actor AS "sourceActor",
+           candidate.submission_id AS "submissionId", candidate.package_id AS "packageId", candidate.assignment_id AS "assignmentId",
+           candidate.round_id AS "roundId", candidate.execution_id AS "executionId",
+           candidate.model_version AS "modelVersion", candidate.confidence, candidate.band,
+           failed.error_code AS "errorCode"
+    FROM scope x
+    LEFT JOIN LATERAL (
+        SELECT c.result_id FROM project_result_candidate c
+        WHERE c.project_id=x.project_id AND c.sample_id=x.id AND c.spec_version_id=:spec AND c.current_version
+          AND ((x.result_id IS NOT NULL AND c.result_id=x.result_id) OR (x.result_id IS NULL AND ((x.source_kind='HUMAN' AND c.submission_id=x.submission_id)
+            OR (x.source_kind='AI' AND c.execution_id=x.execution_id))))
+        ORDER BY c.result_id LIMIT 1
+    ) selected ON true
+    LEFT JOIN LATERAL (
+        SELECT c.*, count(*) OVER () AS candidate_count, tier.band
+        FROM project_result_candidate c
+        LEFT JOIN confidence_policy cp ON cp.id=:policyId AND cp.execution_id=c.execution_id
+        CROSS JOIN LATERAL (
+            SELECT CASE WHEN cp.id IS NULL THEN NULL
+                WHEN c.confidence IS NULL THEN 'UNKNOWN'
+                WHEN c.confidence >= cp.upper_threshold THEN 'HIGH'
+                WHEN c.confidence >= cp.lower_threshold THEN 'MEDIUM'
+                ELSE 'LOW' END AS band
+        ) tier
+        WHERE c.project_id=x.project_id AND c.sample_id=x.id AND c.spec_version_id=:spec AND c.current_version
+          AND (CAST(:packageId AS uuid) IS NULL OR c.package_id=:packageId)
+          AND (CAST(:roundId AS uuid) IS NULL OR c.round_id=:roundId)
+          AND (CAST(:executionId AS uuid) IS NULL OR c.execution_id=:executionId)
+          AND (CAST(:sourceKind AS text) IS NULL OR c.source_kind=:sourceKind)
+          AND (CAST(:band AS text) IS NULL OR tier.band=:band)
+        ORDER BY (c.result_id=selected.result_id) DESC NULLS LAST, c.result_id
+        LIMIT 1
+    ) candidate ON true
+    LEFT JOIN ai_item_output failed ON failed.execution_id=:executionId
+        AND failed.sample_id=x.id AND failed.status='FAILED'
+), filtered AS (
+    SELECT * FROM candidates
+    WHERE (CAST(:reviewStatus AS text) IS NULL OR "reviewStatus"=:reviewStatus)
+      AND (CAST(:hasResult AS boolean) IS NULL OR ("candidateCount" > 0)=:hasResult)
+      AND (CAST(:band AS text) IS NULL OR "candidateCount" > 0)
+)
+""";
 
     private final NamedParameterJdbcTemplate db;
     private final ObjectMapper json;
@@ -116,14 +118,14 @@ class ProjectResultQuery {
         requireOwner(actor, project, false);
         Scope scope = scope(project, null, filter);
         return json.valueToTree(db.queryForMap(RESULT_SCOPE + """
-                SELECT count(*) AS total,
-                       count(*) FILTER (WHERE "candidateCount">0) AS "hasResultCount",
-                       count(*) FILTER (WHERE "candidateCount"=0) AS "noResultCount",
-                       count(*) FILTER (WHERE "reviewStatus"='NEEDS_REVISION') AS "needsRevisionCount",
-                       count(*) FILTER (WHERE "reviewStatus"='ACCEPTED') AS "acceptedCount",
-                       count(*) FILTER (WHERE "activeProcessing") AS "activeCount"
-                FROM filtered
-                """, arguments(scope, null, null)));
+SELECT count(*) AS total,
+       count(*) FILTER (WHERE "candidateCount">0) AS "hasResultCount",
+       count(*) FILTER (WHERE "candidateCount"=0) AS "noResultCount",
+       count(*) FILTER (WHERE "reviewStatus"='NEEDS_REVISION') AS "needsRevisionCount",
+       count(*) FILTER (WHERE "reviewStatus"='ACCEPTED') AS "acceptedCount",
+       count(*) FILTER (WHERE "activeProcessing") AS "activeCount"
+FROM filtered
+""", arguments(scope, null, null)));
     }
 
     @Transactional
@@ -137,32 +139,33 @@ class ProjectResultQuery {
         if (!filter.isEmpty()) throw invalid("历史仅支持按规范版本和游标筛选");
         if (spec != null) requireFound("SELECT id FROM spec_version WHERE id=:id AND project_id=:project", spec, project);
 
-        var rows = db.queryForList("""
-                SELECT c.sample_id AS "sampleId", c.spec_version_id AS "specVersionId", s.source_path AS "sourcePath",
-                       c.result_id AS "resultId", c.result::text AS result, c.source_kind AS "sourceKind",
-                       c.source_actor AS "sourceActor", c.submission_id AS "submissionId", c.package_id AS "packageId",
-                       c.assignment_id AS "assignmentId", c.round_id AS "roundId", c.execution_id AS "executionId",
-                       c.model_version AS "modelVersion", c.confidence,
-                       COALESCE(sr.status,'UNREVIEWED') AS "reviewStatus", COALESCE(sr.revision,0) AS "reviewRevision",
-                       selected.result_id AS "selectedResultId", true AS "hasResult", true AS reviewable,
-                       EXISTS (SELECT 1 FROM sample_work_claim wc JOIN publication_round pr ON pr.id=wc.round_id
-                           WHERE wc.project_id=c.project_id AND wc.sample_id=c.sample_id
-                             AND pr.spec_version_id=c.spec_version_id) AS "activeProcessing"
-                FROM project_result_candidate c JOIN sample s ON s.id=c.sample_id AND s.project_id=c.project_id
-                LEFT JOIN sample_review sr ON sr.project_id=c.project_id AND sr.sample_id=c.sample_id AND sr.spec_version_id=c.spec_version_id
-                LEFT JOIN LATERAL (
-                    SELECT d.result_id FROM project_result_candidate d
-                    WHERE d.project_id=c.project_id AND d.sample_id=c.sample_id
-                      AND d.spec_version_id=c.spec_version_id AND d.current_version
-                      AND ((sr.source_kind='HUMAN' AND d.submission_id=sr.submission_id)
-                        OR (sr.source_kind='AI' AND d.execution_id=sr.execution_id))
-                    ORDER BY d.result_id LIMIT 1
-                ) selected ON true
-                WHERE c.project_id=:project AND c.sample_id=:sample
-                  AND (CAST(:spec AS uuid) IS NULL OR c.spec_version_id=:spec)
-                  AND (CAST(:after AS uuid) IS NULL OR c.result_id>:after)
-                ORDER BY c.result_id LIMIT :limit
-                """, new MapSqlParameterSource("project", project).addValue("sample", sample)
+        var rows = db.queryForList(
+                        """
+SELECT c.sample_id AS "sampleId", c.spec_version_id AS "specVersionId", s.source_path AS "sourcePath",
+       c.result_id AS "resultId", c.result::text AS result, c.source_kind AS "sourceKind",
+       c.source_actor AS "sourceActor", c.submission_id AS "submissionId", c.package_id AS "packageId",
+       c.assignment_id AS "assignmentId", c.round_id AS "roundId", c.execution_id AS "executionId",
+       c.model_version AS "modelVersion", c.confidence,
+       COALESCE(sr.status,'UNREVIEWED') AS "reviewStatus", COALESCE(sr.revision,0) AS "reviewRevision",
+       selected.result_id AS "selectedResultId", true AS "hasResult", c.current_version AS reviewable,c.current_version AS "currentVersion",
+       EXISTS (SELECT 1 FROM sample_work_claim wc JOIN publication_round pr ON pr.id=wc.round_id
+           WHERE wc.project_id=c.project_id AND wc.sample_id=c.sample_id
+             AND pr.spec_version_id=c.spec_version_id) AS "activeProcessing"
+FROM project_result_candidate c JOIN sample s ON s.id=c.sample_id AND s.project_id=c.project_id
+LEFT JOIN sample_review sr ON sr.project_id=c.project_id AND sr.sample_id=c.sample_id AND sr.spec_version_id=c.spec_version_id
+LEFT JOIN LATERAL (
+    SELECT d.result_id FROM project_result_candidate d
+    WHERE d.project_id=c.project_id AND d.sample_id=c.sample_id
+      AND d.spec_version_id=c.spec_version_id AND d.current_version
+      AND ((sr.result_id IS NOT NULL AND d.result_id=sr.result_id) OR (sr.result_id IS NULL AND ((sr.source_kind='HUMAN' AND d.submission_id=sr.submission_id)
+        OR (sr.source_kind='AI' AND d.execution_id=sr.execution_id))))
+    ORDER BY d.result_id LIMIT 1
+) selected ON true
+WHERE c.project_id=:project AND c.sample_id=:sample
+  AND (CAST(:spec AS uuid) IS NULL OR c.spec_version_id=:spec)
+  AND (CAST(:after AS uuid) IS NULL OR c.result_id>:after)
+ORDER BY c.result_id LIMIT :limit
+""", new MapSqlParameterSource("project", project).addValue("sample", sample)
                 .addValue("spec", spec).addValue("after", cursor).addValue("limit", limit + 1));
         rows.forEach(row -> row.put("result", read((String) row.get("result"))));
         return json.valueToTree(page(rows, limit, "resultId"));
@@ -171,10 +174,10 @@ class ProjectResultQuery {
     List<Map<String, Object>> rows(Scope scope, UUID cursor, int limit, Collection<UUID> include,
             Collection<UUID> exclude) {
         var rows = db.queryForList(RESULT_SCOPE + """
-                SELECT * FROM filtered
-                WHERE CAST(:after AS uuid) IS NULL OR "sampleId">:after
-                ORDER BY "sampleId" LIMIT :limit
-                """, arguments(scope, include, exclude).addValue("after", cursor).addValue("limit", limit));
+                                  SELECT * FROM filtered
+                                  WHERE CAST(:after AS uuid) IS NULL OR "sampleId">:after
+                                  ORDER BY "sampleId" LIMIT :limit
+                                  """, arguments(scope, include, exclude).addValue("after", cursor).addValue("limit", limit));
         for (var row : rows) {
             long count = ((Number) row.get("candidateCount")).longValue();
             boolean unresolved = count > 1 && !Objects.equals(row.get("selectedResultId"), row.get("resultId"));
@@ -189,9 +192,10 @@ class ProjectResultQuery {
 
     Map<UUID, UUID> candidateSamples(Scope scope, Collection<UUID> ids) {
         if (ids.isEmpty()) return Map.of();
-        return db.query("""
+        return db.query(
+                """
                 SELECT result_id, sample_id FROM project_result_candidate
-                WHERE project_id=:project AND spec_version_id=:spec
+                WHERE project_id=:project AND spec_version_id=:spec AND current_version
                   AND result_id=ANY(CAST(string_to_array(:ids, ',') AS uuid[]))
                 """, new MapSqlParameterSource("project", scope.project()).addValue("spec", scope.spec())
                 .addValue("ids", joined(ids)), rs -> {
@@ -211,17 +215,22 @@ class ProjectResultQuery {
         UUID round = parseId(filter.get("roundId"));
         UUID execution = parseId(filter.get("executionId"));
         UUID policy = parseId(filter.get("confidencePolicyId"));
-        if (pkg != null) spec = matchSpec(spec, requireFound("""
-                SELECT p.spec_version_id FROM task_package t JOIN package_plan p ON p.id=t.plan_id
-                WHERE t.id=:id AND p.project_id=:project
-                """, pkg, project));
+        if (pkg != null) spec = matchSpec(spec, requireFound(
+                                    """
+SELECT p.spec_version_id FROM task_package t JOIN package_plan p ON p.id=t.plan_id
+WHERE t.id=:id AND p.project_id=:project
+""", pkg, project));
         if (round != null) spec = matchSpec(spec, requireFound(
-                "SELECT spec_version_id FROM publication_round WHERE id=:id AND project_id=:project", round, project));
+                                    "SELECT spec_version_id FROM publication_round WHERE id=:id AND"
+                                            + " project_id=:project", round, project));
         if (execution != null) spec = matchSpec(spec, requireFound(
-                "SELECT spec_version_id FROM ai_execution WHERE id=:id AND project_id=:project", execution, project));
+                                    "SELECT spec_version_id FROM ai_execution WHERE id=:id AND"
+                                        + " project_id=:project", execution, project));
         if (spec != null) requireFound("SELECT id FROM spec_version WHERE id=:id AND project_id=:project", spec, project);
         else {
-            spec = db.query("SELECT id FROM spec_version WHERE project_id=:project ORDER BY version_no DESC LIMIT 1",
+            spec = db.query(
+                            "SELECT id FROM spec_version WHERE project_id=:project ORDER BY"
+                                + " version_no DESC LIMIT 1",
                     new MapSqlParameterSource("project", project), rs -> rs.next() ? rs.getObject(1, UUID.class) : null);
         }
 
@@ -231,7 +240,8 @@ class ProjectResultQuery {
         if (band != null && policy == null) throw invalid("置信度分档需要指定策略");
         if (policy != null) {
             UUID policyExecution = requireFound(
-                    "SELECT execution_id FROM confidence_policy WHERE id=:id AND project_id=:project", policy, project);
+                            "SELECT execution_id FROM confidence_policy WHERE id=:id AND"
+                                + " project_id=:project", policy, project);
             if (!policyExecution.equals(execution)) throw invalid("置信度策略必须属于指定执行");
         }
         String hasResult = choice(filter.get("hasResult"), Set.of("true", "false"));
@@ -245,7 +255,9 @@ class ProjectResultQuery {
                     new MapSqlParameterSource("id", actor.actorId()), rs -> rs.next() ? rs.getString(1) : null);
             if (!"ENABLED".equals(actorStatus)) throw error(403, "LABELING_DISABLED", "标注账号已停用");
         }
-        requireFound("SELECT id FROM project WHERE id=:id AND owner_actor_id=:project" + (lock ? " FOR UPDATE" : ""),
+        requireFound(
+                "SELECT id FROM project WHERE deleted_at IS NULL AND id=:id AND"
+                    + " owner_actor_id=:project" + (lock ? " FOR UPDATE" : ""),
                 project, actor.actorId());
     }
 

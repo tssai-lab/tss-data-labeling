@@ -50,6 +50,15 @@ public class AiWorkerController {
                 .header("Cache-Control", "private, no-store").body(f.resource());
     }
 
+    @GetMapping("/executions/{executionId}/samples/{sampleId}/data")
+    public JsonNode data(
+            @RequestHeader(value = "X-Worker-Key", required = false) String workerKey,
+            @PathVariable UUID executionId,
+            @PathVariable UUID sampleId,
+            @RequestParam long generation) {
+        return ai.data(workerKey, executionId, sampleId, generation);
+    }
+
     @PutMapping("/executions/{executionId}/outputs/{sampleId}")
     public JsonNode output(@RequestHeader(value = "X-Worker-Key", required = false) String workerKey,
             @PathVariable UUID executionId, @PathVariable UUID sampleId, @RequestBody OutputRequest body) {

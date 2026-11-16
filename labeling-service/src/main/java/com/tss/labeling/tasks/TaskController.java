@@ -32,7 +32,10 @@ public class TaskController {
     public ApiResponse<JsonNode> create(@RequestHeader(value="Authorization",required=false) String auth,
             @PathVariable UUID projectId,@RequestHeader("Idempotency-Key") String key,
             @Valid @RequestBody PlanRequest body,HttpServletRequest request){
-        return response(tasks.createPlan(actor(auth),projectId,new TaskService.PlanInput(body.batchId(),body.specVersionId(),body.packageSize(),body.annotatorsPerSample(),body.samples(),body.instructions()),key),request);
+        return response(tasks.createPlan(actor(auth),projectId,new TaskService.PlanInput(body.batchId(),body.specVersionId(),body.packageSize(),body.annotatorsPerSample(),body.samples(),body.instructions(),
+                                body.selectionId(),
+                                body.referenceMode(),
+                                body.reopenAccepted()),key),request);
     }
     @PostMapping("/package-plans/{planId}/publish")
     public ApiResponse<JsonNode> publish(@RequestHeader(value="Authorization",required=false) String auth,
@@ -112,7 +115,10 @@ public class TaskController {
             @Valid @RequestBody CancelRoundRequest body,HttpServletRequest request){
         return response(tasks.cancelRound(actor(auth),roundId,body.baseRevision(),body.reason(),key),request);
     }
-    public record PlanRequest(UUID batchId, @NotNull UUID specVersionId, Integer packageSize, Integer annotatorsPerSample, @Size(max=10000) List<TaskService.SelectionSample> samples, @Size(max=500) String instructions) {}
+    public record PlanRequest(UUID batchId, @NotNull UUID specVersionId, Integer packageSize, Integer annotatorsPerSample, @Size(max=10000) List<TaskService.SelectionSample> samples, @Size(max=500) String instructions,
+            UUID selectionId,
+            String referenceMode,
+            Boolean reopenAccepted) {}
     public record PublishRequest(@NotNull @Pattern(regexp="[0-9a-f]{64}") String selectionHash) {}
     public record ReRoundRequest(@Size(max=500) String instructions) {}
     public record CancelRoundRequest(@NotNull @Min(1) Long baseRevision, @Size(max=1000) String reason) {}

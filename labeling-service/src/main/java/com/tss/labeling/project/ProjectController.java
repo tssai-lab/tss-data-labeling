@@ -13,7 +13,6 @@ import jakarta.validation.constraints.Size;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -110,7 +109,9 @@ public class ProjectController {
     public record CreateProjectRequest(
             @NotBlank @Size(max = 120) String name,
             @Size(max = 4000) String description,
-            @NotBlank @Size(max = 80) String taskType
+            @NotBlank @Size(max = 80) String taskType,
+            String templateId,
+            String templateVersion
     ) {
     }
 
@@ -119,7 +120,9 @@ public class ProjectController {
             JsonNode labels,
             @Size(max = 10000) String instructions,
             JsonNode editorConfig,
-            @NotBlank @Size(max = 80) String schemaVersion
+            @NotBlank @Size(max = 80) String schemaVersion,
+            String templateId,
+            String templateVersion
     ) {
     }
 }

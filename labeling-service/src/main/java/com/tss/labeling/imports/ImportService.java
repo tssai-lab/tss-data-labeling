@@ -5,21 +5,21 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tss.labeling.common.BusinessException;
 import com.tss.labeling.identity.ActorService.ActorContext;
+import org.springframework.core.io.FileSystemResource;
+import org.springframework.core.io.Resource;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.io.IOException;
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.LinkOption;
+import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.util.*;
-import java.io.InputStream;
-import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.LinkOption;
-import org.springframework.core.io.Resource;
-import org.springframework.core.io.FileSystemResource;
 
 @Service
 public class ImportService {
@@ -28,13 +28,16 @@ public class ImportService {
     private final ImportSettings settings;
     private final ImportStorage storage;
     private final ArchiveParser parser;
+    private final EnergyArchiveParser energy;
 
-    public ImportService(JdbcTemplate db, ObjectMapper json, ImportSettings settings, ImportStorage storage, ArchiveParser parser) {
+    public ImportService(JdbcTemplate db, ObjectMapper json, ImportSettings settings, ImportStorage storage, ArchiveParser parser,
+            EnergyArchiveParser energy) {
         this.db = db;
         this.json = json;
         this.settings = settings;
         this.storage = storage;
         this.parser = parser;
+        this.energy = energy;
     }
 
     @Transactional
@@ -47,17 +50,18 @@ public class ImportService {
         if (cached != null) return cached;
         writable(state);
         String task = db.queryForObject("SELECT task_type FROM project WHERE id = ?", String.class, project);
-        if (!"IMAGE_CLASSIFICATION".equals(task)) throw failure(422, "UNSUPPORTED_FORMAT", "当前仅支持图片分类项目");
+        if (!Set.of("IMAGE_CLASSIFICATION", "TIMESERIES_ANNOTATION").contains(task)) throw failure(422, "UNSUPPORTED_FORMAT", "当前仅支持图片分类项目");
         if (!body.filename().toLowerCase(Locale.ROOT).endsWith(".zip")
                 || body.filename().contains("/") || body.filename().contains("\\")) {
             throw failure(422, "UNSUPPORTED_FORMAT", "请上传 ZIP 图片压缩包");
         }
         if (body.sizeBytes() > settings.maxArchiveBytes()) throw failure(413, "UPLOAD_TOO_LARGE", "压缩包超过部署配置上限");
         UUID batch = UUID.randomUUID();
-        db.update("""
-                INSERT INTO import_batch(id, project_id, original_name, storage_key, size_bytes, chunk_size_bytes, sha256)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                """, batch, project, body.filename(), batch + "/archive.zip", body.sizeBytes(), settings.chunkSizeBytes(), body.sha256().toLowerCase(Locale.ROOT));
+        db.update(
+                """
+INSERT INTO import_batch(id, project_id, original_name, storage_key, size_bytes, chunk_size_bytes, sha256)
+VALUES (?, ?, ?, ?, ?, ?, ?)
+""", batch, project, body.filename(), batch + "/archive.zip", body.sizeBytes(), settings.chunkSizeBytes(), body.sha256().toLowerCase(Locale.ROOT));
         BatchView response = view(batch);
         remember(actor.actorId(), operation, key, hash, batch, response);
         return response;
@@ -85,7 +89,9 @@ public class ImportService {
         String actual = digest(bytes);
         if (!actual.equalsIgnoreCase(checksum)) throw failure(422, "CHECKSUM_MISMATCH", "分片摘要不一致");
         if (offset < current.receivedBytes()) {
-            Map<String, Object> previous = db.query("SELECT size_bytes, sha256 FROM import_chunk WHERE batch_id = ? AND byte_offset = ?",
+            Map<String, Object> previous = db.query(
+                            "SELECT size_bytes, sha256 FROM import_chunk WHERE batch_id = ? AND"
+                                + " byte_offset = ?",
                     result -> result.next() ? Map.of("size", result.getInt(1), "sha", result.getString(2)) : null, batch, offset);
             if (previous == null) throw failure(409, "OFFSET_MISMATCH", "分片 offset 不在已接收边界");
             if (!previous.get("size").equals(bytes.length) || !actual.equals(previous.get("sha"))) {
@@ -98,9 +104,13 @@ public class ImportService {
         if (expected <= 0 || bytes.length != expected) throw failure(422, "CHUNK_SIZE_MISMATCH", "分片长度不符合服务器要求");
         try { storage.append(batch, offset, bytes); }
         catch (IOException exception) { throw failure(503, "STORAGE_UNAVAILABLE", "上传存储不可用，请检查服务端文件并重试"); }
-        db.update("INSERT INTO import_chunk(batch_id, byte_offset, size_bytes, sha256) VALUES (?, ?, ?, ?)", batch, offset, bytes.length, actual);
+        db.update(
+                "INSERT INTO import_chunk(batch_id, byte_offset, size_bytes, sha256) VALUES (?, ?,"
+                    + " ?, ?)", batch, offset, bytes.length, actual);
         long received = offset + bytes.length;
-        db.update("UPDATE import_batch SET received_bytes = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", received, batch);
+        db.update(
+                "UPDATE import_batch SET received_bytes = ?, updated_at = CURRENT_TIMESTAMP WHERE"
+                    + " id = ?", received, batch);
         return received;
     }
 
@@ -125,11 +135,12 @@ public class ImportService {
         if (!retry && "FAILED".equals(current.status())) throw failure(409, "IMPORT_FAILED", "失败批次请使用 retry");
         if (retry || "UPLOADING".equals(current.status())) {
             verifyArchive(batch, current);
-            db.update("""
-                    UPDATE import_batch SET status = 'PROCESSING', original_complete = TRUE,
-                    valid_sample_count = 0, error_count = 0, errors = '[]'::jsonb, error_code = NULL,
-                    updated_at = CURRENT_TIMESTAMP WHERE id = ?
-                    """, batch);
+            db.update(
+                    """
+UPDATE import_batch SET status = 'PROCESSING', original_complete = TRUE,
+valid_sample_count = 0, error_count = 0, errors = '[]'::jsonb, error_code = NULL,
+updated_at = CURRENT_TIMESTAMP WHERE id = ?
+""", batch);
         }
         BatchView response = view(batch);
         remember(actor.actorId(), operation, key, hash, batch, response);
@@ -150,18 +161,75 @@ public class ImportService {
 
     @Transactional
     public void processBatch(UUID batch) {
-        String state = db.query("""
-                SELECT p.status FROM project p JOIN import_batch b ON b.project_id = p.id
-                WHERE b.id = ? FOR SHARE OF p
-                """, result -> result.next() ? result.getString(1) : null, batch);
+        String state = db.query(
+                        """
+                        SELECT p.status FROM project p JOIN import_batch b ON b.project_id = p.id
+                        WHERE b.id = ? AND p.deleted_at IS NULL FOR UPDATE OF p
+                        """, result -> result.next() ? result.getString(1) : null, batch);
         if (!"DRAFT".equals(state) && !"OPEN".equals(state)) return;
-        UUID locked = db.query("SELECT id FROM import_batch WHERE id = ? AND status = 'PROCESSING' FOR UPDATE SKIP LOCKED",
+        UUID locked = db.query(
+                        "SELECT id FROM import_batch WHERE id = ? AND status = 'PROCESSING' FOR"
+                            + " UPDATE SKIP LOCKED",
                 result -> result.next() ? result.getObject(1, UUID.class) : null, batch);
         if (locked == null) return;
         ArchiveParser.ParsedArchive parsed;
         try {
             verifyArchive(batch, view(batch));
-            parsed = parser.parse(batch);
+            UUID project = projectOf(batch);
+            boolean isEnergy =
+                    "TIMESERIES_ANNOTATION"
+                            .equals(
+                                    db.queryForObject(
+                                            "SELECT task_type FROM project WHERE id=?",
+                                            String.class,
+                                            project));
+            parsed = isEnergy ? energy.parse(batch, project) : parser.parse(batch);
+            if (isEnergy) {
+                for (var sample : parsed.samples()) {
+                    var source = (Map<?, ?>) sample.metadata().get("source");
+                    var payload = (Map<?, ?>) sample.metadata().get("payload");
+                    boolean duplicate =
+                            Boolean.TRUE.equals(
+                                    db.queryForObject(
+                                            "SELECT EXISTS(SELECT 1 FROM sample_input WHERE"
+                                                + " project_id=? AND dataset_version=? AND"
+                                                + " (source_task_id=? OR (station_key=? AND"
+                                                + " date_local=?::date)))",
+                                            Boolean.class,
+                                            project,
+                                            source.get("datasetVersion"),
+                                            source.get("sourceTaskId"),
+                                            payload.get("stationKey"),
+                                            payload.get("dateLocal")));
+                    if (duplicate)
+                        throw new EnergyArchiveParser.Invalid(
+                                "DUPLICATE_ENERGY_SAMPLE",
+                                ((Number) source.get("sourceRow")).longValue(),
+                                "task_id",
+                                "项目内同数据集版本的任务或站点日已存在");
+                }
+            }
+        } catch (EnergyArchiveParser.Invalid exception) {
+            db.update(
+                    "UPDATE import_batch SET"
+                        + " status='FAILED',valid_sample_count=0,error_count=1,error_code=?,errors=?::jsonb,updated_at=CURRENT_TIMESTAMP"
+                        + " WHERE id=?",
+                    exception.code,
+                    writeJson(
+                            List.of(
+                                    Map.of(
+                                            "sourcePath",
+                                            EnergyArchiveParser.SOURCE,
+                                            "sourceRow",
+                                            exception.row,
+                                            "field",
+                                            exception.field,
+                                            "code",
+                                            exception.code,
+                                            "message",
+                                            exception.getMessage()))),
+                    batch);
+            return;
         } catch (ArchiveParser.Rejected exception) {
             failed(batch, exception.code, exception.getMessage()); return;
         } catch (BusinessException exception) {
@@ -170,24 +238,63 @@ public class ImportService {
             failed(batch, "ARCHIVE_READ_FAILED", "压缩包损坏或存储读取失败"); return;
         }
         UUID project = projectOf(batch);
-        for (var sample : parsed.samples()) {
-            db.update("""
-                    INSERT INTO sample(id, project_id, batch_id, source_path, storage_key, content_sha256, media_type, metadata)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, CAST(? AS jsonb)) ON CONFLICT (batch_id, source_path) DO NOTHING
-                    """, sample.id(), project, batch, sample.sourcePath(), sample.storageKey(), sample.sha256(), sample.mediaType(), writeJson(sample.metadata()));
+        UUID asset = null;
+        if (!parsed.samples().isEmpty()
+                && "application/json".equals(parsed.samples().get(0).mediaType())) {
+            asset = UUID.randomUUID();
+            var source = (Map<?, ?>) parsed.samples().get(0).metadata().get("source");
+            db.update(
+                    "INSERT INTO"
+                        + " source_asset(id,project_id,batch_id,dataset_version,source_path,archive_sha256)"
+                        + " VALUES (?,?,?,?,?,?)",
+                    asset,
+                    project,
+                    batch,
+                    source.get("datasetVersion"),
+                    EnergyArchiveParser.SOURCE,
+                    db.queryForObject(
+                            "SELECT sha256 FROM import_batch WHERE id=?", String.class, batch));
         }
-        db.update("""
-                UPDATE import_batch SET status = ?, valid_sample_count = ?, error_count = ?, errors = CAST(? AS jsonb),
-                error_code = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?
-                """, parsed.samples().isEmpty() ? "FAILED" : "READY", parsed.samples().size(), parsed.errorCount(),
+        for (var sample : parsed.samples()) {
+            db.update(
+                    """
+INSERT INTO sample(id, project_id, batch_id, source_path, storage_key, content_sha256, media_type, metadata)
+VALUES (?, ?, ?, ?, ?, ?, ?, CAST(? AS jsonb)) ON CONFLICT (batch_id, source_path) DO NOTHING
+""", sample.id(), project, batch, sample.sourcePath(), sample.storageKey(), sample.sha256(), sample.mediaType(), writeJson(sample.metadata()));
+            if (asset != null) {
+                var source = (Map<?, ?>) sample.metadata().get("source");
+                var payload = (Map<?, ?>) sample.metadata().get("payload");
+                db.update(
+                        "INSERT INTO"
+                            + " sample_input(sample_id,project_id,asset_id,dataset_version,source_task_id,station_key,date_local,input_format,input_hash,source_row,input_payload)"
+                            + " VALUES (?,?,?,?,?,?,?::date,?,?,?,?::jsonb)",
+                        sample.id(),
+                        project,
+                        asset,
+                        source.get("datasetVersion"),
+                        source.get("sourceTaskId"),
+                        payload.get("stationKey"),
+                        payload.get("dateLocal"),
+                        sample.metadata().get("inputFormat"),
+                        sample.sha256(),
+                        source.get("sourceRow"),
+                        writeJson(sample.metadata()));
+            }
+        }
+        db.update(
+                """
+UPDATE import_batch SET status = ?, valid_sample_count = ?, error_count = ?, errors = CAST(? AS jsonb),
+error_code = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?
+""", parsed.samples().isEmpty() ? "FAILED" : "READY", parsed.samples().size(), parsed.errorCount(),
                 writeJson(parsed.errors()), parsed.samples().isEmpty() ? "NO_VALID_SAMPLES" : null, batch);
     }
 
     private void failed(UUID batch, String code, String message) {
-        db.update("""
-                UPDATE import_batch SET status = 'FAILED', valid_sample_count = 0, error_count = 1,
-                errors = CAST(? AS jsonb), error_code = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?
-                """, writeJson(List.of(Map.of("sourcePath", "", "code", code, "message", message))), code, batch);
+        db.update(
+                """
+UPDATE import_batch SET status = 'FAILED', valid_sample_count = 0, error_count = 1,
+errors = CAST(? AS jsonb), error_code = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?
+""", writeJson(List.of(Map.of("sourcePath", "", "code", code, "message", message))), code, batch);
     }
 
     @Transactional
@@ -207,12 +314,24 @@ public class ImportService {
         List<Object> args = new ArrayList<>(); args.add(batch);
         if (after != null) args.add(after);
         args.add(limit + 1);
-        var rows = db.query("SELECT id, project_id, batch_id, source_path, media_type, content_sha256, metadata FROM sample WHERE batch_id = ?"
+        var rows = db.query(
+                        "SELECT id, project_id, batch_id, source_path, media_type, content_sha256,"
+                            + " metadata FROM sample WHERE batch_id = ?"
                         + (after == null ? "" : " AND id > ?") + " ORDER BY id LIMIT ?",
                 (row, number) -> new SampleView(row.getObject("id").toString(), row.getObject("project_id").toString(),
                         row.getObject("batch_id").toString(), row.getString("source_path"), row.getString("media_type"),
                         row.getString("content_sha256"), readJson(row.getString("metadata")),
-                        "/api/labeling/v1/projects/" + row.getObject("project_id") + "/samples/" + row.getObject("id") + "/file"), args.toArray());
+                                        "application/json".equals(row.getString("media_type"))
+                                                ? null
+                                                :
+                        "/api/labeling/v1/projects/" + row.getObject("project_id") + "/samples/" + row.getObject("id") + "/file",
+                                        "application/json".equals(row.getString("media_type"))
+                                                ? "/api/labeling/v1/projects/"
+                                                        + row.getObject("project_id")
+                                                        + "/samples/"
+                                                        + row.getObject("id")
+                                                        + "/data"
+                                                : null), args.toArray());
         String next = null;
         if (rows.size() > limit) {
             rows.remove(rows.size() - 1);
@@ -226,11 +345,14 @@ public class ImportService {
         UUID project = id(projectValue), sample = id(sampleValue);
         String state = authorize(actor.actorId(), project);
         if ("PAUSED".equals(state)) throw failure(409, "PROJECT_PAUSED", "项目已暂停");
-        SampleFileRow row = db.query("""
-                SELECT s.batch_id, s.media_type, s.metadata FROM sample s JOIN import_batch b ON b.id = s.batch_id
-                WHERE s.id = ? AND s.project_id = ? AND b.status = 'READY'
-                """, result -> result.next() ? new SampleFileRow(result.getObject(1, UUID.class), result.getString(2), readJson(result.getString(3)).path("sizeBytes").asLong()) : null, sample, project);
+        SampleFileRow row = db.query(
+                        """
+SELECT s.batch_id, s.media_type, s.metadata FROM sample s JOIN import_batch b ON b.id = s.batch_id
+WHERE s.id = ? AND s.project_id = ? AND b.status = 'READY'
+""", result -> result.next() ? new SampleFileRow(result.getObject(1, UUID.class), result.getString(2), readJson(result.getString(3)).path("sizeBytes").asLong()) : null, sample, project);
         if (row == null) throw failure(404, "RESOURCE_NOT_FOUND", "请求的资源不存在");
+        if ("application/json".equals(row.mediaType()))
+            throw failure(422, "STRUCTURED_INPUT_REQUIRED", "请使用按样本授权的 data 接口");
         try {
             Path path = storage.sample(row.batch(), sample);
             if (Files.size(path) != row.size()) throw new IOException("文件长度不一致");
@@ -239,7 +361,8 @@ public class ImportService {
     }
 
     public record SampleView(String sampleId, String projectId, String batchId, String sourcePath, String mediaType,
-                             String contentSha256, JsonNode metadata, String fileUrl) { }
+                             String contentSha256, JsonNode metadata, String fileUrl,
+            String dataUrl) { }
     public record SamplePage(List<SampleView> items, String nextCursor) { }
     public record SampleFile(Resource resource, String mediaType, long sizeBytes) { }
     private record SampleFileRow(UUID batch, String mediaType, long size) { }
@@ -255,7 +378,9 @@ public class ImportService {
         String enabled = db.query("SELECT status FROM actor WHERE id = ? FOR SHARE",
                 result -> result.next() ? result.getString(1) : null, actor);
         if (!"ENABLED".equals(enabled)) throw failure(403, "LABELING_DISABLED", "当前账号无法使用标注平台");
-        String state = db.query("SELECT status FROM project WHERE id = ? AND owner_actor_id = ? FOR SHARE",
+        String state = db.query(
+                        "SELECT status FROM project WHERE deleted_at IS NULL AND id = ? AND"
+                            + " owner_actor_id = ? FOR SHARE",
                 result -> result.next() ? result.getString(1) : null, project, actor);
         if (state == null) throw failure(404, "RESOURCE_NOT_FOUND", "请求的资源不存在");
         return state;
@@ -276,9 +401,12 @@ public class ImportService {
 
     private BatchView replay(UUID actor, String operation, String key, String hash) {
         if (key == null || key.isBlank() || key.length() > 200) throw failure(400, "INVALID_REQUEST", "需要有效的 Idempotency-Key");
-        // Project share locks allow concurrent POSTs; serialize the same operation/key transactionally.
+        // Project share locks allow concurrent POSTs; serialize the same operation/key
+        // transactionally.
         db.queryForObject("SELECT pg_advisory_xact_lock(hashtextextended(?, 0))", Object.class, actor + ":" + operation + ":" + key);
-        return db.query("SELECT request_hash, response_body FROM idempotency_record WHERE actor_id = ? AND operation = ? AND idempotency_key = ?",
+        return db.query(
+                "SELECT request_hash, response_body FROM idempotency_record WHERE actor_id = ? AND"
+                        + " operation = ? AND idempotency_key = ?",
                 result -> {
                     if (!result.next()) return null;
                     if (!hash.equals(result.getString(1))) throw failure(409, "IDEMPOTENCY_CONFLICT", "同一幂等键对应了不同请求");
@@ -288,10 +416,11 @@ public class ImportService {
     }
 
     private void remember(UUID actor, String operation, String key, String hash, UUID batch, BatchView response) {
-        db.update("""
-                INSERT INTO idempotency_record(actor_id, operation, idempotency_key, request_hash, resource_id, response_body)
-                VALUES (?, ?, ?, ?, ?, CAST(? AS jsonb))
-                """, actor, operation, key, hash, batch, writeJson(response));
+        db.update(
+                """
+INSERT INTO idempotency_record(actor_id, operation, idempotency_key, request_hash, resource_id, response_body)
+VALUES (?, ?, ?, ?, ?, CAST(? AS jsonb))
+""", actor, operation, key, hash, batch, writeJson(response));
     }
 
     private String writeJson(Object value) {

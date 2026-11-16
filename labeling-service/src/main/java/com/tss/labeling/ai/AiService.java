@@ -29,16 +29,25 @@ public class AiService {
 
     private final JdbcTemplate db;
     private final ObjectMapper json;
+    private final com.tss.labeling.tasks.TaskResultValidator validator;
     private final ImportStorage storage;
     private final OutcomeService outcomes;
+    private final com.tss.labeling.review.ReferenceService references;
+    private final com.tss.labeling.review.ResultScopeService scopes;
     private final int maxSamples;
 
     public AiService(JdbcTemplate db, ObjectMapper json, ImportStorage storage, OutcomeService outcomes,
+            com.tss.labeling.tasks.TaskResultValidator validator,
+            com.tss.labeling.review.ResultScopeService scopes,
+            com.tss.labeling.review.ReferenceService references,
             @Value("${labeling.tasks.max-samples:10000}") int maxSamples) {
         this.db = db;
         this.json = json;
+        this.validator = validator;
         this.storage = storage;
         this.outcomes = outcomes;
+        this.scopes = scopes;
+        this.references = references;
         this.maxSamples = maxSamples;
     }
 
@@ -47,12 +56,13 @@ public class AiService {
     @Transactional
     public JsonNode agents(ActorContext actor, String taskType) {
         enabled(actor.actorId());
-        return json.valueToTree(db.queryForList("""
-                SELECT id AS "agentId", display_name AS "displayName", task_type AS "taskType",
-                  model_version AS "modelVersion", supports_reference AS "supportsReference",
-                  confidence_description AS "confidenceDescription", enabled
-                FROM ai_agent_config WHERE enabled=TRUE AND (? = '' OR task_type = ?) ORDER BY display_name
-                """, taskType, taskType));
+        return json.valueToTree(db.queryForList(
+                        """
+SELECT id AS "agentId", display_name AS "displayName", task_type AS "taskType",
+  model_version AS "modelVersion", supports_reference AS "supportsReference",
+  confidence_description AS "confidenceDescription", enabled
+FROM ai_agent_config WHERE enabled=TRUE AND (? = '' OR task_type = ?) ORDER BY display_name
+""", taskType, taskType));
     }
 
     @Transactional
@@ -66,14 +76,37 @@ public class AiService {
         String op = "POST:/admin/agents", hash = hash(write(input));
         JsonNode previous = replay(actor.actorId(), op, key, hash);
         if (previous != null) return previous;
+        if (input.workerKey() == null
+                || input.workerKey().isBlank()
+                || input.workerKey().length() > 1000
+                || input.displayName() == null
+                || input.displayName().isBlank()
+                || input.displayName().length() > 200
+                || input.modelVersion() == null
+                || input.modelVersion().isBlank()
+                || input.modelVersion().length() > 120)
+            throw error(422, "INVALID_AGENT_CONFIG", "Agent 名称、版本和工作端凭据无效");
+        db.queryForObject(
+                "SELECT pg_advisory_xact_lock(hashtextextended(?,0))",
+                Object.class,
+                "worker-key:" + hash(input.workerKey()));
+        if (Boolean.TRUE.equals(
+                db.queryForObject(
+                        "SELECT EXISTS(SELECT 1 FROM ai_agent_config WHERE worker_key_hash=?)",
+                        Boolean.class,
+                        hash(input.workerKey()))))
+            throw error(409, "WORKER_KEY_CONFLICT", "工作端凭据已注册");
         UUID actorId = UUID.randomUUID();
-        db.update("INSERT INTO actor(id, kind, identity_user_id, display_name) VALUES (?, 'MODEL', NULL, ?)", actorId, input.displayName());
+        db.update(
+                "INSERT INTO actor(id, kind, identity_user_id, display_name) VALUES (?, 'MODEL',"
+                    + " NULL, ?)", actorId, input.displayName());
         UUID agentId = UUID.randomUUID();
-        db.update("""
-                INSERT INTO ai_agent_config(id, actor_id, task_type, display_name, model_version, capabilities,
-                  supported_labels, supports_reference, confidence_description, worker_key_hash)
-                VALUES (?,?,?,?,?,?::jsonb,?::jsonb,?,?,?)
-                """, agentId, actorId, input.taskType(), input.displayName(), input.modelVersion(),
+        db.update(
+                """
+INSERT INTO ai_agent_config(id, actor_id, task_type, display_name, model_version, capabilities,
+  supported_labels, supports_reference, confidence_description, worker_key_hash)
+VALUES (?,?,?,?,?,?::jsonb,?::jsonb,?,?,?)
+""", agentId, actorId, input.taskType(), input.displayName(), input.modelVersion(),
                 write(capabilities), write(supportedLabels), input.supportsReference(),
                 input.confidenceDescription(), hash(input.workerKey()));
         JsonNode response = json.valueToTree(Map.of("agentId", agentId, "actorId", actorId));
@@ -84,7 +117,9 @@ public class AiService {
     @Transactional
     public JsonNode confidencePolicy(ActorContext actor, UUID roundId, ConfidenceInput input, String key) {
         enabled(actor.actorId());
-        Map<String,Object> r = one("SELECT r.*, p.owner_actor_id FROM publication_round r JOIN project p ON p.id=r.project_id WHERE r.id=? FOR UPDATE", roundId);
+        Map<String,Object> r = one(
+                        "SELECT r.*, p.owner_actor_id FROM publication_round r JOIN project p ON"
+                                + " p.id=r.project_id WHERE r.id=? FOR UPDATE", roundId);
         if (!actor.actorId().equals(r.get("owner_actor_id"))) throw error(404,"RESOURCE_NOT_FOUND","轮次不存在");
         if (!"AI_AGENT".equals(r.get("mode"))) throw error(422,"INVALID_EXECUTION_MODE","仅 AI 轮次可设置置信度分档");
         Map<String,Object> e = one("SELECT * FROM ai_execution WHERE round_id=?", roundId);
@@ -98,10 +133,11 @@ public class AiService {
         JsonNode previous = replay(actor.actorId(), op, key, hash);
         if (previous != null) return previous;
         UUID id = UUID.randomUUID();
-        db.update("""
-                INSERT INTO confidence_policy(id,project_id,round_id,execution_id,snapshot_id,model_version,lower_threshold,upper_threshold,created_by)
-                VALUES (?,?,?,?,?,?,?,?,?)
-                """, id, r.get("project_id"), roundId, e.get("id"), snap.get("id"), e.get("model_version"),
+        db.update(
+                """
+INSERT INTO confidence_policy(id,project_id,round_id,execution_id,snapshot_id,model_version,lower_threshold,upper_threshold,created_by)
+VALUES (?,?,?,?,?,?,?,?,?)
+""", id, r.get("project_id"), roundId, e.get("id"), snap.get("id"), e.get("model_version"),
                 input.lowerThreshold(), input.upperThreshold(), actor.actorId());
         JsonNode response = json.valueToTree(Map.of("policyId", id, "roundId", roundId, "executionId", e.get("id"),
                 "snapshotId", snap.get("id"), "modelVersion", e.get("model_version"),
@@ -113,13 +149,16 @@ public class AiService {
     @Transactional
     public JsonNode confidencePolicies(ActorContext actor, UUID roundId) {
         enabled(actor.actorId());
-        Map<String,Object> r = one("SELECT r.*, p.owner_actor_id FROM publication_round r JOIN project p ON p.id=r.project_id WHERE r.id=?", roundId);
+        Map<String,Object> r = one(
+                        "SELECT r.*, p.owner_actor_id FROM publication_round r JOIN project p ON"
+                                + " p.id=r.project_id WHERE r.id=?", roundId);
         if (!actor.actorId().equals(r.get("owner_actor_id"))) throw error(404,"RESOURCE_NOT_FOUND","轮次不存在");
-        return json.valueToTree(db.queryForList("""
-                SELECT id AS "policyId", execution_id AS "executionId", snapshot_id AS "snapshotId", model_version AS "modelVersion",
-                  lower_threshold AS "lowerThreshold", upper_threshold AS "upperThreshold", revision, created_at::text AS "createdAt"
-                FROM confidence_policy WHERE round_id=? ORDER BY created_at DESC
-                """, roundId));
+        return json.valueToTree(db.queryForList(
+                        """
+SELECT id AS "policyId", execution_id AS "executionId", snapshot_id AS "snapshotId", model_version AS "modelVersion",
+  lower_threshold AS "lowerThreshold", upper_threshold AS "upperThreshold", revision, created_at::text AS "createdAt"
+FROM confidence_policy WHERE round_id=? ORDER BY created_at DESC
+""", roundId));
     }
 
     @Transactional
@@ -135,31 +174,78 @@ public class AiService {
         if (!Objects.equals(spec.get("task_type"), p.get("task_type"))) throw error(409,"SPEC_MISMATCH","规范任务类型不匹配");
         Map<String,Object> agent = one("SELECT * FROM ai_agent_config WHERE id=? AND enabled=TRUE", input.agentId());
         if (!spec.get("task_type").equals(agent.get("task_type"))) throw error(422,"AGENT_INCOMPATIBLE","Agent 不支持该项目任务类型");
-        List<Map<String,Object>> samples = selectionSamples(project, input.samples());
+        if ((input.samples() == null) == (input.selectionId() == null))
+            throw error(422, "INVALID_REQUEST", "samples 与 selectionId 必须二选一");
+        if (input.referenceMode() != null
+                && !Set.of("NONE", "SELECTED").contains(input.referenceMode()))
+            throw error(422, "INVALID_REFERENCE_MODE", "referenceMode 仅支持 NONE 或 SELECTED");
+        if ("SELECTED".equals(input.referenceMode()) && input.selectionId() == null)
+            throw error(422, "INVALID_REFERENCE_MODE", "SELECTED 参考模式需要 selectionId");
+        List<SelectionSample> selected = input.samples();
+        if (input.selectionId() != null) {
+            var scope = scopes.selection(actor, project, input.selectionId(), "PUBLISH", null);
+            if (!scope.specVersionId().equals(input.specVersionId()))
+                throw error(409, "SPEC_MISMATCH", "范围规范不一致");
+            scopes.validate(project, input.specVersionId(), scope.items(), false, true);
+            selected =
+                    scope.items().stream()
+                            .map(
+                                    i ->
+                                            new SelectionSample(
+                                                    i.sampleId(),
+                                                    null,
+                                                    "SELECTED".equals(input.referenceMode())
+                                                            ? i.resultId()
+                                                            : null))
+                            .toList();
+        }
+        List<Map<String,Object>> samples = selectionSamples(project, input.specVersionId(), selected);
+        if (!Boolean.TRUE.equals(agent.get("supports_reference"))
+                && samples.stream()
+                        .anyMatch(
+                                x ->
+                                        x.get("referenceResultId") != null
+                                                || x.get("referenceCandidateId") != null))
+            throw error(422, "REFERENCE_UNSUPPORTED", "Agent 不支持参考答案");
         List<UUID> sampleIds = new ArrayList<>();
         for (var s : samples) sampleIds.add((UUID) s.get("id"));
+        scopes.checkReopen(project, input.specVersionId(), sampleIds, input.reopenAccepted());
         checkClaimConflict(project, sampleIds);
-        int roundNo = db.queryForObject("SELECT COALESCE(MAX(round_no),0)+1 FROM publication_round WHERE project_id=?", Integer.class, project);
+        int roundNo = db.queryForObject(
+                        "SELECT COALESCE(MAX(round_no),0)+1 FROM publication_round WHERE"
+                            + " project_id=?", Integer.class, project);
         UUID roundId = UUID.randomUUID();
-        db.update("""
-                INSERT INTO publication_round(id,project_id,spec_version_id,package_id,round_no,mode,instructions,status)
-                VALUES (?,?,?,NULL,?,'AI_AGENT',?,'OPEN')
-                """, roundId, project, input.specVersionId(), roundNo, input.instructions());
+        db.update(
+                """
+INSERT INTO publication_round(id,project_id,spec_version_id,package_id,round_no,mode,instructions,status)
+VALUES (?,?,?,NULL,?,'AI_AGENT',?,'OPEN')
+""", roundId, project, input.specVersionId(), roundNo, input.instructions());
         int ordinal = 1;
         for (var s : samples) {
             UUID sampleId = (UUID) s.get("id");
-            db.update("INSERT INTO round_item(round_id,project_id,spec_version_id,sample_id,ordinal,reference_result_id) VALUES (?,?,?,?,?,?)",
-                    roundId, project, input.specVersionId(), sampleId, ordinal++, s.get("referenceResultId"));
+            db.update(
+                    "INSERT INTO"
+                        + " round_item(round_id,project_id,spec_version_id,sample_id,ordinal,reference_result_id,reference_candidate_id)"
+                        + " VALUES (?,?,?,?,?,?,?)",
+                    roundId, project, input.specVersionId(), sampleId, ordinal++, s.get("referenceResultId"),
+                    s.get("referenceCandidateId"));
             db.update("INSERT INTO sample_work_claim(project_id,sample_id,round_id) VALUES (?,?,?)", project, sampleId, roundId);
         }
         UUID executionId = UUID.randomUUID();
-        db.update("""
-                INSERT INTO ai_execution(id,round_id,project_id,spec_version_id,agent_actor_id,model_version,status,pending_count)
-                VALUES (?,?,?,?,?,?,'QUEUED',?)
-                """, executionId, roundId, project, input.specVersionId(), agent.get("actor_id"), agent.get("model_version"), samples.size());
+        db.update(
+                """
+INSERT INTO ai_execution(id,round_id,project_id,spec_version_id,agent_actor_id,model_version,status,pending_count)
+VALUES (?,?,?,?,?,?,'QUEUED',?)
+""", executionId, roundId, project, input.specVersionId(), agent.get("actor_id"), agent.get("model_version"), samples.size());
         for (var s : samples)
-            db.update("INSERT INTO ai_item_output(execution_id,round_id,sample_id,status) VALUES (?,?,?,'PENDING')", executionId, roundId, s.get("id"));
+            db.update(
+                    "INSERT INTO ai_item_output(execution_id,round_id,sample_id,status) VALUES"
+                            + " (?,?,?,'PENDING')", executionId, roundId, s.get("id"));
         outcomes.resetAcceptedForRepublish(project, input.specVersionId(), sampleIds, actor.actorId());
+        db.update(
+                "UPDATE project SET status='OPEN',revision=revision+1,updated_at=CURRENT_TIMESTAMP"
+                    + " WHERE id=?",
+                project);
         JsonNode response = execView(executionId);
         remember(actor.actorId(), op, key, hash, executionId, response);
         return response;
@@ -180,17 +266,18 @@ public class AiService {
         boolean terminal = TERMINAL.contains(execution.get("status"));
         UUID snapshotId = terminal ? (UUID) db.queryForObject(
                 "SELECT id FROM ai_result_snapshot WHERE execution_id=?", UUID.class, id) : null;
-        var rows = db.queryForList("""
-                SELECT o.sample_id AS "sampleId",
-                  CASE WHEN ? THEN si.outcome ELSE o.status END AS status,
-                  CASE WHEN ? THEN si.result::text ELSE o.result::text END AS result,
-                  CASE WHEN ? THEN si.confidence ELSE o.confidence END AS confidence,
-                  CASE WHEN ? THEN si.error_code ELSE o.error_code END AS "errorCode",
-                  o.attempt_count AS "attemptCount", si.result_id AS "resultId"
-                FROM ai_item_output o
-                LEFT JOIN ai_result_snapshot_item si ON si.snapshot_id=? AND si.execution_id=o.execution_id AND si.sample_id=o.sample_id
-                WHERE o.execution_id=? AND o.sample_id>? ORDER BY o.sample_id LIMIT ?
-                """, terminal, terminal, terminal, terminal, snapshotId, id, after, limit + 1);
+        var rows = db.queryForList(
+                        """
+SELECT o.sample_id AS "sampleId",
+  CASE WHEN ? THEN si.outcome ELSE o.status END AS status,
+  CASE WHEN ? THEN si.result::text ELSE o.result::text END AS result,
+  CASE WHEN ? THEN si.confidence ELSE o.confidence END AS confidence,
+  CASE WHEN ? THEN si.error_code ELSE o.error_code END AS "errorCode",
+  o.attempt_count AS "attemptCount", si.result_id AS "resultId"
+FROM ai_item_output o
+LEFT JOIN ai_result_snapshot_item si ON si.snapshot_id=? AND si.execution_id=o.execution_id AND si.sample_id=o.sample_id
+WHERE o.execution_id=? AND o.sample_id>? ORDER BY o.sample_id LIMIT ?
+""", terminal, terminal, terminal, terminal, snapshotId, id, after, limit + 1);
         boolean more = rows.size() > limit;
         var items = more ? rows.subList(0, limit) : rows;
         for (var item : items) {
@@ -215,7 +302,9 @@ public class AiService {
     @Transactional
     public JsonNode cancel(ActorContext actor, UUID id, long baseRevision, String reason, String key) {
         enabled(actor.actorId());
-        Map<String,Object> e = one("SELECT e.*, p.owner_actor_id FROM ai_execution e JOIN project p ON p.id=e.project_id WHERE e.id=? FOR UPDATE", id);
+        Map<String,Object> e = one(
+                        "SELECT e.*, p.owner_actor_id FROM ai_execution e JOIN project p ON"
+                            + " p.id=e.project_id WHERE e.id=? FOR UPDATE", id);
         owner(actor, e);
         String op = "POST:/ai-executions/" + id + "/cancel", hash = hash(baseRevision + ":" + reason);
         JsonNode previous = replay(actor.actorId(), op, key, hash);
@@ -224,7 +313,9 @@ public class AiService {
             throw error(409,"REVISION_CONFLICT","执行状态已变化，请重新读取");
         if (TERMINAL.contains(e.get("status"))) throw error(409,"EXECUTION_CLOSED","执行已结束");
         db.update("UPDATE ai_execution SET generation=generation+1 WHERE id=?", id);
-        db.update("UPDATE ai_item_output SET status='CANCELLED' WHERE execution_id=? AND status='PENDING'", id);
+        db.update(
+                "UPDATE ai_item_output SET status='CANCELLED' WHERE execution_id=? AND"
+                    + " status='PENDING'", id);
         db.update("UPDATE publication_round SET status='CANCELLED', revision=revision+1 WHERE id=?", e.get("round_id"));
         db.update("DELETE FROM sample_work_claim WHERE round_id=?", e.get("round_id"));
         finalizeSnapshot(id, "CANCELLED");
@@ -238,18 +329,20 @@ public class AiService {
     @Transactional
     public JsonNode claim(String workerKey) {
         Map<String,Object> agent = agent(workerKey);
-        List<Map<String,Object>> rows = db.queryForList("""
-                SELECT id FROM ai_execution
-                WHERE agent_actor_id=? AND (status='QUEUED' OR (status='RUNNING' AND lease_until < CURRENT_TIMESTAMP))
-                ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED
-                """, agent.get("actor_id"));
+        List<Map<String,Object>> rows = db.queryForList(
+                        """
+SELECT id FROM ai_execution
+WHERE agent_actor_id=? AND (status='QUEUED' OR (status='RUNNING' AND lease_until < CURRENT_TIMESTAMP))
+ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED
+""", agent.get("actor_id"));
         if (rows.isEmpty()) return null;
         UUID id = (UUID) rows.get(0).get("id");
-        db.update("""
-                UPDATE ai_execution SET status='RUNNING', generation=generation+1, revision=revision+1, lease_owner=?,
-                  lease_until=CURRENT_TIMESTAMP + interval '120 seconds', started_at=COALESCE(started_at,CURRENT_TIMESTAMP)
-                WHERE id=?
-                """, agent.get("actor_id"), id);
+        db.update(
+                """
+UPDATE ai_execution SET status='RUNNING', generation=generation+1, revision=revision+1, lease_owner=?,
+  lease_until=CURRENT_TIMESTAMP + interval '120 seconds', started_at=COALESCE(started_at,CURRENT_TIMESTAMP)
+WHERE id=?
+""", agent.get("actor_id"), id);
         return claimView(id);
     }
 
@@ -258,7 +351,9 @@ public class AiService {
         Map<String,Object> agent = agent(workerKey);
         Map<String,Object> e = one("SELECT * FROM ai_execution WHERE id=? FOR UPDATE", id);
         checkLease(agent, e, generation);
-        db.update("UPDATE ai_execution SET lease_until=CURRENT_TIMESTAMP + interval '120 seconds' WHERE id=?", id);
+        db.update(
+                "UPDATE ai_execution SET lease_until=CURRENT_TIMESTAMP + interval '120 seconds'"
+                    + " WHERE id=?", id);
         Map<String,Object> updated = one("SELECT lease_until::text AS \"leaseUntil\" FROM ai_execution WHERE id=?", id);
         return json.valueToTree(Map.of("executionId", id, "generation", generation, "leaseUntil", updated.get("leaseUntil")));
     }
@@ -270,22 +365,50 @@ public class AiService {
         checkLease(agent, e, generation);
         if (limit < 1 || limit > 100) throw error(400,"INVALID_REQUEST","分页大小应为1至100");
         UUID after = cursor(cursor);
-        var rows = db.queryForList("""
-                SELECT ri.sample_id AS "sampleId", s.source_path AS "sourcePath", s.media_type AS "mediaType",
-                  o.status AS "outputStatus", ri.reference_result_id AS "referenceResultId"
-                FROM round_item ri JOIN sample s ON s.id=ri.sample_id
-                LEFT JOIN ai_item_output o ON o.execution_id=? AND o.sample_id=ri.sample_id
-                WHERE ri.round_id=? AND ri.sample_id>? ORDER BY ri.sample_id LIMIT ?
-                """, id, e.get("round_id"), after, limit + 1);
+        var rows = db.queryForList(
+                        """
+SELECT ri.sample_id AS "sampleId", s.source_path AS "sourcePath", s.media_type AS "mediaType",
+  o.status AS "outputStatus", ri.reference_candidate_id AS "referenceCandidateId",ri.reference_result_id AS "referenceResultId"
+FROM round_item ri JOIN sample s ON s.id=ri.sample_id
+LEFT JOIN ai_item_output o ON o.execution_id=? AND o.sample_id=ri.sample_id
+WHERE ri.round_id=? AND ri.sample_id>? ORDER BY ri.sample_id LIMIT ?
+""", id, e.get("round_id"), after, limit + 1);
         boolean more = rows.size() > limit;
         var items = more ? rows.subList(0, limit) : rows;
         for (var row : items) {
-            row.put("fileUrl", "/internal/labeling/v1/executions/" + id + "/samples/" + row.get("sampleId") + "/file");
+            boolean structured = "application/json".equals(row.get("mediaType"));
+            row.put("fileUrl",
+                    structured
+                            ? null
+                            : "/internal/labeling/v1/executions/" + id + "/samples/" + row.get("sampleId") + "/file");
+            row.put(
+                    "dataUrl",
+                    structured
+                            ? "/internal/labeling/v1/executions/"
+                                    + id
+                                    + "/samples/"
+                                    + row.get("sampleId")
+                                    + "/data"
+                            : null);
+            row.put("inputFormat", structured ? "energy-station-day-input-v1" : "image");
+            Object candidate = row.remove("referenceCandidateId");
+            if (candidate != null) {
+                row.put(
+                        "referenceResult",
+                        references.candidate(
+                                (UUID) e.get("project_id"),
+                                (UUID) e.get("spec_version_id"),
+                                (UUID) row.get("sampleId"),
+                                (UUID) candidate));
+                row.remove("referenceResultId");
+                continue;
+            }
             Object ref = row.remove("referenceResultId");
             if (ref != null) {
-                row.put("referenceResult", db.query("""
-                        SELECT result_format, result::text AS result FROM submission_item WHERE submission_id=? AND sample_id=?
-                        """, rs -> rs.next()
+                row.put("referenceResult", db.query(
+                                """
+SELECT result_format, result::text AS result FROM submission_item WHERE submission_id=? AND sample_id=?
+""", rs -> rs.next()
                             ? Map.of("resultFormat", rs.getString(1), "result", read(rs.getString(2)), "sourceKind", "HUMAN")
                             : null, (UUID) ref, (UUID) row.get("sampleId")));
             } else {
@@ -303,10 +426,13 @@ public class AiService {
         Map<String,Object> agent = agent(workerKey);
         Map<String,Object> e = one("SELECT * FROM ai_execution WHERE id=? FOR SHARE", id);
         checkLease(agent, e, generation);
-        Map<String,Object> row = one("""
-                SELECT s.batch_id, s.media_type, s.metadata->>'sizeBytes' AS size FROM sample s
-                JOIN round_item ri ON ri.sample_id=s.id WHERE ri.round_id=? AND s.id=?
-                """, e.get("round_id"), sampleId);
+        Map<String,Object> row = one(
+                        """
+SELECT s.batch_id, s.media_type, s.metadata->>'sizeBytes' AS size FROM sample s
+JOIN round_item ri ON ri.sample_id=s.id WHERE ri.round_id=? AND s.id=?
+""", e.get("round_id"), sampleId);
+        if ("application/json".equals(row.get("media_type")))
+            throw error(422, "STRUCTURED_INPUT_REQUIRED", "请使用按样本授权的 data 接口");
         try {
             var path = storage.sample((UUID) row.get("batch_id"), sampleId);
             long size = Long.parseLong((String) row.get("size"));
@@ -315,6 +441,25 @@ public class AiService {
         } catch (java.io.IOException exception) {
             throw error(503, "STORAGE_UNAVAILABLE", "图片存储不可用");
         }
+    }
+
+    @Transactional
+    public JsonNode data(String workerKey, UUID id, UUID sampleId, long generation) {
+        var agent = agent(workerKey);
+        var execution = one("SELECT * FROM ai_execution WHERE id=? FOR SHARE", id);
+        checkLease(agent, execution, generation);
+        one(
+                "SELECT sample_id FROM round_item WHERE round_id=? AND sample_id=?",
+                execution.get("round_id"),
+                sampleId);
+        return db.query(
+                "SELECT input_payload::text FROM sample_input WHERE sample_id=? AND project_id=?",
+                rs -> {
+                    if (!rs.next()) throw error(404, "RESOURCE_NOT_FOUND", "结构化输入不存在");
+                    return read(rs.getString(1));
+                },
+                sampleId,
+                execution.get("project_id"));
     }
 
     @Transactional
@@ -328,7 +473,8 @@ public class AiService {
         if ("SUCCEEDED".equals(input.status())) {
             if (input.errorCode() != null || input.errorMessage() != null)
                 throw error(422,"INVALID_REQUEST","成功结果不能包含错误信息");
-            validateResult(e, input.result());
+            validator.validate(
+                    (UUID)e.get("spec_version_id"), sampleId, null, input.result(), true);
             Double confidence = input.confidence();
             if (confidence != null && (!Double.isFinite(confidence) || confidence < 0 || confidence > 1))
                 throw error(422,"INVALID_CONFIDENCE","置信度必须是 [0,1] 内的有限数值");
@@ -340,10 +486,11 @@ public class AiService {
             throw error(422,"INVALID_REQUEST","输出状态仅支持 SUCCEEDED 或 FAILED");
         }
 
-        Map<String,Object> current = one("""
-                SELECT status, result::text AS result, confidence, error_code, error_message
-                FROM ai_item_output WHERE execution_id=? AND sample_id=?
-                """, id, sampleId);
+        Map<String,Object> current = one(
+                        """
+SELECT status, result::text AS result, confidence, error_code, error_message
+FROM ai_item_output WHERE execution_id=? AND sample_id=?
+""", id, sampleId);
         if (!"PENDING".equals(current.get("status"))) {
             Double currentConfidence = current.get("confidence") == null
                     ? null : ((Number) current.get("confidence")).doubleValue();
@@ -357,20 +504,28 @@ public class AiService {
         }
 
         if ("SUCCEEDED".equals(input.status())) {
-            db.update("""
-                    UPDATE ai_item_output SET status='SUCCEEDED', result=?::jsonb, confidence=?, generation=?,
-                      attempt_count=attempt_count+1, error_code=NULL, error_message=NULL
-                    WHERE execution_id=? AND sample_id=? AND status='PENDING'
-                    """, write(input.result()), input.confidence(), generation, id, sampleId);
-            int updated = db.update("UPDATE ai_execution SET success_count=success_count+1, pending_count=pending_count-1, revision=revision+1 WHERE id=? AND pending_count>0", id);
+            db.update(
+                    """
+UPDATE ai_item_output SET status='SUCCEEDED', result=?::jsonb, confidence=?, generation=?,
+  attempt_count=attempt_count+1, error_code=NULL, error_message=NULL
+WHERE execution_id=? AND sample_id=? AND status='PENDING'
+""", write(input.result()), input.confidence(), generation, id, sampleId);
+            int updated = db.update(
+                            "UPDATE ai_execution SET success_count=success_count+1,"
+                                + " pending_count=pending_count-1, revision=revision+1 WHERE id=?"
+                                + " AND pending_count>0", id);
             if (updated != 1) throw error(409,"OUTPUT_CONFLICT","AI执行计数已变化，请重新读取");
         } else {
-            db.update("""
-                    UPDATE ai_item_output SET status='FAILED', error_code=?, error_message=?, generation=?,
-                      attempt_count=attempt_count+1, result=NULL, confidence=NULL
-                    WHERE execution_id=? AND sample_id=? AND status='PENDING'
-                    """, input.errorCode(), safeErrorMessage(input.errorMessage()), generation, id, sampleId);
-            int updated = db.update("UPDATE ai_execution SET failed_count=failed_count+1, pending_count=pending_count-1, revision=revision+1 WHERE id=? AND pending_count>0", id);
+            db.update(
+                    """
+UPDATE ai_item_output SET status='FAILED', error_code=?, error_message=?, generation=?,
+  attempt_count=attempt_count+1, result=NULL, confidence=NULL
+WHERE execution_id=? AND sample_id=? AND status='PENDING'
+""", input.errorCode(), safeErrorMessage(input.errorMessage()), generation, id, sampleId);
+            int updated = db.update(
+                            "UPDATE ai_execution SET failed_count=failed_count+1,"
+                                + " pending_count=pending_count-1, revision=revision+1 WHERE id=?"
+                                + " AND pending_count>0", id);
             if (updated != 1) throw error(409,"OUTPUT_CONFLICT","AI执行计数已变化，请重新读取");
         }
         return json.valueToTree(Map.of("sampleId", sampleId, "outputStatus", input.status()));
@@ -386,7 +541,9 @@ public class AiService {
         JsonNode previous = replay(agentId, op, key, hash);
         if (previous != null) return previous;
         checkLease(agent, e, generation);
-        if (Boolean.TRUE.equals(db.queryForObject("SELECT EXISTS(SELECT 1 FROM ai_item_output WHERE execution_id=? AND status='PENDING')", Boolean.class, id)))
+        if (Boolean.TRUE.equals(db.queryForObject(
+                        "SELECT EXISTS(SELECT 1 FROM ai_item_output WHERE execution_id=? AND"
+                            + " status='PENDING')", Boolean.class, id)))
             throw error(409,"EXECUTION_INCOMPLETE","仍有待处理样本");
         String status = computedStatus(id);
         finalizeSnapshot(id, status);
@@ -406,7 +563,9 @@ public class AiService {
         JsonNode previous = replay(agentId, op, key, hash);
         if (previous != null) return previous;
         checkLease(agent, e, generation);
-        db.update("UPDATE ai_item_output SET status='FAILED', error_code=?, error_message=? WHERE execution_id=? AND status='PENDING'", errorCode, safeErrorMessage(errorMessage), id);
+        db.update(
+                "UPDATE ai_item_output SET status='FAILED', error_code=?, error_message=? WHERE"
+                        + " execution_id=? AND status='PENDING'", errorCode, safeErrorMessage(errorMessage), id);
         String status = computedStatus(id);
         finalizeSnapshot(id, status);
         JsonNode response = execView(id);
@@ -446,14 +605,18 @@ public class AiService {
         return "AI 处理失败，请根据错误码排查或联系管理员。";
     }
 
-    private List<Map<String,Object>> selectionSamples(UUID project, List<SelectionSample> input) {
+    private List<Map<String,Object>> selectionSamples(UUID project, UUID spec, List<SelectionSample> input) {
         if (input == null || input.isEmpty()) throw error(422,"INVALID_REQUEST","样本范围不能为空");
         if (input.size() > maxSamples) throw error(422,"SAMPLE_LIMIT","样本范围超过同步执行上限");
         Map<UUID,UUID> refs = new LinkedHashMap<>();
+        Map<UUID, UUID> candidates = new LinkedHashMap<>();
         for (var s : input) {
             if (s.sampleId() == null) throw error(422,"INVALID_REQUEST","样本ID不能为空");
             if (refs.containsKey(s.sampleId())) throw error(422,"INVALID_REQUEST","样本范围不能含重复样本");
+            if (s.referenceResultId() != null && s.referenceCandidateId() != null)
+                throw error(422, "INVALID_REFERENCE", "不能混用旧提交参考与新答案参考");
             refs.put(s.sampleId(), s.referenceResultId());
+            candidates.put(s.sampleId(), s.referenceCandidateId());
         }
         List<UUID> ids = new ArrayList<>(refs.keySet());
         Collections.sort(ids);
@@ -461,15 +624,20 @@ public class AiService {
         for (UUID id : ids) {
             one("SELECT id FROM sample WHERE id=? AND project_id=?", id, project);
             if (refs.get(id) != null) {
-                Boolean ok = db.queryForObject("""
-                        SELECT EXISTS(SELECT 1 FROM submission_item si JOIN submission s ON s.id=si.submission_id
-                        WHERE si.submission_id=? AND si.sample_id=? AND s.project_id=?)
-                        """, Boolean.class, refs.get(id), id, project);
+                Boolean ok = db.queryForObject(
+                                """
+SELECT EXISTS(SELECT 1 FROM submission_item si JOIN submission s ON s.id=si.submission_id
+WHERE si.submission_id=? AND si.sample_id=? AND s.project_id=? AND s.spec_version_id=?)
+""", Boolean.class, refs.get(id), id, project,
+                                spec);
                 if (!Boolean.TRUE.equals(ok)) throw error(422,"INVALID_REFERENCE","参考结果不属于该样本或项目");
             }
             Map<String,Object> row = new LinkedHashMap<>();
             row.put("id", id);
+            if (candidates.get(id) != null)
+                references.candidate(project, spec, id, candidates.get(id));
             row.put("referenceResultId", refs.get(id));
+            row.put("referenceCandidateId", candidates.get(id));
             rows.add(row);
         }
         return rows;
@@ -477,23 +645,12 @@ public class AiService {
 
     private void checkClaimConflict(UUID project, List<UUID> sampleIds) {
         Set<UUID> wanted = new HashSet<>(sampleIds);
-        var claimed = db.queryForList("""
-                SELECT c.sample_id FROM sample_work_claim c JOIN publication_round r ON r.id=c.round_id
-                WHERE r.status='OPEN' AND c.project_id=?
-                """, project);
+        var claimed = db.queryForList(
+                        """
+SELECT c.sample_id FROM sample_work_claim c JOIN publication_round r ON r.id=c.round_id
+WHERE r.status='OPEN' AND c.project_id=?
+""", project);
         for (var row : claimed) if (wanted.contains((UUID) row.get("sample_id"))) throw error(409,"SAMPLE_BUSY","所选样本存在进行中的轮次");
-    }
-
-    private void validateResult(Map<String,Object> e, JsonNode result) {
-        Map<String,Object> spec = one("SELECT task_type, labels::text AS labels FROM spec_version WHERE id=?", e.get("spec_version_id"));
-        if (!"IMAGE_CLASSIFICATION".equals(spec.get("task_type"))) throw error(422,"UNSUPPORTED_FORMAT","首期仅支持图片单标签分类结果");
-        if (result == null || !result.isObject() || result.size() != 1 || !result.has("labelId"))
-            throw error(422,"INVALID_RESULT","结果必须为 labelId 对象");
-        JsonNode label = result.get("labelId");
-        if (label == null || !label.isTextual() || label.asText().isBlank()) throw error(422,"INVALID_RESULT","请选择一个标签");
-        for (var allowed : read((String) spec.get("labels")))
-            if (label.asText().equals(allowed.path("id").asText())) return;
-        throw error(422,"INVALID_RESULT","标签不属于本轮规范");
     }
 
     private String computedStatus(UUID id) {
@@ -511,7 +668,10 @@ public class AiService {
 
     private void finalizeSnapshot(UUID id, String status) {
         Map<String,Object> e = one("SELECT * FROM ai_execution WHERE id=?", id);
-        var rows = db.queryForList("SELECT sample_id, status AS outcome, result::text AS result, confidence, error_code, error_message FROM ai_item_output WHERE execution_id=? ORDER BY sample_id", id);
+        var rows = db.queryForList(
+                        "SELECT sample_id, status AS outcome, result::text AS result, confidence,"
+                            + " error_code, error_message FROM ai_item_output WHERE execution_id=?"
+                            + " ORDER BY sample_id", id);
         long success = 0, failed = 0, cancelled = 0;
         for (var r : rows) {
             String s = (String) r.get("outcome");
@@ -519,17 +679,28 @@ public class AiService {
             else if ("FAILED".equals(s)) failed++;
             else if ("CANCELLED".equals(s)) cancelled++;
         }
-        String inputHash = hash(write(db.queryForList("SELECT sample_id FROM round_item WHERE round_id=? ORDER BY sample_id", e.get("round_id"))));
+        String inputHash = hash(write(db.queryForList(
+                                        "SELECT sample_id FROM round_item WHERE round_id=? ORDER BY"
+                                            + " sample_id", e.get("round_id"))));
         UUID snap = UUID.randomUUID();
-        db.update("INSERT INTO ai_result_snapshot(id,execution_id,model_version,input_hash,success_count,failed_count) VALUES (?,?,?,?,?,?)",
+        db.update(
+                "INSERT INTO"
+                    + " ai_result_snapshot(id,execution_id,model_version,input_hash,success_count,failed_count)"
+                    + " VALUES (?,?,?,?,?,?)",
                 snap, id, e.get("model_version"), inputHash, success, failed);
         for (var r : rows) {
             UUID resultId = "SUCCEEDED".equals(r.get("outcome")) ? UUID.randomUUID() : null;
             String errorMessage = "FAILED".equals(r.get("outcome")) ? safeErrorMessage((String) r.get("error_message")) : null;
-            db.update("INSERT INTO ai_result_snapshot_item(snapshot_id,execution_id,sample_id,outcome,result,confidence,error_code,result_id,error_message) VALUES (?,?,?,?,?::jsonb,?,?,?,?)",
+            db.update(
+                    "INSERT INTO"
+                        + " ai_result_snapshot_item(snapshot_id,execution_id,sample_id,outcome,result,confidence,error_code,result_id,error_message)"
+                        + " VALUES (?,?,?,?,?::jsonb,?,?,?,?)",
                     snap, id, r.get("sample_id"), r.get("outcome"), r.get("result"), r.get("confidence"), r.get("error_code"), resultId, errorMessage);
         }
-        db.update("UPDATE ai_execution SET status=?, success_count=?, failed_count=?, pending_count=0, cancelled_count=?, revision=revision+1, ended_at=CURRENT_TIMESTAMP WHERE id=?",
+        db.update(
+                "UPDATE ai_execution SET status=?, success_count=?, failed_count=?,"
+                    + " pending_count=0, cancelled_count=?, revision=revision+1,"
+                    + " ended_at=CURRENT_TIMESTAMP WHERE id=?",
                 status, success, failed, cancelled, id);
         db.update("UPDATE publication_round SET status=?, revision=revision+1 WHERE id=?",
                 "CANCELLED".equals(status) ? "CANCELLED" : "CLOSED", e.get("round_id"));
@@ -542,11 +713,12 @@ public class AiService {
         boolean terminal = TERMINAL.contains(e.get("status"));
         UUID snapshotId = terminal ? (UUID) db.queryForObject(
                 "SELECT id FROM ai_result_snapshot WHERE execution_id=?", UUID.class, id) : null;
-        var errors = db.queryForList("""
-                SELECT COALESCE(error_code, 'UNKNOWN') AS "errorCode", count(*) AS count
-                FROM ai_item_output WHERE execution_id=? AND status='FAILED'
-                GROUP BY error_code ORDER BY error_code NULLS LAST
-                """, id);
+        var errors = db.queryForList(
+                        """
+                        SELECT COALESCE(error_code, 'UNKNOWN') AS "errorCode", count(*) AS count
+                        FROM ai_item_output WHERE execution_id=? AND status='FAILED'
+                        GROUP BY error_code ORDER BY error_code NULLS LAST
+                        """, id);
         Map<String,Object> out = new LinkedHashMap<>();
         out.put("executionId", id);
         out.put("roundId", e.get("round_id"));
@@ -570,14 +742,29 @@ public class AiService {
     }
 
     private JsonNode claimView(UUID id) {
-        Map<String,Object> e = one("SELECT e.*, sv.labels::text AS labels FROM ai_execution e JOIN spec_version sv ON sv.id=e.spec_version_id WHERE e.id=?", id);
-        Map<String,Object> agent = one("SELECT supports_reference, confidence_description FROM ai_agent_config WHERE actor_id=?", e.get("agent_actor_id"));
+        Map<String,Object> e = one(
+                        "SELECT e.*, sv.labels::text AS labels FROM ai_execution e JOIN"
+                            + " spec_version sv ON sv.id=e.spec_version_id WHERE e.id=?", id);
+        Map<String,Object> agent = one(
+                        "SELECT supports_reference, confidence_description FROM ai_agent_config"
+                            + " WHERE actor_id=?", e.get("agent_actor_id"));
         Map<String,Object> out = new LinkedHashMap<>();
         out.put("executionId", id);
         out.put("generation", e.get("generation"));
         out.put("leaseUntil", e.get("lease_until"));
         out.put("specVersionId", e.get("spec_version_id"));
         out.put("labels", read((String) e.get("labels")));
+        var spec =
+                one(
+                        "SELECT"
+                            + " task_type,template_id,template_version,input_schema_id,result_schema_id"
+                            + " FROM spec_version WHERE id=?",
+                        e.get("spec_version_id"));
+        out.put("templateId", spec.get("template_id"));
+        out.put("templateVersion", spec.get("template_version"));
+        out.put("inputSchemaId", spec.get("input_schema_id"));
+        out.put("resultSchemaId", spec.get("result_schema_id"));
+        out.put("resultFormat", validator.format((UUID) e.get("spec_version_id")));
         out.put("modelVersion", e.get("model_version"));
         out.put("supportsReference", agent.get("supports_reference"));
         out.put("confidenceDescription", agent.get("confidence_description"));
@@ -586,7 +773,9 @@ public class AiService {
 
     private void owner(ActorContext actor, UUID id) {
         enabled(actor.actorId());
-        Map<String,Object> e = one("SELECT e.*, p.owner_actor_id FROM ai_execution e JOIN project p ON p.id=e.project_id WHERE e.id=?", id);
+        Map<String,Object> e = one(
+                        "SELECT e.*, p.owner_actor_id FROM ai_execution e JOIN project p ON"
+                            + " p.id=e.project_id WHERE e.id=?", id);
         owner(actor, e);
     }
 
@@ -600,7 +789,8 @@ public class AiService {
     }
 
     private Map<String,Object> project(UUID id, boolean exclusive) {
-        return one("SELECT * FROM project WHERE id=? FOR " + (exclusive ? "UPDATE" : "SHARE"), id);
+        return one(
+                "SELECT * FROM project WHERE deleted_at IS NULL AND id=? FOR " + (exclusive ? "UPDATE" : "SHARE"), id);
     }
 
     private void enabled(UUID actor) {
@@ -622,7 +812,9 @@ public class AiService {
     private JsonNode replay(UUID actor, String op, String key, String requestHash) {
         if (key == null || key.isBlank() || key.length() > 200) throw error(400,"INVALID_REQUEST","需要有效的幂等键");
         db.queryForObject("SELECT pg_advisory_xact_lock(hashtextextended(?,0))", Object.class, actor + ":" + op + ":" + key);
-        return db.query("SELECT request_hash, response_body::text FROM idempotency_record WHERE actor_id=? AND operation=? AND idempotency_key=?",
+        return db.query(
+                "SELECT request_hash, response_body::text FROM idempotency_record WHERE actor_id=?"
+                    + " AND operation=? AND idempotency_key=?",
                 rs -> {
                     if (!rs.next()) return null;
                     if (!requestHash.equals(rs.getString(1))) throw error(409,"IDEMPOTENCY_CONFLICT","同一幂等键请求内容不同");
@@ -631,7 +823,10 @@ public class AiService {
     }
 
     private void remember(UUID actor, String op, String key, String requestHash, UUID id, JsonNode response) {
-        db.update("INSERT INTO idempotency_record(actor_id,operation,idempotency_key,request_hash,resource_id,response_body) VALUES (?,?,?,?,?,?::jsonb)",
+        db.update(
+                "INSERT INTO"
+                    + " idempotency_record(actor_id,operation,idempotency_key,request_hash,resource_id,response_body)"
+                    + " VALUES (?,?,?,?,?,?::jsonb)",
                 actor, op, key, requestHash, id, write(response));
     }
 
@@ -654,8 +849,99 @@ public class AiService {
         return new BusinessException(HttpStatus.valueOf(status), code, message);
     }
 
-    public record CreateInput(UUID specVersionId, UUID agentId, List<SelectionSample> samples, String instructions) {}
-    public record SelectionSample(@NotNull UUID sampleId, UUID referenceResultId) {}
+    public record CreateInput(UUID specVersionId, UUID agentId, List<SelectionSample> samples, String instructions,
+            UUID selectionId,
+            String referenceMode,
+            Boolean reopenAccepted) {
+        public CreateInput(
+                UUID specVersionId,
+                UUID agentId,
+                List<SelectionSample> samples,
+                String instructions) {
+            this(specVersionId, agentId, samples, instructions, null, null, null);
+        }
+    }
+
+    public record RetryInput(Long baseRevision, List<UUID> sampleIds, String instructions) {}
+
+    @Transactional
+    public JsonNode retry(ActorContext actor, UUID id, RetryInput input, String key) {
+        enabled(actor.actorId());
+        owner(actor, id);
+        Map<String, Object> original = one("SELECT * FROM ai_execution WHERE id=?", id);
+        var p = project((UUID) original.get("project_id"), true);
+        owner(actor, p);
+        writable(p);
+        String op = "POST:/ai-executions/" + id + "/retries", requestHash = hash(write(input));
+        JsonNode previous = replay(actor.actorId(), op, key, requestHash);
+        if (previous != null) return previous;
+        if (!TERMINAL.contains(original.get("status")))
+            throw error(409, "AI_RESULTS_NOT_READY", "只有终态执行可以重试");
+        if (input.baseRevision() == null
+                || ((Number) original.get("revision")).longValue() != input.baseRevision())
+            throw error(409, "REVISION_CONFLICT", "执行版本已变化");
+        var retryable =
+                db.query(
+                        "SELECT sample_id FROM ai_item_output WHERE execution_id=? AND"
+                            + " status<>'SUCCEEDED' ORDER BY sample_id",
+                        (rs, n) -> rs.getObject(1, UUID.class),
+                        id);
+        List<UUID> chosen = input.sampleIds() == null ? retryable : input.sampleIds();
+        if (chosen.isEmpty()
+                || new HashSet<>(chosen).size() != chosen.size()
+                || !retryable.containsAll(chosen))
+            throw error(422, "INVALID_RETRY_SCOPE", "只能重试原执行中失败或未完成的非重复样本");
+        UUID agentId =
+                (UUID)
+                        one(
+                                        "SELECT id FROM ai_agent_config WHERE actor_id=? AND"
+                                            + " model_version=? AND enabled=TRUE ORDER BY id LIMIT"
+                                            + " 1",
+                                        original.get("agent_actor_id"),
+                                        original.get("model_version"))
+                                .get("id");
+        List<SelectionSample> retrySamples = new ArrayList<>();
+        for (UUID sample : chosen) {
+            var ref =
+                    one(
+                            "SELECT reference_result_id,reference_candidate_id FROM round_item"
+                                + " WHERE round_id=? AND sample_id=?",
+                            original.get("round_id"),
+                            sample);
+            retrySamples.add(
+                    new SelectionSample(
+                            sample,
+                            (UUID) ref.get("reference_result_id"),
+                            (UUID) ref.get("reference_candidate_id")));
+        }
+        String instructions =
+                input.instructions() == null
+                        ? (String)
+                                one(
+                                                "SELECT instructions FROM publication_round WHERE"
+                                                    + " id=?",
+                                                original.get("round_id"))
+                                        .get("instructions")
+                        : input.instructions();
+        JsonNode created =
+                createExecution(
+                        actor,
+                        (UUID) original.get("project_id"),
+                        new CreateInput(
+                                (UUID) original.get("spec_version_id"),
+                                agentId,
+                                retrySamples,
+                                instructions),
+                        "retry-" + hash(id + ":" + key));
+        UUID child = UUID.fromString(created.path("executionId").asText());
+        db.update("UPDATE ai_execution SET retry_of_execution_id=? WHERE id=?", id, child);
+        JsonNode response = execView(child);
+        remember(actor.actorId(), op, key, requestHash, child, response);
+        return response;}
+    public record SelectionSample(@NotNull UUID sampleId, UUID referenceResultId, UUID referenceCandidateId) {
+        public SelectionSample(UUID sampleId, UUID referenceResultId) {
+            this(sampleId, referenceResultId, null);
+        }}
     public record OutputInput(String status, JsonNode result, Double confidence, String errorCode, String errorMessage) {}
     public record RegisterInput(@NotNull String taskType, @NotNull String displayName, @NotNull String modelVersion,
             JsonNode capabilities, JsonNode supportedLabels, boolean supportsReference, String confidenceDescription, @NotNull String workerKey) {}
