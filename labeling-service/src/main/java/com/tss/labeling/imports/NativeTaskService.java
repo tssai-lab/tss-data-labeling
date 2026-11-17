@@ -50,7 +50,7 @@ public class NativeTaskService {
 
     @Transactional
     public JsonNode ownerTask(ActorContext actor,UUID project,UUID sample,UUID spec) {
-        imports.file(actor,project.toString(),sample.toString());
+        ownerDataAccess(actor,project);
         var version=one("SELECT editor_config::text AS config FROM spec_version WHERE id=? AND project_id=?",spec,project);
         JsonNode context=context(project,sample,read((String)version.get("config")),"/projects/"+project+"/samples/"+sample);
         for(JsonNode resource:context.path("resources")) {
@@ -125,7 +125,7 @@ public class NativeTaskService {
 
     @Transactional
     public JsonNode ownerInput(ActorContext actor,UUID project,UUID sample) {
-        imports.file(actor,project.toString(),sample.toString());
+        ownerDataAccess(actor,project);
         var row=one("SELECT * FROM sample WHERE id=? AND project_id=?",sample,project);
         ObjectNode task=(ObjectNode)rawTask(sample).deepCopy();task.put("id",sample.toString());
         JsonNode data=task.path("data");
@@ -166,7 +166,7 @@ public class NativeTaskService {
     /** Unsaved configuration preview is read-only and uses project-owner resources. */
     @Transactional
     public JsonNode configurationPreview(ActorContext actor,UUID project,UUID sample,JsonNode config) {
-        imports.file(actor,project.toString(),sample.toString());
+        ownerDataAccess(actor,project);
         JsonNode context=context(project,sample,config,"/projects/"+project+"/samples/"+sample);
         for(JsonNode item:context.path("resources")) {
             var resource=(ObjectNode)item;
@@ -403,6 +403,11 @@ public class NativeTaskService {
     private void owner(ActorContext actor,UUID project) {
         if(!"ENABLED".equals(one("SELECT status FROM actor WHERE id=? FOR SHARE",actor.actorId()).get("status"))) throw error(403,"LABELING_DISABLED","当前账号已停用");
         one("SELECT id FROM project WHERE id=? AND owner_actor_id=?",project,actor.actorId());
+    }
+    private void ownerDataAccess(ActorContext actor,UUID project) {
+        owner(actor,project);
+        if("PAUSED".equals(one("SELECT status FROM project WHERE id=?",project).get("status")))
+            throw error(409,"PROJECT_PAUSED","项目已暂停");
     }
     public static JsonNode at(JsonNode root,String field) {
         if(root.has(field))return root.get(field);

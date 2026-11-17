@@ -39,7 +39,11 @@ jobs:
       - name: PostgreSQL 迁移、权限、并发和 HTTP 全链路回归
         env:
           LABELING_NODE_E2E: 'true'
-        run: mvn -B -ntp -f labeling-service/pom.xml "-Dls.test.python=$PWD/labeling-service/target/ls-build-env/bin/python" verify
+        run: mvn -B -ntp -f labeling-service/pom.xml \
+          "-Dls.test.python=$PWD/labeling-service/target/ls-build-env/bin/python" \
+          "-Dlabeling.ls-source.python=$PWD/labeling-service/target/ls-build-env/bin/python" \
+          "-Dlabeling.ls-source.adapter-root=$PWD/labeling-service/ls-source-adapter" \
+          verify
       - uses: actions/upload-artifact@v4
         if: always()
         with:
