@@ -9,12 +9,10 @@ export default function WorkspaceLayout({
   beforeAccountAction,
   project,
   workbench = false,
-  focusMode = false,
 }: PropsWithChildren<{
   beforeAccountAction?: () => boolean | Promise<boolean>;
-  project?: Pick<Project, 'projectId' | 'name'>;
+  project?: Project;
   workbench?: boolean;
-  focusMode?: boolean;
 }>) {
   return (
     <ConfigProvider
@@ -33,9 +31,7 @@ export default function WorkspaceLayout({
         },
       }}
     >
-      <main
-        className={`${styles.page} ${styles.workspacePage} ${focusMode ? styles.focusedWorkspace : ''}`}
-      >
+      <main className={`${styles.page} ${styles.workspacePage}`}>
         <Navigation
           project={project}
           beforeAccountAction={beforeAccountAction}

@@ -506,7 +506,7 @@ export default function WorkflowDemo() {
           )}
         </div>
         <div className={wb.heading}>
-          <h1>需求方审核工作台</h1>
+          <h1>开发演示 · 合成数据工作台</h1>
           <Tag color="gold">合成演示</Tag>
           <span className={wb.projectName}>
             {state?.project.name || '图片分类合成项目'}
@@ -516,7 +516,7 @@ export default function WorkflowDemo() {
           className={wb.notice}
           type="warning"
           showIcon
-          message="当前为合成数据，审核与导出接口待接入"
+          message="仅开发演示：所有数据与操作均为本地合成，不会读写真实项目。真实项目请返回项目列表。"
         />
         {enabled && (
           <div
@@ -682,7 +682,13 @@ export default function WorkflowDemo() {
                             options={['REVIEW', 'PUBLISH', 'FINALIZE'].map(
                               (value) => ({
                                 value,
-                                label: value,
+                                label: (
+                                  {
+                                    REVIEW: '审核结果',
+                                    PUBLISH: '重新标注',
+                                    FINALIZE: '保存成果',
+                                  } as Record<string, string>
+                                )[value],
                               }),
                             )}
                           />

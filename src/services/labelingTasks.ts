@@ -10,6 +10,7 @@ export type LabelingIdentity = {
 };
 export type Package = {
   packageId: string;
+  roundId?: string;
   projectId: string;
   projectName: string;
   taskType: string;
@@ -19,6 +20,7 @@ export type Package = {
 };
 export type Assignment = {
   assignmentId: string;
+  roundId?: string;
   packageId: string;
   projectId?: string;
   slotNo: number;
@@ -27,6 +29,8 @@ export type Assignment = {
 };
 export type Plan = {
   planId: string;
+  projectId: string;
+  specVersionId: string;
   status: string;
   selectionHash: string;
   sampleCount: number;
@@ -34,19 +38,29 @@ export type Plan = {
   totalWorkload: number;
   packages: {
     packageId: string;
+    roundId?: string;
     sequenceNo: number;
     sampleCount: number;
     requiredCount: number;
   }[];
 };
-export type ClassificationResult = { labelId?: string };
+export type ClassificationResult = {
+  labelId?: string;
+  schemaVersion?: string;
+  annotations?: import('./labelingEnergy.mjs').EnergyAnnotation[];
+};
 export type WorkSample = TaskBinding & {
   sampleId: string;
   sourcePath: string;
   ordinal: number;
   mediaType: string;
   referenceResultId?: string;
-  referenceResult?: ClassificationResult;
+  referenceResult?: {
+    resultFormat: string;
+    result: ClassificationResult;
+    resultId?: string;
+    sourceKind: 'HUMAN' | 'AI' | 'OWNER' | 'AGGREGATION';
+  } | null;
   sourceKind?: 'HUMAN' | 'AI' | 'OWNER' | 'AGGREGATION';
   modelVersion?: string;
   confidence?: number | null;
@@ -59,6 +73,7 @@ export type WorkPage = Page<WorkSample> &
   TaskBinding & {
     assignmentId: string;
     packageId: string;
+    roundId?: string;
     status: string;
     readOnly: boolean;
     specification: TaskBinding & {
@@ -79,12 +94,14 @@ export type Draft = {
 export type RevisionItem = { sampleId: string; revision: number };
 export type SubmissionReceipt = {
   submissionId: string;
+  roundId?: string;
   assignmentId: string;
   status: 'SUBMITTED';
   sampleCount: number;
 };
 export type SubmissionSummary = {
   submissionId: string;
+  roundId?: string;
   assignmentId: string;
   packageId: string;
   submittedBy: string;
@@ -96,6 +113,7 @@ export type Submission = SubmissionSummary & {
   contentHash: string;
   items: {
     sampleId: string;
+    resultId?: string;
     revision: number;
     resultFormat: string;
     result: ClassificationResult;
@@ -103,6 +121,10 @@ export type Submission = SubmissionSummary & {
 };
 
 export const tasks = {
+  mySubmissions: (cursor?: string | null, signal?: AbortSignal) =>
+    labelingJson<
+      Page<SubmissionSummary & { projectId: string; specVersionId: string }>
+    >(`/me/submissions?${pageQuery(cursor)}`, { signal }),
   me: (signal?: AbortSignal) =>
     labelingJson<LabelingIdentity>('/me', { signal }),
   pool: (cursor?: string | null, signal?: AbortSignal) =>
@@ -114,6 +136,14 @@ export const tasks = {
     ),
   claim: (id: string, key: string) =>
     post<Assignment>(`/packages/${encodeURIComponent(id)}/claims`, {}, key),
+  claimRound: (id: string, key: string) =>
+    post<Assignment>(`/rounds/${encodeURIComponent(id)}/claims`, {}, key),
+  release: (id: string, baseRevision: number, reason: string, key: string) =>
+    post<Pick<Assignment, 'assignmentId' | 'status' | 'revision'>>(
+      `/assignments/${encodeURIComponent(id)}/release`,
+      { baseRevision, reason },
+      key,
+    ),
   plan: (
     projectId: string,
     body: {
@@ -213,6 +243,7 @@ export async function allWorkItems(
       !Array.isArray(page.items) ||
       (result &&
         (result.packageId !== page.packageId ||
+          result.roundId !== page.roundId ||
           result.specification.specVersionId !==
             page.specification.specVersionId ||
           result.status !== page.status ||

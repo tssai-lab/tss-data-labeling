@@ -95,7 +95,7 @@ export default function ProjectSubmissions({
   );
   return (
     <Card
-      title="人工包已交回结果 · 尚无需求方审核记录"
+      title="人工提交记录 · 审核结论在上方查询"
       style={{ marginTop: 20 }}
       extra={
         <Button loading={busy} onClick={() => void load()}>

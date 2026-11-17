@@ -1,0 +1,614 @@
+import {
+  Alert,
+  App,
+  Button,
+  Card,
+  Checkbox,
+  Input,
+  InputNumber,
+  Progress,
+  Select,
+  Space,
+  Table,
+  Tag,
+  Typography,
+} from 'antd';
+import { useEffect, useRef, useState } from 'react';
+import {
+  describeLabelingError,
+  operationKey,
+  type SpecVersion,
+} from '@/services/labeling';
+import {
+  type AiResult,
+  assertChosen,
+  type ConfidencePolicy,
+  executionTerminal,
+  type LiveAgent,
+  type LiveExecution,
+  type LiveResult,
+  ownerApi,
+  selectionItem,
+} from '@/services/labelingOwner';
+import { statusName } from '@/services/labelingWorkspace';
+import ProjectHistory from './ProjectHistory';
+import useOwnerAction from './useOwnerAction';
+
+export default function LiveAi({
+  projectId,
+  spec,
+  selected,
+  active,
+  onChanged,
+  onBusyChange,
+  writeBlocked,
+  onFilter,
+  initialExecutionId,
+  onExecution,
+}: {
+  projectId: string;
+  spec: SpecVersion;
+  selected: LiveResult[];
+  active: boolean;
+  onChanged: () => void;
+  onBusyChange?: (busy: boolean) => void;
+  writeBlocked?: string;
+  initialExecutionId?: string;
+  onExecution: (id: string) => void;
+  onFilter: (
+    execution: string,
+    policy: string,
+    band: string | undefined,
+    spec: string,
+  ) => void;
+}) {
+  const { modal } = App.useApp(),
+    action = useOwnerAction(onBusyChange, writeBlocked);
+  const [agents, setAgents] = useState<LiveAgent[]>([]),
+    [agentId, setAgentId] = useState<string>();
+  const [reference, setReference] = useState(false),
+    [instructions, setInstructions] = useState('');
+  const [known, setKnown] = useState(''),
+    [execution, setExecution] = useState<LiveExecution>();
+  const [items, setItems] = useState<AiResult[]>([]),
+    [cursor, setCursor] = useState<string | null>(null),
+    [provisional, setProvisional] = useState(false);
+  const [error, setError] = useState(''),
+    [loading, setLoading] = useState(false),
+    [refresh, setRefresh] = useState(0);
+  const [policies, setPolicies] = useState<ConfidencePolicy[]>([]);
+  const [lower, setLower] = useState<number | null>(null),
+    [upper, setUpper] = useState<number | null>(null),
+    [reason, setReason] = useState('');
+  const version = useRef(0),
+    pollLock = useRef(false),
+    pageCursors = useRef(new Set<string>());
+  useEffect(() => {
+    const abort = new AbortController();
+    void ownerApi
+      .agents(abort.signal, spec.taskType)
+      .then((value) => {
+        if (!abort.signal.aborted) setAgents(value);
+      })
+      .catch((e) => {
+        if (!abort.signal.aborted) setError(describeLabelingError(e));
+      });
+    return () => abort.abort();
+  }, [projectId, refresh, spec.taskType]);
+  useEffect(
+    () => () => {
+      ++version.current;
+    },
+    [projectId],
+  );
+  async function load(id: string, append = false) {
+    if (pollLock.current || action.busy) return;
+    pollLock.current = true;
+    setLoading(true);
+    setError('');
+    const current = ++version.current;
+    try {
+      const value = await ownerApi.execution(id);
+      if (value.projectId !== projectId)
+        throw new Error('AI 执行不属于当前项目');
+      const next = append ? cursor : null;
+      const page = await ownerApi.executionResults(id, next);
+      if (
+        page.provisional !== !executionTerminal(value.status) ||
+        (executionTerminal(value.status) &&
+          page.snapshotId !== value.resultSnapshotId)
+      )
+        throw new Error('AI 执行正在变更，请重新读取一致的结果快照');
+      if (current !== version.current) return;
+      if (
+        append &&
+        (page.provisional || page.snapshotId !== execution?.resultSnapshotId)
+      )
+        throw new Error('执行结果已变化，请从第一页重新读取');
+      const rules = executionTerminal(value.status)
+        ? await ownerApi.policies(value.roundId)
+        : [];
+      if (current !== version.current) return;
+      if (!append) pageCursors.current.clear();
+      if (page.nextCursor && pageCursors.current.has(page.nextCursor))
+        throw new Error('AI 结果分页游标重复，请重新读取');
+      if (
+        append &&
+        page.items.some((item) =>
+          items.some((old) => old.sampleId === item.sampleId),
+        )
+      )
+        throw new Error('AI 结果样本重复，请重新读取');
+      if (page.nextCursor) pageCursors.current.add(page.nextCursor);
+      setExecution(value);
+      setKnown(value.executionId);
+      setProvisional(page.provisional);
+      setCursor(page.provisional ? null : page.nextCursor);
+      setPolicies(rules);
+      setItems((old) => (append ? [...old, ...page.items] : page.items));
+    } catch (e) {
+      if (current === version.current) setError(describeLabelingError(e));
+    } finally {
+      pollLock.current = false;
+      if (current === version.current) setLoading(false);
+    }
+  }
+  useEffect(() => {
+    if (initialExecutionId && !execution && !action.busy) {
+      setKnown(initialExecutionId);
+      void load(initialExecutionId);
+    }
+  }, [initialExecutionId, action.busy]);
+  useEffect(() => {
+    if (!active || !execution || executionTerminal(execution.status) || error)
+      return;
+    const timer = setInterval(() => {
+      if (document.visibilityState === 'visible')
+        void load(execution.executionId);
+    }, 5000);
+    return () => clearInterval(timer);
+  }, [active, execution?.executionId, execution?.status, error, action.busy]);
+  const agent = agents.find((item) => item.agentId === agentId);
+  function create() {
+    if (!agent) return;
+    modal.confirm({
+      title: `让 ${agent.displayName} 处理 ${selected.length} 个样本？`,
+      content:
+        'AI 执行会占用本范围，完成后仍需人工审核。已确认样本重新执行会撤销当前确认。',
+      onOk: async () => {
+        const value = await action.run(
+          'ai-create',
+          {
+            selected: selected.map(selectionItem),
+            spec: spec.specVersionId,
+            agentId,
+            reference,
+            instructions,
+          },
+          async (key, prepare) => {
+            const selection = await prepare(async () => {
+              assertChosen(selected, spec.specVersionId);
+              return ownerApi.select(
+                projectId,
+                {
+                  specVersionId: spec.specVersionId,
+                  purpose: 'PUBLISH',
+                  items: selected.map(selectionItem),
+                },
+                operationKey(),
+              );
+            });
+            return ownerApi.executeSelection(
+              projectId,
+              {
+                specVersionId: spec.specVersionId,
+                agentId: agent.agentId,
+                selectionId: selection.selectionId,
+                referenceMode: reference ? 'SELECTED' : 'NONE',
+                reopenAccepted: true,
+                instructions,
+              },
+              key,
+            );
+          },
+          'AI 执行已创建',
+        );
+        if (value) {
+          setExecution(value);
+          setKnown(value.executionId);
+          setItems([]);
+          setPolicies([]);
+          setCursor(null);
+          setProvisional(!executionTerminal(value.status));
+          setError('');
+          onExecution(value.executionId);
+          onChanged();
+          void load(value.executionId);
+        }
+      },
+    });
+  }
+  function cancel() {
+    if (!execution || !reason.trim()) {
+      action.setError('请填写取消原因');
+      return;
+    }
+    const captured = execution,
+      body = { baseRevision: captured.revision, reason: reason.trim() };
+    modal.confirm({
+      title: '取消当前 AI 执行？',
+      content: '已处理成功的终态快照仍会保留；未完成样本不会伪造答案。',
+      onOk: async () => {
+        const value = await action.run(
+          `ai-cancel:${captured.executionId}`,
+          body,
+          (key) => ownerApi.cancelExecution(captured.executionId, body, key),
+          'AI 执行已取消',
+        );
+        if (value) {
+          setExecution(value);
+          setItems([]);
+          setCursor(null);
+          setError('');
+          onChanged();
+          void load(value.executionId);
+        }
+      },
+    });
+  }
+  async function savePolicy() {
+    if (
+      !execution?.resultSnapshotId ||
+      lower === null ||
+      upper === null ||
+      lower < 0 ||
+      upper > 1 ||
+      lower >= upper
+    ) {
+      action.setError('请输入 0 ≤ 低阈值 < 高阈值 ≤ 1');
+      return;
+    }
+    const body = {
+      snapshotId: execution.resultSnapshotId,
+      lowerThreshold: lower,
+      upperThreshold: upper,
+    };
+    const value = await action.run(
+      `policy:${execution.roundId}`,
+      body,
+      (key) => ownerApi.policy(execution.roundId, body, key),
+      '置信度分档策略已保存，不会自动确认答案',
+    );
+    if (value) setPolicies((old) => [...old, value]);
+  }
+  return (
+    <>
+      <div hidden={!selected.length}>
+        <Card title="创建 AI 标注任务">
+          <Alert
+            type="info"
+            message={`当前明确勾选 ${selected.length} 个样本`}
+            description="Agent 由服务器驱动。运行中的答案只用于查看进度，终态成功结果才可审核；置信度分档不会自动接受答案。"
+          />
+          {(error || action.error) && (
+            <Alert type="error" message={error || action.error} />
+          )}
+          <Space wrap style={{ marginTop: 16 }}>
+            <Select
+              aria-label="选择 AI Agent"
+              style={{ width: 300 }}
+              value={agentId}
+              disabled={action.busy}
+              placeholder={
+                agents.length ? '选择已启用的 Agent' : '暂无可用 Agent'
+              }
+              onChange={(value) => {
+                setAgentId(value);
+                setReference(false);
+              }}
+              options={agents
+                .filter(
+                  (item) =>
+                    item.enabled &&
+                    item.taskType === (spec.taskType || 'IMAGE_CLASSIFICATION'),
+                )
+                .map((item) => ({
+                  value: item.agentId,
+                  label: `${item.displayName} · ${item.modelVersion}`,
+                }))}
+            />
+            <Button
+              disabled={action.busy}
+              onClick={() => setRefresh((n) => n + 1)}
+            >
+              刷新 Agent
+            </Button>
+            <Checkbox
+              disabled={!agent?.supportsReference || action.busy}
+              checked={reference}
+              onChange={(e) => setReference(e.target.checked)}
+            >
+              附带所选答案作为参考
+            </Checkbox>
+            <Input
+              aria-label="AI 执行补充说明"
+              placeholder="本次执行说明"
+              value={instructions}
+              disabled={action.busy}
+              maxLength={500}
+              onChange={(e) => setInstructions(e.target.value)}
+              style={{ width: 300 }}
+            />
+            <Button
+              type="primary"
+              disabled={!agent || !selected.length || loading || action.busy}
+              onClick={create}
+            >
+              创建 AI 执行
+            </Button>
+          </Space>
+          {agent && (
+            <p>
+              {agent.confidenceDescription || '该 Agent 未提供置信度语义说明'}
+            </p>
+          )}
+        </Card>
+      </div>
+      <Card title="查看 AI 任务进度" style={{ marginTop: 16 }}>
+        <details>
+          <summary>服务器 AI 执行历史</summary>
+          <ProjectHistory
+            projectId={projectId}
+            kind="ai-executions"
+            refresh={refresh}
+            onOpen={(row) => {
+              if (row.executionId) {
+                setExecution(undefined);
+                setItems([]);
+                setPolicies([]);
+                void load(row.executionId);
+              }
+            }}
+          />
+        </details>
+        <details open={!execution}>
+          <summary>查询已有 AI 任务</summary>
+          <Space wrap>
+            <Input
+              aria-label="已知 AI 执行编号"
+              placeholder="粘贴已有 AI 任务编号"
+              value={known}
+              disabled={loading || action.busy}
+              onChange={(e) => setKnown(e.target.value)}
+              style={{ width: 340 }}
+            />
+            <Button
+              loading={loading}
+              disabled={!known.trim() || action.busy}
+              onClick={() => {
+                setExecution(undefined);
+                setItems([]);
+                setPolicies([]);
+                void load(known.trim());
+              }}
+            >
+              读取执行
+            </Button>
+          </Space>
+        </details>
+        {execution && (
+          <>
+            <Typography.Paragraph style={{ marginTop: 12 }} copyable>
+              {execution.executionId}
+            </Typography.Paragraph>
+            <p>
+              <Tag>{statusName(execution.status)}</Tag>总计{' '}
+              {execution.sampleCount} · 成功 {execution.successCount} · 失败{' '}
+              {execution.failedCount} · 待处理 {execution.pendingCount} · 已取消{' '}
+              {execution.cancelledCount}
+            </p>
+            <Progress
+              percent={
+                execution.sampleCount
+                  ? Math.round(
+                      ((execution.sampleCount - execution.pendingCount) /
+                        execution.sampleCount) *
+                        100,
+                    )
+                  : 0
+              }
+              status={executionTerminal(execution.status) ? 'normal' : 'active'}
+            />
+            <p>
+              模型 {execution.modelVersion} · 轮次 {execution.roundId} ·{' '}
+              {provisional ? '运行中暂存结果，暂不可审核' : '终态结果快照'}{' '}
+              {execution.resultSnapshotId || ''}
+            </p>
+            {execution.errorSummary?.byCode.map((item) => (
+              <Tag key={item.errorCode} color="red">
+                {item.errorCode}: {item.count}
+              </Tag>
+            ))}
+            {!executionTerminal(execution.status) && (
+              <Space wrap>
+                <Input
+                  aria-label="取消 AI 执行原因"
+                  placeholder="取消原因"
+                  maxLength={1000}
+                  value={reason}
+                  onChange={(e) => setReason(e.target.value)}
+                  disabled={action.busy}
+                />
+                <Button
+                  danger
+                  disabled={action.busy || loading}
+                  onClick={cancel}
+                >
+                  取消执行
+                </Button>
+              </Space>
+            )}
+            {executionTerminal(execution.status) &&
+              execution.failedCount + execution.cancelledCount > 0 && (
+                <Button
+                  disabled={loading || action.busy}
+                  onClick={() =>
+                    modal.confirm({
+                      title: '重试本次执行的全部失败和未完成样本？',
+                      content:
+                        '创建新的子执行，复用原 Agent 和模型；成功结果与原快照保持不变。',
+                      onOk: async () => {
+                        const body = { baseRevision: execution.revision };
+                        const value = await action.run(
+                          `retry:${execution.executionId}`,
+                          body,
+                          (key) =>
+                            ownerApi.retry(execution.executionId, body, key),
+                          '重试执行已创建',
+                        );
+                        if (value) {
+                          setExecution(value);
+                          setKnown(value.executionId);
+                          setItems([]);
+                          setPolicies([]);
+                          setError('');
+                          onExecution(value.executionId);
+                          onChanged();
+                          void load(value.executionId);
+                        }
+                      },
+                    })
+                  }
+                >
+                  重试失败范围
+                </Button>
+              )}
+            <Button
+              style={{ margin: 12 }}
+              disabled={loading || action.busy}
+              onClick={() => void load(execution.executionId)}
+            >
+              刷新此执行
+            </Button>
+            <Table
+              rowKey="sampleId"
+              dataSource={items}
+              pagination={false}
+              scroll={{ x: 650 }}
+              columns={[
+                { title: '样本', dataIndex: 'sampleId' },
+                { title: '处理状态', dataIndex: 'status', render: statusName },
+                {
+                  title: '答案',
+                  render: (_, item) => item.result?.labelId || '—',
+                },
+                {
+                  title: '置信度',
+                  render: (_, item) => item.confidence ?? '未知',
+                },
+                {
+                  title: '审核资格',
+                  render: (_, item) =>
+                    !provisional && item.reviewable && item.resultId
+                      ? '可审核'
+                      : '不可审核',
+                },
+                { title: '错误', dataIndex: 'errorCode' },
+              ]}
+            />
+            {cursor && (
+              <Button
+                disabled={loading || action.busy}
+                onClick={() => void load(execution.executionId, true)}
+              >
+                更多执行结果
+              </Button>
+            )}
+            {executionTerminal(execution.status) &&
+              execution.resultSnapshotId && (
+                <>
+                  <h3>置信度分档策略</h3>
+                  <Space wrap>
+                    <InputNumber
+                      aria-label="置信度低阈值"
+                      placeholder="低阈值"
+                      min={0}
+                      max={1}
+                      step={0.01}
+                      value={lower}
+                      onChange={setLower}
+                      disabled={action.busy}
+                    />
+                    <InputNumber
+                      aria-label="置信度高阈值"
+                      placeholder="高阈值"
+                      min={0}
+                      max={1}
+                      step={0.01}
+                      value={upper}
+                      onChange={setUpper}
+                      disabled={action.busy}
+                    />
+                    <Button
+                      disabled={action.busy}
+                      onClick={() => void savePolicy()}
+                    >
+                      保存新分档策略
+                    </Button>
+                  </Space>
+                  <Table
+                    rowKey="policyId"
+                    dataSource={policies}
+                    pagination={{ pageSize: 5 }}
+                    scroll={{ x: 650 }}
+                    columns={[
+                      { title: '策略编号', dataIndex: 'policyId' },
+                      { title: '低阈值', dataIndex: 'lowerThreshold' },
+                      { title: '高阈值', dataIndex: 'upperThreshold' },
+                      {
+                        title: '筛选审核',
+                        render: (_, policy) => (
+                          <Space wrap>
+                            {['HIGH', 'MEDIUM', 'LOW', 'UNKNOWN'].map(
+                              (band) => (
+                                <Button
+                                  key={band}
+                                  disabled={action.busy}
+                                  onClick={() =>
+                                    onFilter(
+                                      execution.executionId,
+                                      policy.policyId,
+                                      band,
+                                      execution.specVersionId,
+                                    )
+                                  }
+                                >
+                                  {
+                                    (
+                                      {
+                                        HIGH: '高置信度',
+                                        MEDIUM: '中置信度',
+                                        LOW: '低置信度',
+                                        UNKNOWN: '未知置信度',
+                                      } as Record<string, string>
+                                    )[band]
+                                  }
+                                </Button>
+                              ),
+                            )}
+                          </Space>
+                        ),
+                      },
+                    ]}
+                  />
+                </>
+              )}
+            <p>
+              失败或取消的样本可使用“重试失败范围”创建新执行，原执行快照保持不变。
+            </p>
+          </>
+        )}
+      </Card>
+    </>
+  );
+}

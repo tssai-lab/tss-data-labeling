@@ -111,7 +111,7 @@ test('全局导航去除重复和旧入口，审核与导出只在项目内出�
       .map(text),
     ['任务发布'],
   );
-  for (const label of ['项目数据', '旧版 Demo', '结果审核', '成果导出']) {
+  for (const label of ['项目数据', '旧版 Demo', '结果工作台', '成果快照']) {
     assert.equal(
       runtime.nodes('Link').some((node) => text(node) === label),
       false,
@@ -121,11 +121,11 @@ test('全局导航去除重复和旧入口，审核与导出只在项目内出�
   location.pathname = '/labeling/projects/p%2Fone/workbench';
   runtime.render(false);
   assert.equal(
-    runtime.nodes('Link').find((node) => text(node) === '结果审核').props.to,
+    runtime.nodes('Link').find((node) => text(node) === '结果工作台').props.to,
     '/labeling/projects/p%2Fone/workbench',
   );
   assert.equal(
-    runtime.nodes('Link').find((node) => text(node) === '成果导出').props.to,
+    runtime.nodes('Link').find((node) => text(node) === '成果快照').props.to,
     '/labeling/projects/p%2Fone/workbench?view=export',
   );
 });

@@ -87,7 +87,7 @@ function hourOf(input, timestamp, end = false) {
     fail('时间必须定位到实际小时桶，区间采用[start,end)');
   return hour;
 }
-export function encodeEnergyResult(value, input) {
+export function encodeEnergyResult(value, input, labels = energyLabels) {
   validateEnergyInput(input);
   const annotations = [];
   const add = (id, from_name, type, v) =>
@@ -121,11 +121,11 @@ export function encodeEnergyResult(value, input) {
       labelIds: [value.certainty],
     });
   const result = { schemaVersion: '1.0.0', annotations };
-  validateEnergyResult(result, input);
+  validateEnergyResult(result, input, false, labels);
   return result;
 }
-export function decodeEnergyResult(result, input) {
-  validateEnergyResult(result, input);
+export function decodeEnergyResult(result, input, labels = energyLabels) {
+  validateEnergyResult(result, input, false, labels);
   const value = emptyEnergyValue();
   for (const a of result.annotations) {
     if (a.from_name === 'primary_label') value.primary = a.value.labelIds[0];
@@ -151,13 +151,18 @@ export function decodeEnergyResult(result, input) {
   }
   return value;
 }
-export function validateEnergyResult(result, input, complete = false) {
+export function validateEnergyResult(
+  result,
+  input,
+  complete = false,
+  specLabels = energyLabels,
+) {
   validateEnergyInput(input);
   exact(result, ['schemaVersion', 'annotations']);
   if (
     result.schemaVersion !== '1.0.0' ||
     !Array.isArray(result.annotations) ||
-    result.annotations.length > 100
+    result.annotations.length > 10000
   )
     fail('不支持的结果版本或条目过多');
   const ids = new Set(),
@@ -200,7 +205,7 @@ export function validateEnergyResult(result, input, complete = false) {
       const allowed =
         a.from_name === 'self_reported_certainty'
           ? ['HIGH', 'MEDIUM', 'LOW', 'UNKNOWN']
-          : energyLabels;
+          : specLabels;
       const labels = a.value.labelIds;
       if (
         !Array.isArray(labels) ||
@@ -220,21 +225,23 @@ export function validateEnergyResult(result, input, complete = false) {
       }
     }
   }
+  const primaryValue = result.annotations.find(
+    (a) => a.from_name === 'primary_label',
+  )?.value.labelIds[0];
+  if (
+    primaryValue &&
+    result.annotations.some(
+      (a) =>
+        a.from_name === 'secondary_labels' &&
+        a.value.labelIds.includes(primaryValue),
+    )
+  )
+    fail('副标签不能重复主标签');
   if (complete) {
     const primary = result.annotations.find(
       (a) => a.from_name === 'primary_label',
     )?.value.labelIds[0];
-    if (!primary || !singleton.has('self_reported_certainty'))
-      fail('正式完成需要主标签和人工自评（可选UNKNOWN）');
-    if (
-      primary !== 'normal' &&
-      (!singleton.has('notes') ||
-        (!singleton.has('whole_day_reason') &&
-          !result.annotations.some((a) =>
-            ['timeseries_point', 'timeseries_interval'].includes(a.type),
-          )))
-    )
-      fail('试标异常需要备注以及点/区间或明确的整日疑似说明');
+    if (!primary) fail('完成需要一个规范内的主标签');
   }
   return true;
 }
@@ -252,4 +259,19 @@ export function energySummary(input) {
         ? null
         : sum - input.payload.dailyKwh,
   };
+}
+
+/** JSONB may reorder object keys; array order and annotation contents remain significant. */
+export function sameEnergyResult(left, right) {
+  const canonical = (value) =>
+    Array.isArray(value)
+      ? value.map(canonical)
+      : value && typeof value === 'object'
+        ? Object.fromEntries(
+            Object.keys(value)
+              .sort()
+              .map((key) => [key, canonical(value[key])]),
+          )
+        : value;
+  return JSON.stringify(canonical(left)) === JSON.stringify(canonical(right));
 }

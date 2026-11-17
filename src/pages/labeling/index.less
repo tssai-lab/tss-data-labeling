@@ -69,19 +69,6 @@
 .workspacePage .navTabActive { background: #3765d933; color: #f1f5ff; border-left-color: #8ed6e3; font-weight: 600; }
 .workspacePage > .content { width: 100%; max-width: none; padding: 26px; margin: 0; min-width: 0; }
 .workspacePage > .workbenchContent { padding: 0; }
-.managerContent { padding: 16px 20px 24px; }
-.managerToolbar { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; min-height: 38px; }
-.managerContent :global(.ant-tabs-nav) { margin-bottom: 0; }
-.managerContent :global(.ant-card-head) { min-height: 48px; }
-.managerContent :global(.ant-card-body) { padding: 16px; }
-.workspacePage { align-content: start; }
-.workspacePage .workspaceHeader { grid-row: 1; }
-.workspacePage .sidebar, .workspacePage > .content { grid-row: 2; align-self: stretch; }
-@media (max-width: 900px) {
-  .managerContent { padding: 12px; }
-  .workspacePage .sidebar { grid-row: 2; }
-  .workspacePage > .content { grid-row: 3; }
-}
 .workspacePage .content :global(.ant-card) { border-color: #dce3ec; border-radius: 16px; box-shadow: 0 4px 20px #172b4505; }
 .workspacePage .content :global(.ant-table-thead > tr > th) { background: #f4f7fb; color: #536781; }
 .workspacePage .projectStats { border-color: #dce3ec; strong { color: #172b45; } }
@@ -104,6 +91,3 @@
   .platformTitle { font-size: 13px; padding-left: 8px; }
   .workspacePage .account { padding: 6px 8px; font-size: 12px; max-width: 100px; overflow: hidden; text-overflow: ellipsis; }
 }
-.workspacePage.focusedWorkspace { grid-template-columns: minmax(0,1fr); grid-template-rows: 72px minmax(calc(100vh - 72px),auto); }
-.focusedWorkspace > .sidebar { display: none; }
-.workspacePage.focusedWorkspace > .content { grid-row: 2; padding: 0; }
