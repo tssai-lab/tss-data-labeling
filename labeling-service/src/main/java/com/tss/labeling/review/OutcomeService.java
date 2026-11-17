@@ -52,19 +52,34 @@ public class OutcomeService {
     public JsonNode sampleReviews(ActorContext actor, UUID project, int limit, String cursor) {
         owner(actor, project);
         if (limit < 1 || limit > 100) throw error(400,"INVALID_REQUEST","分页大小应为1至100");
-        UUID after = cursor(cursor);
+        UUID after = new UUID(0, 0), afterSpec = new UUID(0, 0);
+        if (cursor != null) {
+            try {
+                String[] parts = cursor.split(":", -1);
+                if (parts.length != 2) throw new IllegalArgumentException();
+                after = UUID.fromString(parts[0]);
+                afterSpec = UUID.fromString(parts[1]);
+            } catch (IllegalArgumentException ex) {
+                throw error(400, "INVALID_CURSOR", "审核游标无效");
+            }
+        }
         var rows = db.queryForList(
                         """
-SELECT project_id AS "projectId", sample_id AS "sampleId", spec_version_id AS "specVersionId",
-  status, source_kind AS "sourceKind", submission_id AS "submissionId", execution_id AS "executionId",
-  reason, revision, updated_at::text AS "updatedAt"
-FROM sample_review WHERE project_id=? AND sample_id>? ORDER BY sample_id LIMIT ?
-""", project, after, limit + 1);
+SELECT r.project_id AS "projectId", r.sample_id AS "sampleId", r.spec_version_id AS "specVersionId",
+  r.status, r.source_kind AS "sourceKind", r.submission_id AS "submissionId", r.execution_id AS "executionId",
+  r.reason, r.revision, r.updated_at::text AS "updatedAt",
+  s.source_path AS "sourcePath", s.metadata->>'displayName' AS "displayName"
+FROM sample_review r JOIN sample s ON s.id=r.sample_id
+WHERE r.project_id=? AND (r.sample_id,r.spec_version_id)>(?,?)
+ORDER BY r.sample_id,r.spec_version_id LIMIT ?
+""", project, after, afterSpec, limit + 1);
         boolean more = rows.size() > limit;
         var items = more ? rows.subList(0, limit) : rows;
         Map<String,Object> response = new LinkedHashMap<>();
         response.put("items", items);
-        response.put("nextCursor", more ? items.get(items.size() - 1).get("sampleId").toString() : null);
+        response.put("nextCursor", more
+                ? items.get(items.size() - 1).get("sampleId") + ":" + items.get(items.size() - 1).get("specVersionId")
+                : null);
         return json.valueToTree(response);
     }
 
@@ -78,6 +93,9 @@ FROM sample_review WHERE project_id=? AND sample_id>? ORDER BY sample_id LIMIT ?
         if (previous != null) return previous;
         mutable(project);
         if (input.name() == null || input.name().isBlank()) throw error(422,"INVALID_REQUEST","成果名称不能为空");
+        if (input.selections() != null
+                && (input.sampleIds() != null || input.specVersionId() != null || input.selectionId() != null))
+            throw error(400,"INVALID_REQUEST","多规范成果不能同时提供单规范字段");
         if (input.selectionId() != null) {
             if (input.sampleIds() != null)
                 throw error(422, "INVALID_REQUEST", "selectionId 与 sampleIds 必须二选一");
@@ -119,24 +137,42 @@ FROM sample_review WHERE project_id=? AND sample_id>? ORDER BY sample_id LIMIT ?
                             input.name(),
                             input.specVersionId(),
                             scope.items().stream().map(ResultScopeService.Item::sampleId).toList(),
+                            null,
                             null);
         }
-        if (input.sampleIds() == null || input.sampleIds().isEmpty()
-                || input.sampleIds().size() > 10000) throw error(422,"EMPTY_SELECTION","成果范围不能为空");
-        one("SELECT id FROM spec_version WHERE id=? AND project_id=?", input.specVersionId(), project);
-        Set<UUID> unique = new TreeSet<>();
-        for (UUID sid : input.sampleIds()) {
-            if (sid == null) throw error(422,"INVALID_REQUEST","样本ID不能为空");
-            unique.add(sid);
+        Map<UUID,UUID> bindings = new TreeMap<>();
+        if (input.selections() != null) {
+            if (input.sampleIds() != null || input.specVersionId() != null || input.selectionId() != null)
+                throw error(400,"INVALID_REQUEST","多规范成果不能同时提供单规范字段");
+            for (FinalSelection selection : input.selections()) {
+                if (selection == null || selection.sampleId() == null || selection.specVersionId() == null)
+                    throw error(400,"INVALID_REQUEST","样本和规范不能为空");
+                if (bindings.put(selection.sampleId(), selection.specVersionId()) != null)
+                    throw error(422,"DUPLICATE_SAMPLE","同一样本不能重复进入成果");
+            }
+        } else {
+            if (input.sampleIds() == null || input.specVersionId() == null)
+                throw error(422,"EMPTY_SELECTION","成果范围不能为空");
+            for (UUID sid : input.sampleIds()) {
+                if (sid == null || bindings.put(sid, input.specVersionId()) != null)
+                    throw error(422,"DUPLICATE_SAMPLE","成果样本为空或重复");
+            }
         }
-        List<UUID> ids = new ArrayList<>(unique);
+        if (bindings.isEmpty() || bindings.size() > 10000)
+            throw error(422,"EMPTY_SELECTION","成果范围为空或超过上限");
+        for (UUID specId : new HashSet<>(bindings.values()))
+            one("SELECT id FROM spec_version WHERE id=? AND project_id=?", specId, project);
+        Set<UUID> specs = new HashSet<>(bindings.values());
+        UUID headerSpec = specs.size() == 1 ? specs.iterator().next() : null;
+        List<UUID> ids = new ArrayList<>(bindings.keySet());
         UUID snapshotId = UUID.randomUUID();
         db.update(
                 "INSERT INTO"
                     + " final_snapshot(id,project_id,spec_version_id,name,scope_hash,created_by)"
                     + " VALUES (?,?,?,?,?,?)",
-                snapshotId, project, input.specVersionId(), input.name(), hash(write(ids)), actor.actorId());
+                snapshotId, project, headerSpec, input.name(), hash(write(bindings)), actor.actorId());
         for (UUID sampleId : ids) {
+            UUID itemSpec = bindings.get(sampleId);
             boolean active = Boolean.TRUE.equals(db.queryForObject(
                                     """
                                     SELECT EXISTS (
@@ -151,13 +187,13 @@ FROM sample_review WHERE project_id=? AND sample_id>? ORDER BY sample_id LIMIT ?
                                 + " project_id=?", sampleId, project);
             Map<String,Object> rev = one(
                             "SELECT * FROM sample_review WHERE project_id=? AND sample_id=? AND"
-                                + " spec_version_id=? FOR UPDATE", project, sampleId, input.specVersionId());
+                                + " spec_version_id=? FOR UPDATE", project, sampleId, itemSpec);
             if (!"ACCEPTED".equals(rev.get("status"))) throw error(422,"FINAL_RESULTS_INCOMPLETE","存在未确认样本");
             UUID resultId = (UUID) rev.get("result_id");
             if (resultId == null)
                 resultId =
                         (UUID)
-                                currentSource(project, input.specVersionId(),
+                                currentSource(project, itemSpec,
                                                 sampleId, (String) rev.get("source_kind"),
                     (UUID) rev.get("submission_id"), (UUID) rev.get("execution_id"))
                                         .get("result_id");
@@ -166,14 +202,14 @@ FROM sample_review WHERE project_id=? AND sample_id>? ORDER BY sample_id LIMIT ?
                             (String)
                                     scopes.candidate(
                                                     project,
-                                                    input.specVersionId(), sampleId,
+                                                    itemSpec, sampleId,
                                                     resultId)
                                             .get("content"));
             db.update(
                     """
 INSERT INTO final_snapshot_item(snapshot_id,project_id,sample_id,spec_version_id,source_kind,submission_id,execution_id,result,review_revision,source_path,content_hash,result_id)
 VALUES (?,?,?,?,?,?,?,?::jsonb,?,?,?,?)
-""", snapshotId, project, sampleId, input.specVersionId(), rev.get("source_kind"),
+""", snapshotId, project, sampleId, itemSpec, rev.get("source_kind"),
                     rev.get("submission_id"), rev.get("execution_id"), write(result), ((Number) rev.get("revision")).longValue(),
                     sample.get("source_path"), sample.get("content_sha256"),
                     resultId);
@@ -332,7 +368,8 @@ VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
         var items = db.queryForList(
                         """
 SELECT sample_id AS "sampleId", source_kind AS "sourceKind", submission_id AS "submissionId",
-  execution_id AS "executionId", result::text AS result, review_revision AS "reviewRevision",
+  execution_id AS "executionId", spec_version_id AS "specVersionId",
+  result::text AS result, review_revision AS "reviewRevision",
   result_id AS "resultId", source_path AS "sourcePath", content_hash AS "contentHash"
 FROM final_snapshot_item WHERE snapshot_id=? ORDER BY sample_id
 """, id);
@@ -420,10 +457,14 @@ FROM final_snapshot_item WHERE snapshot_id=? ORDER BY sample_id
     public record SampleReviewInput(@NotNull UUID sampleId, @NotNull UUID specVersionId, @NotNull String action,
             String sourceKind, UUID submissionId, UUID executionId, String reason) {}
 
-    public record FinalInput(@NotNull String name, @NotNull UUID specVersionId,
-            List<UUID> sampleIds,
-            UUID selectionId) {
+    public record FinalSelection(@NotNull UUID sampleId, @NotNull UUID specVersionId) {}
+    public record FinalInput(@NotNull String name, UUID specVersionId, List<UUID> sampleIds,
+            UUID selectionId, List<FinalSelection> selections) {
         public FinalInput(String name, UUID specVersionId, List<UUID> sampleIds) {
-            this(name, specVersionId, sampleIds, null);}
-}
+            this(name, specVersionId, sampleIds, null, null);
+        }
+        public FinalInput(String name, UUID specVersionId, List<UUID> sampleIds, UUID selectionId) {
+            this(name, specVersionId, sampleIds, selectionId, null);
+        }
+    }
 }

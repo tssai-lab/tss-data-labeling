@@ -1,4 +1,8 @@
 spring:
+  task:
+    scheduling:
+      pool:
+        size: 2
   application:
     name: tss-labeling-service
   datasource:
@@ -27,6 +31,15 @@ server:
   port: ${LABELING_PORT:8082}
 
 labeling:
+  exports:
+    worker-enabled: ${LABELING_EXPORT_WORKER_ENABLED:true}
+    poll-delay-ms: ${LABELING_EXPORT_POLL_DELAY_MS:1000}
+  ls-source:
+    # 本地 Python 调用仓库内源码；不启动独立 LS 服务。
+    python: ${LABELING_LS_SOURCE_PYTHON:python}
+    adapter-root: ${LABELING_LS_SOURCE_ADAPTER_ROOT:./ls-source-adapter}
+    work-root: ${LABELING_LS_SOURCE_WORK_ROOT:${labeling.imports.storage-root}/ls-jobs}
+    timeout-seconds: ${LABELING_LS_SOURCE_TIMEOUT_SECONDS:30}
   tasks:
     # 同步打包的资源上限，不代表无限上传或无限发布。
     max-samples: ${LABELING_TASK_MAX_SAMPLES:10000}

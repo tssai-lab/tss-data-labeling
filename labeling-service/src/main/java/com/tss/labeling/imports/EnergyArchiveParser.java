@@ -104,7 +104,7 @@ public class EnergyArchiveParser {
                             .setHeader()
                             .setSkipHeaderRecord(true)
                             .setDuplicateHeaderMode(DuplicateHeaderMode.DISALLOW)
-                            .get();
+                            .build();
             List<ArchiveParser.ParsedSample> samples = new ArrayList<>();
             Set<String> tasks = new HashSet<>(), days = new HashSet<>();
             try (var parser = CSVParser.parse(csv, format)) {
@@ -222,7 +222,7 @@ public class EnergyArchiveParser {
                 invalid(0, "csv", "CSV 格式无效");
             }
             if (samples.isEmpty()) invalid(1, "rows", "CSV 不含样本");
-            return new ArchiveParser.ParsedArchive(samples, List.of(), 0);
+            return new ArchiveParser.ParsedArchive(samples, List.of(), List.of(), 0);
         }
     }
 

@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tss.labeling.identity.ActorService;
+import com.tss.labeling.ls.TaskRegistry;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -33,10 +34,12 @@ public class ProjectService {
 
     private final JdbcTemplate jdbcTemplate;
     private final ObjectMapper objectMapper;
+    private final TaskRegistry registry;
 
-    public ProjectService(JdbcTemplate jdbcTemplate, ObjectMapper objectMapper) {
+    public ProjectService(JdbcTemplate jdbcTemplate, ObjectMapper objectMapper, TaskRegistry registry) {
         this.jdbcTemplate = jdbcTemplate;
         this.objectMapper = objectMapper;
+        this.registry = registry;
     }
 
     @Transactional
@@ -123,7 +126,9 @@ public class ProjectService {
         String taskType = normalizeTaskType(request.taskType());
         com.tss.labeling.tasks.TaskTemplates.validate(
                 taskType, request.templateId(), request.templateVersion());
-        validateLabels(request.labels());
+        if (!TaskRegistry.FORMAT.equals(request.schemaVersion())) validateLabels(request.labels());
+        else if (request.labels() == null || !request.labels().isArray())
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST);
         JsonNode editorConfig = request.editorConfig();
         if (editorConfig == null) {
             editorConfig = objectMapper.createObjectNode();
@@ -150,7 +155,7 @@ FROM spec_version WHERE id = ? AND project_id = ?
 
         String projectTaskType = jdbcTemplate.query(
                         "SELECT task_type FROM project WHERE id = ? AND owner_actor_id = ? AND"
-                            + " deleted_at IS NULL FOR UPDATE",
+                            + " deleted_at IS NULL AND status IN ('DRAFT','OPEN') FOR UPDATE",
                 result -> result.next() ? result.getString(1) : null,
                 projectId,
                 actor.actorId()
@@ -162,6 +167,7 @@ FROM spec_version WHERE id = ? AND project_id = ?
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST);
         }
 
+        editorConfig = registry.freeze(taskType, request.schemaVersion(), editorConfig);
         Integer versionNo = jdbcTemplate.queryForObject(
                         "SELECT COALESCE(MAX(version_no), 0) + 1 FROM spec_version WHERE project_id"
                             + " = ?",
@@ -270,6 +276,7 @@ FROM spec_version WHERE project_id = ? ORDER BY version_no DESC
         if (!TASK_TYPE_PATTERN.matcher(normalized).matches()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST);
         }
+        TaskRegistry.requireType(normalized);
         return normalized;
     }
 

@@ -29,6 +29,7 @@ public class TaskService {
     private final OutcomeService outcomes;
     private final com.tss.labeling.review.ReferenceService references;
     private final com.tss.labeling.review.ResultScopeService scopes;
+    private final org.springframework.beans.factory.ObjectProvider<com.tss.labeling.imports.NativeTaskService> nativeInputs;
     private final int maxSamples;
     private final int maxPackageSize;
     private final int maxAnnotators;
@@ -36,6 +37,7 @@ public class TaskService {
     public TaskService(JdbcTemplate db, ObjectMapper json, ImportStorage storage, OutcomeService outcomes,
             com.tss.labeling.review.ResultScopeService scopes,
             com.tss.labeling.review.ReferenceService references,
+            org.springframework.beans.factory.ObjectProvider<com.tss.labeling.imports.NativeTaskService> nativeInputs,
             @Value("${labeling.tasks.max-samples:10000}") int maxSamples,
             @Value("${labeling.tasks.max-package-size:1000}") int maxPackageSize,
             @Value("${labeling.tasks.max-annotators:10}") int maxAnnotators) {
@@ -43,6 +45,7 @@ public class TaskService {
         this.outcomes = outcomes;
         this.scopes = scopes;
         this.references = references;
+        this.nativeInputs = nativeInputs;
         this.maxSamples = maxSamples; this.maxPackageSize = maxPackageSize; this.maxAnnotators = maxAnnotators;
     }
 
@@ -147,6 +150,8 @@ VALUES (?,?,?,?,?,?,?,?,?::jsonb,?)
             if (!selection(samples).equals(expectedHash)) throw error(409,"SELECTION_CHANGED","样本集合已改变");
             List<UUID> sampleIds = new ArrayList<>();
             for (var s : samples) sampleIds.add((UUID) s.get("id"));
+            nativeInputs.getObject().validateForPublication(
+                    projectId, (UUID) plan.get("spec_version_id"), sampleIds);
             scopes.checkReopen(
                     projectId,
                     (UUID) plan.get("spec_version_id"),

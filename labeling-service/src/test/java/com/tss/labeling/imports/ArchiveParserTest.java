@@ -17,7 +17,7 @@ class ArchiveParserTest {
 
     ArchiveParser parser(int entries, long fileBytes, long expandedBytes, long pixels) throws Exception {
         ImportSettings settings = new ImportSettings(root.toString(), 256, 1048576, expandedBytes, fileBytes, entries, pixels, 2, "UTF-8", false);
-        return new ArchiveParser(settings, new ImportStorage(settings));
+        return new ArchiveParser(settings, new ImportStorage(settings), new NativeInputParser(new com.fasterxml.jackson.databind.ObjectMapper()));
     }
 
     UUID archive(byte[] bytes) throws Exception {

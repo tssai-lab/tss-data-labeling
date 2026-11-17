@@ -4,6 +4,8 @@ import static com.tss.labeling.common.WorkflowStore.error;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.tss.labeling.common.WorkflowStore;
+import com.tss.labeling.ls.NativeResultValidator;
+import com.tss.labeling.ls.TaskRegistry;
 
 import org.springframework.stereotype.Component;
 
@@ -14,26 +16,29 @@ import java.util.*;
 @Component
 public class TaskResultValidator {
     private final WorkflowStore s;
+    private final NativeResultValidator nativeResults;
 
-    public TaskResultValidator(WorkflowStore s) {
+    public TaskResultValidator(WorkflowStore s, NativeResultValidator nativeResults) {
         this.s = s;
+        this.nativeResults = nativeResults;
     }
 
     public String format(UUID spec) {
-        return "TIMESERIES_ANNOTATION"
-                        .equals(
-                                s.one("SELECT task_type FROM spec_version WHERE id=?", spec)
-                                        .get("task_type"))
-                ? "annotation-record-v1"
-                : "image-classification-v1";
+        var row = s.one("SELECT task_type,schema_version FROM spec_version WHERE id=?", spec);
+        if (TaskRegistry.FORMAT.equals(row.get("schema_version"))) return TaskRegistry.FORMAT;
+        return "TIMESERIES_ANNOTATION".equals(row.get("task_type"))
+                ? "annotation-record-v1" : "image-classification-v1";
     }
 
     public void validate(UUID spec, UUID sample, String format, JsonNode result, boolean done) {
-        var row =
-                s.one("SELECT task_type,labels::text AS labels FROM spec_version WHERE id=?", spec);
+        var row = s.one("SELECT task_type,schema_version,editor_config::text AS editor_config,labels::text AS labels FROM spec_version WHERE id=?", spec);
         String expected = format(spec);
         if (format != null && !expected.equals(format))
             throw error(422, "UNSUPPORTED_FORMAT", "结果格式与冻结规范不一致");
+        if (TaskRegistry.FORMAT.equals(row.get("schema_version"))) {
+            nativeResults.validate(s.read((String) row.get("editor_config")), result, done, sample);
+            return;
+        }
         Set<String> labels = new HashSet<>();
         for (var label : s.read((String) row.get("labels"))) labels.add(label.path("id").asText());
         if ("IMAGE_CLASSIFICATION".equals(row.get("task_type"))) {
