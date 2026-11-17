@@ -16,6 +16,7 @@ import { type ReactNode, useEffect, useRef, useState } from 'react';
 import {
   assignmentSampleBlob,
   LabelingError,
+  labelingJson,
   operationKey,
 } from '@/services/labeling';
 import type { PendingSubmission } from '@/services/labelingClassification.mjs';
@@ -37,6 +38,7 @@ import type {
   EditorState,
   SaveInput,
 } from './ClassificationEditorAdapter';
+import EnergyAssignment from './EnergyAssignment';
 import styles from './index.less';
 import { ClassificationTaskEditor } from './TaskEditorHost';
 import WorkspaceLayout from './WorkspaceLayout';
@@ -109,7 +111,7 @@ function WorkImage({
   );
 }
 
-export default function ClassificationAssignment() {
+function ClassificationAssignment() {
   const { assignmentId = '' } = useParams<{ assignmentId: string }>();
   const { message, modal } = App.useApp();
   const editorRef = useRef<ClassificationEditorHandle>(null);
@@ -138,7 +140,9 @@ export default function ClassificationAssignment() {
   const submittingLock = useRef(false);
   const selected = work?.items.find((item) => item.sampleId === selectedId);
   const readOnly =
-    work?.readOnly || work?.status === 'SUBMITTED' || Boolean(receiptId);
+    work?.readOnly ||
+    ['SUBMITTED', 'RELEASED', 'REVOKED'].includes(work?.status || '') ||
+    Boolean(receiptId);
   const dirty = Boolean(editorState?.dirty);
   const pendingKey = identity
     ? `labeling:pending-submission:${identity.actorId}:${assignmentId}`
@@ -557,7 +561,11 @@ export default function ClassificationAssignment() {
           <Card style={{ marginBottom: 20 }}>
             <Space wrap>
               <Tag color={readOnly ? 'green' : 'blue'}>
-                {readOnly ? '已交回 · 待需求方审核 · 只读' : '标注中'}
+                {work.status === 'RELEASED' || work.status === 'REVOKED'
+                  ? '领取已结束 · 只读'
+                  : readOnly
+                    ? '已交回 · 待需求方审核 · 只读'
+                    : '标注中'}
               </Tag>
               <Text>
                 草稿已完成 {completed} / {work.items.length} 张
@@ -744,15 +752,11 @@ export default function ClassificationAssignment() {
                           instructions={work.specification.instructions}
                           draft={draft}
                           reference={
-                            selected.referenceResult &&
-                            selected.referenceResultId &&
-                            selected.sourceKind
+                            selected.referenceResult
                               ? {
-                                  resultId: selected.referenceResultId,
-                                  result: selected.referenceResult,
-                                  sourceKind: selected.sourceKind,
-                                  modelVersion: selected.modelVersion,
-                                  confidence: selected.confidence,
+                                  result: selected.referenceResult.result,
+                                  sourceKind:
+                                    selected.referenceResult.sourceKind,
                                 }
                               : null
                           }
@@ -774,6 +778,49 @@ export default function ClassificationAssignment() {
           </div>
         </>
       )}
+    </WorkspaceLayout>
+  );
+}
+
+export default function AssignmentEntry() {
+  const { assignmentId = '' } = useParams<{ assignmentId: string }>();
+  const [kind, setKind] = useState(''),
+    [error, setError] = useState('');
+  useEffect(() => {
+    const abort = new AbortController();
+    setKind('');
+    setError('');
+    void labelingJson<WorkPage>(
+      `/assignments/${encodeURIComponent(assignmentId)}/items?limit=20`,
+      { signal: abort.signal },
+    )
+      .then((work) => {
+        if (work.assignmentId !== assignmentId)
+          throw new Error('任务归属不匹配');
+        if (!abort.signal.aborted)
+          setKind(work.specification.taskType || 'IMAGE_CLASSIFICATION');
+      })
+      .catch((e) => {
+        if (!abort.signal.aborted) setError(describe(e));
+      });
+    return () => abort.abort();
+  }, [assignmentId]);
+  if (error)
+    return (
+      <WorkspaceLayout>
+        <Alert type="error" message={error} />
+        <Button onClick={() => history.push('/labeling/assignments')}>
+          返回我的任务
+        </Button>
+      </WorkspaceLayout>
+    );
+  if (kind === 'TIMESERIES_ANNOTATION')
+    return <EnergyAssignment key={assignmentId} />;
+  if (kind === 'IMAGE_CLASSIFICATION')
+    return <ClassificationAssignment key={assignmentId} />;
+  return (
+    <WorkspaceLayout>
+      {kind ? <Alert type="error" message="任务类型尚未支持" /> : <Spin />}
     </WorkspaceLayout>
   );
 }

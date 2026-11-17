@@ -41,7 +41,7 @@ export type ClassificationEditorProps = EditorIdentity & {
   instructions: string;
   draft: ClassificationDraft;
   reference: {
-    resultId: string;
+    resultId?: string;
     result: { labelId?: string };
     sourceKind: 'HUMAN' | 'AI' | 'OWNER' | 'AGGREGATION';
     modelVersion?: string;

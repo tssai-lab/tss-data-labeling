@@ -21,12 +21,14 @@ import {
   encodeEnergyResult,
   energyLabels,
   energySummary,
+  sameEnergyResult,
   validateEnergyResult,
 } from '@/services/labelingEnergy.mjs';
 import type { EnergySave } from '@/services/labelingEnergyDemo.mjs';
 
 export type EnergyEditorProps = {
   input: EnergyInput;
+  labels?: readonly { id: string; name: string }[];
   draft: EnergyDraft;
   reference?: EnergyResult | null;
   readOnly: boolean;
@@ -38,9 +40,9 @@ export type EnergyEditorProps = {
     valid: boolean;
   }) => void;
 };
-const options = energyLabels.map((value) => ({ value, label: value }));
 export default function EnergyEditorAdapter({
   input,
+  labels,
   draft,
   reference,
   readOnly,
@@ -48,10 +50,14 @@ export default function EnergyEditorAdapter({
   onSave,
   onStateChange,
 }: EnergyEditorProps) {
+  const options = (labels || energyLabels.map((id) => ({ id, name: id }))).map(
+    (l) => ({ value: l.id, label: l.name }),
+  );
+  const allowed = options.map((o) => o.value);
   const original = draft.revision === 0 && reference ? reference : draft.result;
   const controlId = useId();
   const [value, setValue] = useState<EnergyValue>(() =>
-    decodeEnergyResult(original, input),
+    decodeEnergyResult(original, input, allowed),
   );
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
@@ -68,12 +74,12 @@ export default function EnergyEditorAdapter({
   let result: EnergyResult | undefined;
   let valid = false;
   try {
-    result = encodeEnergyResult(value, input);
-    valid = validateEnergyResult(result, input, true);
+    result = encodeEnergyResult(value, input, allowed);
+    valid = validateEnergyResult(result, input, true, allowed);
   } catch {
     /* Incomplete drafts stay editable. */
   }
-  const dirty = JSON.stringify(result) !== JSON.stringify(draft.result);
+  const dirty = !sameEnergyResult(result, draft.result);
   const disabled = readOnly || saving || uncertain;
   useEffect(() => {
     notify.current({ dirty, saving, valid });
@@ -93,7 +99,7 @@ export default function EnergyEditorAdapter({
     setError('');
     try {
       const next = encodeEnergyResult(value, input);
-      validateEnergyResult(next, input, done);
+      validateEnergyResult(next, input, done, allowed);
       const saved = await onSave({
         baseRevision: draft.revision,
         explicitDone: done,
@@ -103,7 +109,7 @@ export default function EnergyEditorAdapter({
       if (!mounted.current) return;
       if (
         saved.revision <= draft.revision ||
-        JSON.stringify(saved.result) !== JSON.stringify(next) ||
+        !sameEnergyResult(saved.result, next) ||
         saved.explicitDone !== done
       )
         throw new Error('保存读回不一致');
@@ -148,7 +154,7 @@ export default function EnergyEditorAdapter({
     );
   };
   return (
-    <Card title="24小时能耗曲线与试标">
+    <Card title="24小时能耗曲线与标注">
       <Space wrap>
         <Tag>{input.payload.stationKey}</Tag>
         <Tag>{input.payload.dateLocal} · Asia/Shanghai</Tag>
@@ -363,7 +369,7 @@ export default function EnergyEditorAdapter({
           <Alert type="info" message="固定参考，待人工确认；参考不自动完成" />
         )}
         <label htmlFor={`${controlId}-primary`}>
-          主标签（候选体系，尚待专家确认）
+          主标签（以当前冻结规范为准）
           <Select
             id={`${controlId}-primary`}
             aria-label="能耗主标签"
@@ -391,7 +397,7 @@ export default function EnergyEditorAdapter({
           />
         </label>
         <label htmlFor={`${controlId}-notes`}>
-          备注
+          备注（可选，建议填写异常依据）
           <Input.TextArea
             id={`${controlId}-notes`}
             aria-label="能耗备注"
@@ -424,7 +430,7 @@ export default function EnergyEditorAdapter({
           />
         )}
         <label htmlFor={`${controlId}-certainty`}>
-          人工自评（不写入模型 confidence）
+          人工自评（可选，不写入模型 confidence）
           <Select
             id={`${controlId}-certainty`}
             aria-label="人工自评"
@@ -452,7 +458,7 @@ export default function EnergyEditorAdapter({
               loading={saving}
               onClick={() => void save(false)}
             >
-              保存未完成试标草稿
+              保存未完成草稿
             </Button>
           )}
           <Button
@@ -462,14 +468,14 @@ export default function EnergyEditorAdapter({
             onClick={() => void save(true)}
           >
             {allowIncomplete
-              ? '保存并完成当前试标'
+              ? '保存并完成当前样本'
               : '保存需求方修订（仍待确认）'}
           </Button>
           <Button
             disabled={disabled}
             onClick={() => setValue(emptyEnergyValue())}
           >
-            清空试标
+            清空当前标注
           </Button>
         </Space>
         <Typography.Text type="secondary">

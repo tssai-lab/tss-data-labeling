@@ -48,9 +48,7 @@ export function EnergyTaskEditor(props: EnergyEditorProps) {
         inputSchemaId: props.input.schemaId,
       },
       {
-        preview:
-          process.env.NODE_ENV !== 'production' &&
-          process.env.LABELING_GAP_MOCK === 'true',
+        preview: false,
       },
     );
     const Editor = editors['energy-station-day-editor'];

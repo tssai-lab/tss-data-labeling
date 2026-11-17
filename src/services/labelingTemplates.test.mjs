@@ -18,20 +18,18 @@ test('legacy classification remains compatible; unknown versions and bindings ne
     { resultFormat: 'annotation-record-v1' },
   ])
     assert.throws(() => resolveTaskTemplate(binding));
-  assert.throws(
-    () =>
-      resolveTaskTemplate({
-        templateId: 'energy-station-day',
-        templateVersion: '1.0.0',
-      }),
-    (e) => e.code === 'TEMPLATE_UNSUPPORTED',
-  );
+  const energy = resolveTaskTemplate({
+    templateId: 'energy-station-day',
+    templateVersion: '1.0.0',
+  });
+  assert.equal(energy.enabled, true);
+  assert.equal(energy.editorKey, 'energy-station-day-editor');
   assert.equal(
-    resolveTaskTemplate(
-      { templateId: 'energy-station-day', templateVersion: '1.0.0' },
-      { preview: true },
-    ).enabled,
-    false,
+    resolveTaskTemplate({
+      inputSchemaId: 'image-classification-input@1.0.0',
+      resultSchemaId: 'image-classification-result@1.0.0',
+    }).id,
+    'image-classification',
   );
   assert.ok(Object.isFrozen(taskTemplates));
 });

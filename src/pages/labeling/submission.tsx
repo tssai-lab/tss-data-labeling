@@ -19,14 +19,19 @@ import {
   type SpecVersion,
   sampleBlob,
 } from '@/services/labeling';
+import { resultLabel } from '@/services/labelingStructured';
 import type { Submission } from '@/services/labelingTasks';
-import { tasks } from '@/services/labelingTasks';
+import { allWorkItems, tasks } from '@/services/labelingTasks';
+import StructuredPreview from './StructuredPreview';
+import { ReviewConclusion } from './SubmissionReview';
 import WorkspaceLayout from './WorkspaceLayout';
 
 export default function SubmissionView() {
   const { submissionId = '' } = useParams<{ submissionId: string }>();
   const [spec, setSpec] = useState<SpecVersion>();
   const [samples, setSamples] = useState<Sample[]>([]);
+  const [structuredSample, setStructuredSample] = useState(''),
+    [ownAssignment, setOwnAssignment] = useState(false);
   const [mappingNote, setMappingNote] = useState('');
   const imageAbort = useRef<AbortController | undefined>(undefined);
   const [preview, setPreview] = useState('');
@@ -37,6 +42,8 @@ export default function SubmissionView() {
   useEffect(() => {
     const abort = new AbortController();
     setValue(undefined);
+    setStructuredSample('');
+    setOwnAssignment(false);
     setSpec(undefined);
     setSamples([]);
     setMappingNote('');
@@ -99,6 +106,18 @@ export default function SubmissionView() {
             );
           }
         } catch (e) {
+          try {
+            const assignment = await allWorkItems(
+              result.assignmentId,
+              abort.signal,
+            );
+            if (!abort.signal.aborted) {
+              setSpec({ ...assignment.specification, versionNo: 0 });
+              setOwnAssignment(true);
+            }
+          } catch {
+            /* Owner spec read failure remains visible. */
+          }
           if (!abort.signal.aborted)
             setMappingNote(
               `来源映射不可用，保留真实样本与标签 ID。${describeLabelingError(e)}`,
@@ -166,6 +185,23 @@ export default function SubmissionView() {
               }}
             />
           )}
+          {structuredSample && spec && (
+            <StructuredPreview
+              projectId={value.projectId}
+              assignmentId={ownAssignment ? value.assignmentId : undefined}
+              spec={spec}
+              row={{
+                sampleId: structuredSample,
+                resultId:
+                  value.items.find((i) => i.sampleId === structuredSample)
+                    ?.resultId || null,
+                reviewRevision: 0,
+                result:
+                  value.items.find((i) => i.sampleId === structuredSample)
+                    ?.result || null,
+              }}
+            />
+          )}
           <Descriptions
             column={1}
             items={[
@@ -202,24 +238,30 @@ export default function SubmissionView() {
             scroll={{ x: 550 }}
             columns={[
               {
-                title: '图片路径 / 真实编号',
+                title: '来源路径 / 样本编号',
                 render: (_, item) =>
                   samples.find((s) => s.sampleId === item.sampleId)
                     ?.sourcePath || item.sampleId,
               },
               {
-                title: '分类标签 ID',
+                title: '主标签',
                 render: (_, item) =>
-                  spec?.labels.find((l) => l.id === item.result.labelId)
+                  spec?.labels.find((l) => l.id === resultLabel(item.result))
                     ?.name ||
-                  item.result.labelId ||
+                  resultLabel(item.result) ||
                   '—',
               },
               { title: '已提交草稿版本', dataIndex: 'revision' },
               {
-                title: '原图',
+                title: '样本数据',
                 render: (_, item) => (
-                  <Button onClick={() => void showImage(item.sampleId)}>
+                  <Button
+                    onClick={() =>
+                      item.resultFormat === 'annotation-record-v1'
+                        ? setStructuredSample(item.sampleId)
+                        : void showImage(item.sampleId)
+                    }
+                  >
                     授权读取
                   </Button>
                 ),
@@ -228,6 +270,7 @@ export default function SubmissionView() {
           />
         </Card>
       )}
+      {value && <ReviewConclusion submissionId={value.submissionId} />}
     </WorkspaceLayout>
   );
 }

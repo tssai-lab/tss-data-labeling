@@ -71,15 +71,18 @@ export function hourTimestamp(input: EnergyInput, hour: number): string;
 export function encodeEnergyResult(
   value: EnergyValue,
   input: EnergyInput,
+  labels?: readonly string[],
 ): EnergyResult;
 export function decodeEnergyResult(
   result: EnergyResult,
   input: EnergyInput,
+  labels?: readonly string[],
 ): EnergyValue;
 export function validateEnergyResult(
   result: EnergyResult,
   input: EnergyInput,
   complete?: boolean,
+  labels?: readonly string[],
 ): boolean;
 export function energySummary(input: EnergyInput): {
   missing: number;
@@ -87,3 +90,4 @@ export function energySummary(input: EnergyInput): {
   completeSum: number | null;
   difference: number | null;
 };
+export function sameEnergyResult(left: EnergyResult | undefined, right: EnergyResult): boolean;

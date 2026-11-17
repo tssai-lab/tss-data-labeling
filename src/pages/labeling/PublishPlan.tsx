@@ -60,12 +60,12 @@ export default function PublishPlan({
         .getPlan(id, abort.signal)
         .then((value) => {
           if (!abort.signal.aborted) {
+            if (value.projectId !== projectId)
+              throw new Error('计划不属于当前项目');
             setPlan(value);
             if (value.status === 'PUBLISHED') onPublished();
             try {
-              setPreviewSpecId(
-                localStorage.getItem(`${bookmark}:spec`) || undefined,
-              );
+              setPreviewSpecId(value.specVersionId);
             } catch {
               /* Re-preview when version is unknown. */
             }
@@ -151,7 +151,7 @@ export default function PublishPlan({
     }
   }
   return (
-    <Card title="3. 发布图片分类任务包" style={{ marginBottom: 20 }}>
+    <Card title="3. 发布标注任务包" style={{ marginBottom: 20 }}>
       {error && (
         <Alert
           type="error"
@@ -168,7 +168,7 @@ export default function PublishPlan({
       </Typography.Paragraph>
       <Alert
         type="info"
-        message="新计划每包1名人工，自行领取；历史包沿用冻结人数。默认10张，尾包保留，其他包未完成不阻塞本包。跨范围选样和再次发布待后端轮次接口。"
+        message="每包由一名标注人领取并完整提交。默认每包 10 个样本，最后一包保留剩余样本；需要重新标注部分样本时，请到结果工作台选择。"
       />
       {!plan && (
         <Form
@@ -179,7 +179,7 @@ export default function PublishPlan({
         >
           <Form.Item
             name="packageSize"
-            label="每包图片数"
+            label="每包样本数"
             rules={[{ required: true }]}
           >
             <InputNumber
@@ -221,8 +221,8 @@ export default function PublishPlan({
       {plan && (
         <>
           <Typography.Paragraph style={{ marginTop: 20 }}>
-            共 {plan.sampleCount} 张图片，{plan.packageSampleCounts.length}{' '}
-            个任务包，总工作量 {plan.totalWorkload} 次分类。各包图片数：
+            共 {plan.sampleCount} 个样本，{plan.packageSampleCounts.length}{' '}
+            个任务包，总工作量 {plan.totalWorkload} 次标注。各包样本数：
             {plan.packageSampleCounts.join(' / ')}。
           </Typography.Paragraph>
           {plan.status === 'PUBLISHED' ? (
@@ -240,7 +240,7 @@ export default function PublishPlan({
                 dataSource={plan.packages}
                 columns={[
                   { title: '包序号', dataIndex: 'sequenceNo' },
-                  { title: '图片数', dataIndex: 'sampleCount' },
+                  { title: '样本数', dataIndex: 'sampleCount' },
                   { title: '标注人数', dataIndex: 'requiredCount' },
                 ]}
               />
