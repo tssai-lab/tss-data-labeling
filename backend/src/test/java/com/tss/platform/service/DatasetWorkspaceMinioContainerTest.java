@@ -43,7 +43,7 @@ class DatasetWorkspaceMinioContainerTest {
     private static final String ACCESS_KEY = "dataset-workspace-it";
     private static final String SECRET_KEY = "dataset-workspace-it-secret-2026";
     private static final DockerImageName MINIO_IMAGE = DockerImageName.parse(
-            "quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z"
+            "minio/minio:RELEASE.2025-09-07T16-13-09Z"
     );
 
     @Container
