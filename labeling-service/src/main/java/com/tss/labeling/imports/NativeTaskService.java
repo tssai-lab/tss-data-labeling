@@ -63,7 +63,7 @@ public class NativeTaskService {
 
     @Transactional
     public JsonNode assignmentTask(ActorContext actor,UUID assignment,UUID sample) {
-        tasks.file(actor,assignment,sample);
+        assignmentDataAccess(actor,assignment,sample);
         var version=one("""
                 SELECT p.project_id,sv.editor_config::text AS config FROM assignment a
                 JOIN task_package t ON t.id=a.package_id JOIN package_plan p ON p.id=t.plan_id
@@ -408,6 +408,23 @@ public class NativeTaskService {
         owner(actor,project);
         if("PAUSED".equals(one("SELECT status FROM project WHERE id=?",project).get("status")))
             throw error(409,"PROJECT_PAUSED","项目已暂停");
+    }
+    private void assignmentDataAccess(ActorContext actor,UUID assignment,UUID sample) {
+        if(!"ENABLED".equals(one("SELECT status FROM actor WHERE id=? FOR SHARE",actor.actorId()).get("status")))
+            throw error(403,"LABELING_DISABLED","当前账号已停用");
+        var row=one("""
+                SELECT a.status AS assignment_status,p.status AS project_status
+                FROM assignment a
+                JOIN publication_round r ON r.id=a.round_id
+                JOIN round_item i ON i.round_id=r.id AND i.sample_id=?
+                JOIN project p ON p.id=r.project_id
+                WHERE a.id=? AND a.actor_id=? AND p.deleted_at IS NULL
+                """,sample,assignment,actor.actorId());
+        String assignmentStatus=(String)row.get("assignment_status");
+        if(!Set.of("CLAIMED","IN_PROGRESS","SUBMITTED").contains(assignmentStatus))
+            throw error(409,"ASSIGNMENT_CLOSED","领取已结束");
+        if(!"SUBMITTED".equals(assignmentStatus)&&!"OPEN".equals(row.get("project_status")))
+            throw error(409,"PROJECT_CLOSED","项目当前不可标注");
     }
     public static JsonNode at(JsonNode root,String field) {
         if(root.has(field))return root.get(field);

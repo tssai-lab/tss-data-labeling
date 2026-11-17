@@ -614,13 +614,26 @@ WHERE t.plan_id=? ORDER BY t.sequence_no
         for (UUID id : ids) {
             one("SELECT id FROM sample WHERE id=? AND project_id=?", id, project);
             if (refs.get(id) != null) {
-                Boolean ok = db.queryForObject(
-                                """
-SELECT EXISTS(SELECT 1 FROM submission_item si JOIN submission s ON s.id=si.submission_id
-WHERE si.submission_id=? AND si.sample_id=? AND s.project_id=? AND s.spec_version_id=?)
-""", Boolean.class, refs.get(id), id, project,
-                                spec);
-                if (!Boolean.TRUE.equals(ok)) throw error(422,"INVALID_REFERENCE","参考结果不属于该样本或项目");
+                Map<String,Object> reference = db.query(
+                        """
+                        SELECT si.result_format AS result_format, source_spec.task_type AS task_type
+                        FROM submission_item si
+                        JOIN submission s ON s.id=si.submission_id
+                        JOIN spec_version source_spec ON source_spec.id=s.spec_version_id
+                        WHERE si.submission_id=? AND si.sample_id=? AND s.project_id=?
+                        """,
+                        rs -> rs.next()
+                                ? Map.of("result_format",rs.getString("result_format"),"task_type",rs.getString("task_type"))
+                                : null,
+                        refs.get(id),id,project);
+                Map<String,Object> target = one("SELECT task_type,schema_version FROM spec_version WHERE id=? AND project_id=?",spec,project);
+                String taskType=(String)target.get("task_type");
+                String expectedFormat="label-studio-v1".equals(target.get("schema_version"))
+                        ? "label-studio-v1"
+                        : (String)TaskTemplates.forType(taskType).get("resultFormat");
+                if(reference==null || !taskType.equals(reference.get("task_type"))
+                        || !expectedFormat.equals(reference.get("result_format")))
+                    throw error(422,"INVALID_REFERENCE","参考结果不属于该样本、项目或兼容的任务类型");
             }
             Map<String,Object> row = new LinkedHashMap<>();
             row.put("id", id);
