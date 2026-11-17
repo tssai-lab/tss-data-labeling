@@ -70,11 +70,13 @@ export async function getInitialState(): Promise<{
       '/user/register-result',
       '/user/forgot-password',
       '/user/reset-password',
+      '/labeling/help',
     ].includes(location.pathname)
   ) {
     const currentUser = await fetchUserInfo();
     // 登录后同步系统配置中的训练代码审核开关（失败不影响进入系统）
-    if (currentUser) await syncTrainingCodeReviewConfigFromServer().catch(() => undefined);
+    if (currentUser)
+      await syncTrainingCodeReviewConfigFromServer().catch(() => undefined);
     return {
       fetchUserInfo,
       currentUser,
@@ -97,7 +99,12 @@ export const layout: RunTimeLayoutConfig = ({
   // 初始化message实例
   return {
     // 顶部导航栏右侧的菜单
-    actionsRender: () => [<Link key="platforms" to="/platforms">切换平台</Link>, <Question key="doc" />],
+    actionsRender: () => [
+      <Link key="platforms" to="/platforms">
+        切换平台
+      </Link>,
+      <Question key="doc" />,
+    ],
     // 配置顶部栏右侧的用户头像
     avatarProps: {
       // 头像图片地址
@@ -122,6 +129,7 @@ export const layout: RunTimeLayoutConfig = ({
         '/user/register-result',
         '/user/forgot-password',
         '/user/reset-password',
+        '/labeling/help',
       ]);
       if (noLoginPaths.has(pathname)) return;
       if (!initialState?.currentUser) {
@@ -219,10 +227,16 @@ export const request: RequestConfig = {
         const expiredToken = storage.get<string>(STORAGE_KEYS.TOKEN);
         unauthorizedOnceGate.run(expiredToken, () => {
           storage.remove(STORAGE_KEYS.TOKEN);
-          if (shouldNotifySessionExpired(expiredToken, Boolean(opts?.skipErrorHandler))) {
+          if (
+            shouldNotifySessionExpired(
+              expiredToken,
+              Boolean(opts?.skipErrorHandler),
+            )
+          ) {
             notification.error({ message: '登录已失效，请重新登录' });
           }
-          if (history.location.pathname !== loginPath) redirectToLogin({ replace: true });
+          if (history.location.pathname !== loginPath)
+            redirectToLogin({ replace: true });
         });
         return;
       }

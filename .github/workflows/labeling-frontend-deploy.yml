@@ -2,29 +2,61 @@ name: 统一前端自动部署
 
 on:
   push:
-    branches: [frontend]
+    branches: [frontend, feat/frontend_LS]
     paths:
       - 'src/**'
       - 'public/**'
       - 'config/**'
       - 'types/**'
       - 'scripts/**'
+      - 'vendor/label-studio/**'
       - 'package.json'
       - 'package-lock.json'
       - '.npmrc'
       - 'tsconfig.json'
       - '.github/workflows/labeling-frontend-deploy.yml'
+  pull_request:
+    branches: [frontend]
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: labeling-production-frontend
+  group: labeling-frontend-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: 安装依赖并构建统一前端
+        run: |
+          npm ci
+          npm run install:ls-editor
+          npm run build
+          npm run check:ls-artifact -- dist
+          test -s dist/index.html
+          tar -C dist -czf labeling-frontend-dist.tar.gz .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: labeling-frontend-dist
+          path: labeling-frontend-dist.tar.gz
+          if-no-files-found: error
+          retention-days: 7
   deploy:
+    needs: build
     if: github.repository == 'tssai-lab/tss-data-labeling' && github.ref == 'refs/heads/frontend'
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -39,18 +71,14 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
+      - uses: actions/download-artifact@v4
         with:
-          node-version: '20'
-          cache: npm
-
-      - name: 安装依赖并构建统一前端
+          name: labeling-frontend-dist
+          path: release-input
+      - name: 解包已验证的前端产物
         run: |
-          npm ci
-          npm run build
-          test -s dist/index.html
-
+          mkdir -p dist
+          tar -xzf release-input/labeling-frontend-dist.tar.gz -C dist
       - name: 配置 SSH
         env:
           DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
