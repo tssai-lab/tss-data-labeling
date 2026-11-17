@@ -1,0 +1,10 @@
+{
+  "mode": "production-forced-flag",
+  "fixture": true,
+  "checks": [
+    "demo route cannot enable missing capabilities",
+    "real-client 403 retains token and error/requestId",
+    "no simulated or real writes"
+  ],
+  "passed": true
+}

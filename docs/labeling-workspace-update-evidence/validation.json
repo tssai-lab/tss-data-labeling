@@ -1,0 +1,56 @@
+{
+  "date": "2026-11-12",
+  "recordedAtStage": "local acceptance before the user approved PR creation and merge",
+  "workspace": "D:\\code\\GitHub\\tssai",
+  "frontendBase": "50f8246",
+  "backendRequirementsCommit": "ac89414605d8a2b26dcb5154a14b4a7e7c9cf2bb",
+  "checks": {
+    "typecheck": { "command": "npm run tsc", "passed": true },
+    "unitTests": {
+      "command": "npm test",
+      "passed": 317,
+      "failed": 0,
+      "skipped": 0
+    },
+    "governance": {
+      "command": "npm run lint:governance",
+      "passed": true,
+      "existingInfoDiagnostics": 5
+    },
+    "changedSourceLint": { "passed": true, "files": 12 },
+    "productionBuild": { "command": "npm run build", "passed": true },
+    "diffWhitespace": { "command": "git diff --check", "passed": true }
+  },
+  "newBehaviorTests": [
+    "Global/project navigation boundaries and platform brand link",
+    "Draft entry routes to publish preparation; other project states route to results",
+    "Only draft projects can request preview deletion",
+    "Deletion rechecks ownership via GET, state, resource ID and revision",
+    "Deletion permission and network failures do not become synthetic success",
+    "Preview payload retains batch, frozen specification, one annotator and idempotency key",
+    "Duplicate preview/publish clicks send one request",
+    "Read-only or missing-specification requests are blocked",
+    "Changing specification blocks publishing the old preview",
+    "Publish success survives a subsequent readback failure",
+    "Failed preview retains the original request key for retry"
+  ],
+  "browserVerification": {
+    "completed": false,
+    "reason": "Browser access was denied by policy for both the current page and an isolated synthetic page. Terminal browser automation was also blocked. The user explicitly chose manual visual acceptance.",
+    "screenshots": []
+  },
+  "dataBoundary": {
+    "realBusinessWritesPerformed": false,
+    "deletionBackendAvailable": false,
+    "deletionMode": "Explicit current-page preview; server data unchanged and refresh restores rows",
+    "missingWorkflowApis": "Explicit isolated synthetic previews; never automatic fallback from failed real requests",
+    "developmentSyntheticPreview": "Enabled locally via ignored .env.local; production workflow previews remain disabled"
+  },
+  "gitActions": {
+    "committed": false,
+    "pushed": false,
+    "pullRequestCreated": false,
+    "merged": false,
+    "deployed": false
+  }
+}

@@ -1,0 +1,39 @@
+{
+  "synthetic": true,
+  "checks": [
+    "Desktop three columns; mobile list/image/details stack; real full-filter totals differ from loaded rows; source/status filtering, pagination, independent checkbox/focus, prev/next and per-sample SVG binding; AI zero/unknown and human not-applicable",
+    "Missing image placeholder; no-answer reason-required NEEDS_REVISION; double activation writes one review revision; confirm dialog pins sample/result/base revision; owner revision is pending, old AI confidence retained; history choice previews without auto-accept; empty filters are safe",
+    "Write failures preserve inputs and show real code plus refresh/reconfirm guidance; batch review still consumes explicit frozen preview; all five tabs remain accessible",
+    "Existing export flow produces a ZIP with exactly two accepted results; fixed PUBLISH selections execute AI through publish/progress tabs; processing disables writes; multiple unselected candidates require explicit history choice before adoption",
+    "Real workbench uses existing project/me/submission APIs with actual errors, loaded package counts and readonly links; all missing AI/review/revision/export operations disabled; 403 keeps token and requestId, no mock fallback"
+  ],
+  "screenshots": [
+    {
+      "name": "review-desktop",
+      "viewport": 1586,
+      "document": 1586
+    },
+    {
+      "name": "review-mobile",
+      "viewport": 390,
+      "document": 390
+    },
+    {
+      "name": "review-final-mobile",
+      "viewport": 390,
+      "document": 390
+    }
+  ],
+  "pageErrors": [],
+  "unexpectedRequests": [],
+  "realRequests": [
+    "GET /me",
+    "GET /projects/fixture-project",
+    "GET /projects/fixture-project/submissions",
+    "GET /me",
+    "GET /me",
+    "GET /me",
+    "GET /projects/fixture-project/submissions"
+  ],
+  "passed": true
+}

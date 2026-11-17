@@ -1,0 +1,77 @@
+{
+  "date": "2026-11-11",
+  "repository": "https://github.com/tssai-lab/tss-data-labeling",
+  "branch": "feat/labeling-v11-frontend-gap",
+  "baseline": "56ca3af7d771d1938d32752c147c9ef29ceb1dcc",
+  "delivery": "Validated locally; user subsequently authorized commit and push to feat/labeling-v11-frontend-gap. No PR, merge or deployment.",
+  "commands": [
+    {
+      "command": "npm run tsc",
+      "exitCode": 0
+    },
+    {
+      "exitCode": 0,
+      "command": "npm test",
+      "passed": 303,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "existingInfo": 5,
+      "exitCode": 0,
+      "command": "npm run lint:governance"
+    },
+    {
+      "exitCode": 0,
+      "command": "npm run build",
+      "environment": "LABELING_GAP_MOCK=true; production demo remains disabled"
+    },
+    {
+      "exitCode": 0,
+      "command": "Biome check on changed TSX, Less declaration and browser scripts",
+      "checkedFiles": 7
+    },
+    {
+      "command": "git diff --check",
+      "exitCode": 0
+    },
+    {
+      "exitCode": 0,
+      "command": "node scripts/qa/labeling-review.browser.mjs",
+      "report": "browser-report.json"
+    },
+    {
+      "mode": "default-off",
+      "exitCode": 0,
+      "command": "node scripts/qa/labeling-review-mode.browser.mjs",
+      "report": "default-off-report.json"
+    },
+    {
+      "mode": "production-forced-flag",
+      "exitCode": 0,
+      "command": "node scripts/qa/labeling-review-mode.browser.mjs",
+      "report": "production-forced-flag-report.json"
+    }
+  ],
+  "resizeRegression": {
+    "pages": ["demo", "real-workbench HTTP fixture"],
+    "viewportWidths": [390, 1586, 768, 390, 1586],
+    "passed": true,
+    "localLog": ".qa/review-stress.log",
+    "pageErrors": [],
+    "rounds": 8,
+    "viewportTransitions": 80
+  },
+  "screenshots": [
+    "review-desktop-1586.png",
+    "review-mobile-390.png",
+    "review-final-mobile-390.png",
+    "real-workbench-1586.png",
+    "real-workbench-390.png"
+  ],
+  "limitations": [
+    "No backend environment or test credentials supplied; real workbench browser coverage uses HTTP fixtures and GET requests only.",
+    "Review and export operations remain synthetic in the demo; missing real capabilities stay disabled.",
+    "review-confirmed.zip contains exactly two accepted synthetic results, not full project completion."
+  ]
+}

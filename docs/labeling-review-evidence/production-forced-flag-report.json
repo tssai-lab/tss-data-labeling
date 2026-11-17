@@ -1,0 +1,11 @@
+{
+  "mode": "production-forced-flag",
+  "passed": true,
+  "routes": ["/labeling/demo", "/labeling/demo/energy"],
+  "apiRequests": [],
+  "pageErrors": [],
+  "checks": [
+    "No review/export/energy writes or synthetic results exposed when disabled",
+    "No backend requests; production forced flag cannot open the demo"
+  ]
+}

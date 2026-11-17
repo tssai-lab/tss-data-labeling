@@ -16,6 +16,7 @@ import HeaderDropdown from '../HeaderDropdown';
 
 export type GlobalHeaderRightProps = {
   menu?: boolean;
+  beforeAction?: () => boolean | Promise<boolean>;
   children?: React.ReactNode;
 };
 
@@ -49,6 +50,7 @@ const useStyles = createStyles(({ token }) => {
 
 export const AvatarDropdown: React.FC<GlobalHeaderRightProps> = ({
   menu,
+  beforeAction,
   children,
 }) => {
   /**
@@ -72,7 +74,8 @@ export const AvatarDropdown: React.FC<GlobalHeaderRightProps> = ({
 
   const { initialState, setInitialState } = useModel('@@initialState');
 
-  const onMenuClick: MenuProps['onClick'] = (event) => {
+  const onMenuClick: MenuProps['onClick'] = async (event) => {
+    if (beforeAction && !(await beforeAction())) return;
     const { key } = event;
     if (key === 'logout') {
       flushSync(() => {

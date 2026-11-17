@@ -13,11 +13,11 @@ import {
   useModel,
 } from '@umijs/max';
 import { Alert, App, ConfigProvider, Tabs, theme } from 'antd';
-import styles from './index.module.less';
 import React, { useEffect, useState } from 'react';
 import { flushSync } from 'react-dom';
 import { login } from '@/services/ant-design-pro/api';
 import { sendSmsCode } from '@/services/ant-design-pro/login';
+import { loginErrorMessage } from '@/services/ant-design-pro/loginErrorPresentation.mjs';
 import {
   apiMessage,
   isApiSuccess,
@@ -25,6 +25,7 @@ import {
 } from '@/services/ant-design-pro/smsResponsePresentation.mjs';
 import { STORAGE_KEYS, storage } from '@/utils/storage';
 import Settings from '../../../../config/defaultSettings';
+import styles from './index.module.less';
 
 const LoginMessage: React.FC<{
   content: string;
@@ -130,7 +131,8 @@ const Login: React.FC = () => {
               password: values.password,
             };
       // 登录
-      const msg = await login(payload);
+      // 登录失败由表单统一提示，避免全局处理器重复弹出网络错误。
+      const msg = await login(payload, { skipErrorHandler: true });
       // 兼容两种成功标识：status === 'ok'（旧）或 code === 200（后端 code/msg/data）
       const isSuccess =
         (msg as any)?.status === 'ok' || (msg as any)?.code === 200;
@@ -168,13 +170,13 @@ const Login: React.FC = () => {
       setUserLoginState(msg);
     } catch (error) {
       console.log(error);
-      const errMsg =
-        (error as any)?.info?.message ||
-        (error as any)?.message ||
+      const errMsg = loginErrorMessage(
+        error,
         intl.formatMessage({
           id: 'pages.login.failure',
           defaultMessage: '登录失败，请重试！',
-        });
+        }),
+      );
       setLoginErrorMsg(errMsg);
       setUserLoginState({
         status: 'error',
@@ -215,12 +217,65 @@ const Login: React.FC = () => {
         >
           <div className={styles.showcaseHeader}>
             <div className={styles.brand}>
-              <svg className={styles.platformMark} viewBox="0 0 330 96" role="img" aria-label="TSS AI Platform">
-                <rect x="4" y="3" width="74" height="73" rx="5" fill="#a9e1ec" fillOpacity=".025" stroke="#58758e" strokeWidth="1.2" />
-                <text x="41" y="58" textAnchor="middle" fill="#a9e1ec" fontFamily="Georgia, serif" fontSize="53">T</text>
-                <text x="99" y="46" fill="#f1f5ff" fontFamily="Arial, Helvetica, sans-serif" fontSize="43" fontWeight="700" letterSpacing="1">TSS</text>
-                <text x="215" y="49" fill="#9adce7" fontFamily="Arial, Helvetica, sans-serif" fontSize="45" fontWeight="300">/</text>
-                <text x="101" y="73" fill="#b8cde7" fontFamily="Arial, Helvetica, sans-serif" fontSize="16" fontWeight="700" letterSpacing="4">AI PLATFORM</text>
+              <svg
+                className={styles.platformMark}
+                viewBox="0 0 330 96"
+                role="img"
+                aria-label="TSS AI Platform"
+              >
+                <rect
+                  x="4"
+                  y="3"
+                  width="74"
+                  height="73"
+                  rx="5"
+                  fill="#a9e1ec"
+                  fillOpacity=".025"
+                  stroke="#58758e"
+                  strokeWidth="1.2"
+                />
+                <text
+                  x="41"
+                  y="58"
+                  textAnchor="middle"
+                  fill="#a9e1ec"
+                  fontFamily="Georgia, serif"
+                  fontSize="53"
+                >
+                  T
+                </text>
+                <text
+                  x="99"
+                  y="46"
+                  fill="#f1f5ff"
+                  fontFamily="Arial, Helvetica, sans-serif"
+                  fontSize="43"
+                  fontWeight="700"
+                  letterSpacing="1"
+                >
+                  TSS
+                </text>
+                <text
+                  x="215"
+                  y="49"
+                  fill="#9adce7"
+                  fontFamily="Arial, Helvetica, sans-serif"
+                  fontSize="45"
+                  fontWeight="300"
+                >
+                  /
+                </text>
+                <text
+                  x="101"
+                  y="73"
+                  fill="#b8cde7"
+                  fontFamily="Arial, Helvetica, sans-serif"
+                  fontSize="16"
+                  fontWeight="700"
+                  letterSpacing="4"
+                >
+                  AI PLATFORM
+                </text>
               </svg>
             </div>
           </div>
@@ -238,7 +293,7 @@ const Login: React.FC = () => {
             </p>
           </div>
           <div className={styles.visual} aria-hidden="true">
-            <svg viewBox="0 0 600 350" fill="none">
+            <svg viewBox="0 0 600 350" fill="none" aria-hidden="true">
               <defs>
                 <linearGradient
                   id="tss-plane"

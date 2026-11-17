@@ -1,0 +1,33 @@
+{
+  "readDate": "2026-11-10",
+  "documentsUpdated": "2026-11-09",
+  "sources": [
+    {
+      "file": "01-product.md",
+      "sha256": "be441a86c994fe6c85d6cbb5029336e1856f0f5fcbfa0220e6b83bf64d6ed2e4"
+    },
+    {
+      "file": "02-architecture.md",
+      "sha256": "d5755938433394ee754d9acfbe08ff2b70d8e0f9ab59a0ed856f9706003aca2a"
+    },
+    {
+      "file": "03-database.md",
+      "sha256": "d6c6ca90263d2dcdf6c731b5162b3244c6bea98b59d7aef5fd8cbd698f8aefa5"
+    },
+    {
+      "file": "04-api.md",
+      "sha256": "0b9b9556ce0dc6630bc530b359d92d87afdfaf8dcc8256119299e766f4abf75f"
+    },
+    {
+      "file": "10-editor-integration.md",
+      "sha256": "5244349188f60b536b4313f00c00824760e2d848b4aa723635baf6e5aa91eb18"
+    },
+    {
+      "file": "13-team-work-plan.md",
+      "sha256": "4265f4adc041be9560bf86b1f6056a2292e4a777d6df2e794ba58562ff098eeb"
+    }
+  ],
+  "backendBaseline": "e55bf6e5707b2c7a1a30499b3ea3313ba9af592d",
+  "frontendBaseline": "2e1560203329d8afe90179c3e01182dcc9b27fb6",
+  "featureParent": "085fbb6b69a43e8df3770f7b8a5e38f0e3f3800e"
+}

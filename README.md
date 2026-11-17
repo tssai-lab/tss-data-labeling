@@ -36,7 +36,7 @@ npm run dev:local
 
 `npm ci` 会执行 `max setup` 生成 Umi 类型与运行时代码。
 `dev:local` 监听本机 8001 端口，后端默认 `http://127.0.0.1:8080`，MLflow 默认 `http://127.0.0.1:5000`。
-`npm start` 使用 3000 端口；以终端实际输出为准。远端联调设置方式见 [连接与部署说明](DEPLOY_SERVER.md)。
+`npm start` 使用 3000 端口；以终端实际输出为准。远端联调请先按 [本地联调说明](docs/local-integration.md) 配置根目录 `.env.local` 并重启开发服务器；克隆仓库不会带入其他机器的联调环境配置。通用部署说明见 [连接与部署说明](DEPLOY_SERVER.md)。
 
 ## 修改后的检查
 

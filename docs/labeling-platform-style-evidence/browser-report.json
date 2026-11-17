@@ -1,0 +1,124 @@
+{
+  "syntheticHttpFixtures": true,
+  "checks": [
+    "Platform selector retains separate training, real labeling and legacy Demo cards; legacy route opens unchanged project management",
+    "Real projects open the sidebar/table/inspector review layout; inspector closes and reopens; current-submission totals vs 20 loaded rows, thumbnails, more/next/prev/checkbox separation, frozen labels, revision zero, unknown accepted count and filters are accurate; unsupported thresholds remain disabled",
+    "Submission pagination/history changes preview only; missing frozen spec retains original label ID; late detail response cannot overwrite newer selection; summary/detail/image 403 shows requestId with retry, token retained; empty projects invent no samples or review counts; unsupported operations send no writes",
+    "Shared TSSAI header, left functional navigation, violet selections and white panels cover projects, setup, task pool, own tasks, users and submission details; mobile navigation scrolls and inspector stacks below the table; paused projects make no file request"
+  ],
+  "pageErrors": [],
+  "unexpectedRequests": [],
+  "requests": [
+    "GET /me",
+    "GET /me",
+    "GET /projects",
+    "GET /me",
+    "GET /projects/fixture-project",
+    "GET /projects/fixture-project/submissions",
+    "GET /submissions/submission-a",
+    "GET /projects/fixture-project/samples/sample-01/file",
+    "GET /projects/fixture-project/samples/sample-02/file",
+    "GET /projects/fixture-project/samples/sample-01/file",
+    "GET /projects/fixture-project/samples/sample-02/file",
+    "GET /projects/fixture-project/samples/sample-03/file",
+    "GET /projects/fixture-project/samples/sample-04/file",
+    "GET /projects/fixture-project/samples/sample-05/file",
+    "GET /projects/fixture-project/samples/sample-06/file",
+    "GET /projects/fixture-project/samples/sample-02/file",
+    "GET /projects/fixture-project/samples/sample-22/file",
+    "GET /projects/fixture-project/samples/sample-01/file",
+    "GET /projects/fixture-project/samples/sample-01/file",
+    "GET /projects/fixture-project/submissions",
+    "GET /submissions/submission-b",
+    "GET /projects/fixture-project/samples/sample-other/file",
+    "GET /submissions/submission-a",
+    "GET /projects/fixture-project/samples/sample-01/file",
+    "GET /submissions/submission-b",
+    "GET /submissions/submission-a",
+    "GET /projects/fixture-project/samples/sample-01/file",
+    "GET /projects/fixture-project/samples/sample-02/file",
+    "GET /projects/fixture-project/samples/sample-02/file",
+    "GET /submissions/submission-b",
+    "GET /submissions/submission-b",
+    "GET /projects/fixture-project/samples/sample-other/file",
+    "GET /projects/fixture-project/submissions",
+    "GET /me",
+    "GET /me",
+    "GET /me",
+    "GET /projects/fixture-project/samples/sample-other/file",
+    "GET /projects/fixture-project/samples/sample-other/file",
+    "GET /projects/fixture-project/submissions",
+    "GET /projects/fixture-project/submissions",
+    "GET /me",
+    "GET /projects/fixture-project",
+    "GET /projects/fixture-project/submissions",
+    "GET /submissions/submission-a",
+    "GET /me",
+    "GET /me",
+    "GET /projects/fixture-project",
+    "GET /projects/fixture-project/submissions",
+    "GET /me",
+    "GET /me",
+    "GET /me",
+    "GET /me",
+    "GET /me",
+    "GET /task-pool",
+    "GET /me",
+    "GET /me",
+    "GET /assignments",
+    "GET /me",
+    "GET /me",
+    "GET /admin/users",
+    "GET /me",
+    "GET /submissions/submission-a",
+    "GET /projects/fixture-project",
+    "GET /me"
+  ],
+  "screenshots": [
+    {
+      "name": "platforms",
+      "width": 1586
+    },
+    {
+      "name": "platforms",
+      "width": 390
+    },
+    {
+      "name": "projects",
+      "width": 1586
+    },
+    {
+      "name": "projects",
+      "width": 390
+    },
+    {
+      "name": "workbench",
+      "width": 1586
+    },
+    {
+      "name": "workbench",
+      "width": 390
+    },
+    {
+      "name": "project-setup",
+      "width": 390
+    },
+    {
+      "name": "tasks",
+      "width": 390
+    },
+    {
+      "name": "assignments",
+      "width": 390
+    },
+    {
+      "name": "users",
+      "width": 390
+    },
+    {
+      "name": "submission-a",
+      "width": 390
+    }
+  ],
+  "passed": true
+}

@@ -1,0 +1,16 @@
+.workspace { padding: 0 16px 16px; min-width: 0; }
+.toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 12px 0; border-bottom: 1px solid #dce3ec; margin-bottom: 12px; }
+.toolbarGroup { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; min-width: 0; }
+.sampleSelect { width: 340px; max-width: 100%; }
+.position { color: #718096; white-space: nowrap; }
+.message { margin: 8px 0; }
+.editorPane { min-width: 0; background: #fff; border: 1px solid #e3e8ef; border-radius: 6px; padding: 12px; }
+.editorFooter { position: sticky; bottom: 0; z-index: 15; background: #fff; border-top: 1px solid #e3e8ef; margin: 12px -12px -12px; padding: 10px 12px; box-shadow: 0 -3px 12px #172b4508; }
+.footerExtra { display: inline-flex; flex-wrap: wrap; align-items: center; border: 0; padding: 0; margin: 0; min-width: 0; }
+.sampleList { list-style: none; padding: 0; margin: 12px 0; }
+.sampleButton { width: 100%; display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 12px; border: 1px solid #e3e8ef; border-radius: 5px; background: #fff; text-align: left; cursor: pointer; color: #172b45; margin-bottom: 8px; }
+.sampleButton span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sampleButton[aria-current='true'] { background: #edf3ff; border-color: #3765d9; }
+.sampleButton:focus-visible { outline: 2px solid #3765d9; outline-offset: 2px; }
+.instructions { white-space: pre-wrap; overflow-wrap: anywhere; }
+@media (max-width: 760px) { .workspace { padding: 0 8px 8px; } .sampleSelect { width: min(340px, calc(100vw - 40px)); } .editorPane { padding: 8px; } .editorFooter { margin: 12px -8px -8px; } }

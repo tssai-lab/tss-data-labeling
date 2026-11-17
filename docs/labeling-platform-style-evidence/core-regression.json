@@ -1,0 +1,260 @@
+{
+  "data": "Synthetic browser fixtures; no real accounts or service writes",
+  "widths": [
+    {
+      "page": "project",
+      "viewport": 1280,
+      "document": 1280,
+      "tables": [
+        {
+          "client": 978,
+          "scroll": 978
+        },
+        {
+          "client": 978,
+          "scroll": 978
+        },
+        {
+          "client": 978,
+          "scroll": 978
+        }
+      ]
+    },
+    {
+      "page": "task-pool",
+      "viewport": 1280,
+      "document": 1280,
+      "tables": [
+        {
+          "client": 978,
+          "scroll": 978
+        }
+      ]
+    },
+    {
+      "page": "inline-assignment",
+      "viewport": 1280,
+      "document": 1280,
+      "tables": []
+    },
+    {
+      "page": "submission",
+      "viewport": 1280,
+      "document": 1280,
+      "tables": [
+        {
+          "client": 978,
+          "scroll": 978
+        }
+      ]
+    },
+    {
+      "page": "admin-users",
+      "viewport": 1280,
+      "document": 1280,
+      "tables": [
+        {
+          "client": 978,
+          "scroll": 978
+        }
+      ]
+    },
+    {
+      "page": "admin-modal",
+      "viewport": 1280,
+      "document": 1280,
+      "tables": [
+        {
+          "client": 978,
+          "scroll": 978
+        }
+      ]
+    },
+    {
+      "page": "real-workbench-pending",
+      "viewport": 1280,
+      "document": 1280,
+      "tables": []
+    },
+    {
+      "page": "project",
+      "viewport": 768,
+      "document": 768,
+      "tables": [
+        {
+          "client": 690,
+          "scroll": 690
+        },
+        {
+          "client": 690,
+          "scroll": 690
+        },
+        {
+          "client": 690,
+          "scroll": 690
+        }
+      ]
+    },
+    {
+      "page": "task-pool",
+      "viewport": 768,
+      "document": 768,
+      "tables": [
+        {
+          "client": 690,
+          "scroll": 700
+        }
+      ]
+    },
+    {
+      "page": "inline-assignment",
+      "viewport": 768,
+      "document": 768,
+      "tables": []
+    },
+    {
+      "page": "submission",
+      "viewport": 768,
+      "document": 768,
+      "tables": [
+        {
+          "client": 690,
+          "scroll": 2697
+        }
+      ]
+    },
+    {
+      "page": "admin-users",
+      "viewport": 768,
+      "document": 768,
+      "tables": [
+        {
+          "client": 690,
+          "scroll": 872
+        }
+      ]
+    },
+    {
+      "page": "admin-modal",
+      "viewport": 768,
+      "document": 768,
+      "tables": [
+        {
+          "client": 690,
+          "scroll": 872
+        }
+      ]
+    },
+    {
+      "page": "real-workbench-pending",
+      "viewport": 768,
+      "document": 768,
+      "tables": []
+    },
+    {
+      "page": "project",
+      "viewport": 390,
+      "document": 390,
+      "tables": [
+        {
+          "client": 328,
+          "scroll": 450
+        },
+        {
+          "client": 328,
+          "scroll": 650
+        },
+        {
+          "client": 328,
+          "scroll": 650
+        }
+      ]
+    },
+    {
+      "page": "task-pool",
+      "viewport": 390,
+      "document": 390,
+      "tables": [
+        {
+          "client": 328,
+          "scroll": 700
+        }
+      ]
+    },
+    {
+      "page": "inline-assignment",
+      "viewport": 390,
+      "document": 390,
+      "tables": []
+    },
+    {
+      "page": "submission",
+      "viewport": 390,
+      "document": 390,
+      "tables": [
+        {
+          "client": 328,
+          "scroll": 2697
+        }
+      ]
+    },
+    {
+      "page": "admin-users",
+      "viewport": 390,
+      "document": 390,
+      "tables": [
+        {
+          "client": 328,
+          "scroll": 872
+        }
+      ]
+    },
+    {
+      "page": "admin-modal",
+      "viewport": 390,
+      "document": 390,
+      "tables": [
+        {
+          "client": 328,
+          "scroll": 872
+        }
+      ]
+    },
+    {
+      "page": "real-workbench-pending",
+      "viewport": 390,
+      "document": 390,
+      "tables": []
+    },
+    {
+      "page": "draft-conflict-preserves-selection",
+      "viewport": 1280,
+      "document": 1280,
+      "tables": []
+    },
+    {
+      "page": "permission-error",
+      "viewport": 390,
+      "document": 390,
+      "tables": []
+    },
+    {
+      "page": "empty-pool",
+      "viewport": 390,
+      "document": 390,
+      "tables": [
+        {
+          "client": 328,
+          "scroll": 700
+        }
+      ]
+    }
+  ],
+  "checks": [
+    "1280 / 768 / 390 core pages and inline editor; no iframe; 6/10 incomplete package cannot submit; viewport overflow asserted",
+    "Inline dirty navigation guard; 409 preserves choice; reference never auto-completes; save locks navigation; cleared saved draft never restores reference",
+    "Exactly 10 frozen members across all item pages submitted; another incomplete assignment does not block; handback stays pending review; lost receipt replay succeeds"
+  ],
+  "pageErrors": [],
+  "unexpectedRequests": []
+}

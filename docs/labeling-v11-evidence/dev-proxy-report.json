@@ -1,0 +1,11 @@
+{
+  "fixture": true,
+  "realBackend": false,
+  "checks": [
+    "editor-ui exact path and query forwarded",
+    "one-time synthetic ticket 302 then 409",
+    "HttpOnly SameSite Strict scoped cookie preserved",
+    "editor-assets forwarded to labeling upstream"
+  ],
+  "passed": true
+}

@@ -9,7 +9,7 @@ COPY package.json package-lock.json .npmrc ./
 RUN npm ci --no-audit
 
 COPY . .
-RUN npm run build && test -s dist/index.html
+RUN npm run install:ls-editor && npm run build && npm run check:ls-artifact -- dist && test -s dist/index.html
 
 FROM nginx:1.28-alpine AS runtime
 

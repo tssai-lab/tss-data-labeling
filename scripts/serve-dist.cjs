@@ -65,6 +65,7 @@ function createProxyMiddleware(target, options = {}) {
 
 app.use('/label-api', createProxyMiddleware(process.env.LABEL_PROXY_TARGET || 'http://127.0.0.1:8013'));
 
+app.use('/api/labeling', createProxyMiddleware(process.env.DEV_LABELING_TARGET || 'http://127.0.0.1:8082'));
 app.use('/api', createProxyMiddleware(backendTarget));
 
 app.use(

@@ -72,6 +72,18 @@ test('duplicate members, cursor loops and changed frozen specifications fail clo
     page('work', null, [{ sampleId: 'a' }]),
     page('work', 'next', [{ sampleId: 'b' }]),
     page('work', null, [{ sampleId: 'b' }], 'changed'),
+    {
+      ...page('work', null, [{ sampleId: 'b' }]),
+      templateId: 'energy-station-day',
+      templateVersion: '1.0.0',
+    },
+    {
+      ...page('work', null, [{ sampleId: 'b' }]),
+      specification: {
+        ...page('work', null, []).specification,
+        resultSchemaId: 'changed-under-same-spec-id',
+      },
+    },
   ]) {
     let calls = 0;
     const api = client(async () =>

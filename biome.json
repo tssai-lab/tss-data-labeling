@@ -4,16 +4,17 @@
     "ignoreUnknown": true,
     "includes": [
       "**/*",
-      "!**/.umi/**",
-      "!**/.umi-production/**",
-      "!**/.umi-test/**",
-      "!**/.umi-test-production/**",
-      "!**/mock/**",
-      "!**/dist/**",
-      "!**/server/**",
-      "!**/public/**",
-      "!**/coverage/**",
-      "!**/node_modules/**",
+      "!**/.umi",
+      "!**/.umi-production",
+      "!**/.umi-test",
+      "!**/.umi-test-production",
+      "!**/mock",
+      "!**/dist",
+      "!**/server",
+      "!**/public",
+      "!**/coverage",
+      "!**/node_modules",
+      "!**/vendor",
       "!biome.json"
     ]
   },
@@ -46,9 +47,7 @@
   },
   "overrides": [
     {
-      "includes": [
-        "**/src/services/**/*.ts"
-      ],
+      "includes": ["**/src/services/**/*.ts"],
       "linter": {
         "rules": {
           "recommended": false,

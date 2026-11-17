@@ -1,0 +1,56 @@
+{
+  "readDate": "2026-11-12",
+  "backendCommit": "ac89414605d8a2b26dcb5154a14b4a7e7c9cf2bb",
+  "frontendBase": "50f8246",
+  "sources": [
+    {
+      "path": "docs/labeling-v1.1/01-product.md",
+      "gitBlobSha": "feddded7b4cabb481fc11a9c02ba7b1dff028aa8",
+      "url": "https://github.com/tssai-lab/tss-data-labeling/blob/ac89414605d8a2b26dcb5154a14b4a7e7c9cf2bb/docs/labeling-v1.1/01-product.md"
+    },
+    {
+      "path": "docs/labeling-v1.1/02-architecture.md",
+      "gitBlobSha": "ecfeccd290496250be8eb2745a53912c42d1fc86",
+      "url": "https://github.com/tssai-lab/tss-data-labeling/blob/ac89414605d8a2b26dcb5154a14b4a7e7c9cf2bb/docs/labeling-v1.1/02-architecture.md"
+    },
+    {
+      "path": "docs/labeling-v1.1/04-api.md",
+      "gitBlobSha": "ce592b21ee2762acb5985a1cd771d9612f9eee18",
+      "url": "https://github.com/tssai-lab/tss-data-labeling/blob/ac89414605d8a2b26dcb5154a14b4a7e7c9cf2bb/docs/labeling-v1.1/04-api.md"
+    },
+    {
+      "path": "docs/labeling-v1.1/10-editor-integration.md",
+      "gitBlobSha": "9c029ce6480b60819007573870e1bc69d65d34c6",
+      "url": "https://github.com/tssai-lab/tss-data-labeling/blob/ac89414605d8a2b26dcb5154a14b4a7e7c9cf2bb/docs/labeling-v1.1/10-editor-integration.md"
+    },
+    {
+      "path": "docs/labeling-v1.1/13-team-work-plan.md",
+      "gitBlobSha": "5eacc0c9d2d3c87677867274c11dac4ce02a735d",
+      "url": "https://github.com/tssai-lab/tss-data-labeling/blob/ac89414605d8a2b26dcb5154a14b4a7e7c9cf2bb/docs/labeling-v1.1/13-team-work-plan.md"
+    },
+    {
+      "path": "docs/labeling-v1.1/14-task-plugins-and-energy-acceptance.md",
+      "gitBlobSha": "75844871e6cd20cf803eb669f4c4b7682dcf78a6",
+      "url": "https://github.com/tssai-lab/tss-data-labeling/blob/ac89414605d8a2b26dcb5154a14b4a7e7c9cf2bb/docs/labeling-v1.1/14-task-plugins-and-energy-acceptance.md"
+    },
+    {
+      "path": "docs/labeling-v1.1/15-energy-requirements-questions.md",
+      "gitBlobSha": "294a79fb9c86480e146a00183b243fb3d545dfaa",
+      "url": "https://github.com/tssai-lab/tss-data-labeling/blob/ac89414605d8a2b26dcb5154a14b4a7e7c9cf2bb/docs/labeling-v1.1/15-energy-requirements-questions.md"
+    },
+    {
+      "path": "docs/labeling-v1.1/16-development-status-checklist.md",
+      "gitBlobSha": "141f6745f4505e2bb94ece90edf1a0cd5ee80a07",
+      "url": "https://github.com/tssai-lab/tss-data-labeling/blob/ac89414605d8a2b26dcb5154a14b4a7e7c9cf2bb/docs/labeling-v1.1/16-development-status-checklist.md"
+    },
+    {
+      "path": "docs/labeling-v1.1/README.md",
+      "gitBlobSha": "534ccd80abc92fd4e2716d1d8b70eb1759774367",
+      "url": "https://github.com/tssai-lab/tss-data-labeling/blob/ac89414605d8a2b26dcb5154a14b4a7e7c9cf2bb/docs/labeling-v1.1/README.md"
+    }
+  ],
+  "backendCodeReviewed": [
+    "labeling-service/src/main/java/com/tss/labeling/project/ProjectController.java",
+    "labeling-service/src/main/java/com/tss/labeling/tasks/TaskService.java"
+  ]
+}

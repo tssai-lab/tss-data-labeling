@@ -1,0 +1,17 @@
+{
+  "passed": true,
+  "syntheticOnly": true,
+  "energy": {
+    "archive": "synthetic-energy-confirmed.zip",
+    "rows": 10,
+    "entries": ["annotations.jsonl", "station-days.csv", "manifest.json"],
+    "fileSha256Verified": true,
+    "coordinatesVerified": true,
+    "humanCertaintySeparateFromConfidence": true
+  },
+  "classification": {
+    "archive": "confirmed-classification-export.zip",
+    "acceptedRows": 1,
+    "entries": ["classifications.csv", "manifest.json"]
+  }
+}

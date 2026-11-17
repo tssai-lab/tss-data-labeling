@@ -10,7 +10,7 @@ import {
   Typography,
 } from 'antd';
 import { useEffect, useRef, useState } from 'react';
-import { operationKey } from '@/services/labeling';
+import { describeLabelingError, operationKey } from '@/services/labeling';
 import type { Plan } from '@/services/labelingTasks';
 import { tasks } from '@/services/labelingTasks';
 
@@ -28,6 +28,12 @@ export default function PublishPlan({
   onPublished: () => void;
 }) {
   const [plan, setPlan] = useState<Plan>();
+  const [previewSpecId, setPreviewSpecId] = useState<string>();
+  const busyRef = useRef(false);
+  const draftSpecChanged =
+    plan?.status === 'DRAFT' && previewSpecId !== specVersionId;
+  const incompatibleDraft =
+    plan?.status === 'DRAFT' && plan.totalWorkload !== plan.sampleCount;
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [form] = Form.useForm<{
@@ -53,11 +59,20 @@ export default function PublishPlan({
       tasks
         .getPlan(id, abort.signal)
         .then((value) => {
-          if (!abort.signal.aborted) setPlan(value);
+          if (!abort.signal.aborted) {
+            setPlan(value);
+            if (value.status === 'PUBLISHED') onPublished();
+            try {
+              setPreviewSpecId(
+                localStorage.getItem(`${bookmark}:spec`) || undefined,
+              );
+            } catch {
+              /* Re-preview when version is unknown. */
+            }
+          }
         })
         .catch((e: unknown) => {
-          if (!abort.signal.aborted)
-            setError(e instanceof Error ? e.message : '计划读取失败');
+          if (!abort.signal.aborted) setError(describeLabelingError(e));
         })
         .finally(() => {
           if (!abort.signal.aborted) setBusy(false);
@@ -70,9 +85,13 @@ export default function PublishPlan({
   }, [bookmark]);
 
   async function preview() {
-    if (!specVersionId || busy) return;
+    if (!specVersionId || busyRef.current || busy || !writable) return;
+    busyRef.current = true;
     const values = await form.validateFields().catch(() => null);
-    if (!values) return;
+    if (!values) {
+      busyRef.current = false;
+      return;
+    }
     const body = { ...values, batchId, specVersionId };
     const payload = JSON.stringify(body);
     if (attempt.current?.payload !== payload)
@@ -83,38 +102,56 @@ export default function PublishPlan({
       const value = await tasks.plan(projectId, body, attempt.current.key);
       if (!alive.current) return;
       setPlan(value);
+      setPreviewSpecId(specVersionId);
       try {
         localStorage.setItem(bookmark, value.planId);
+        localStorage.setItem(`${bookmark}:spec`, specVersionId);
       } catch {
         /* Plan remains on this page. */
       }
     } catch (e) {
-      if (alive.current) setError(e instanceof Error ? e.message : '预览失败');
+      if (alive.current) setError(describeLabelingError(e));
     } finally {
+      busyRef.current = false;
       if (alive.current) setBusy(false);
     }
   }
   async function publish() {
-    if (!plan || busy) return;
+    if (
+      !plan ||
+      busyRef.current ||
+      busy ||
+      !writable ||
+      draftSpecChanged ||
+      incompatibleDraft
+    )
+      return;
+    busyRef.current = true;
     setBusy(true);
     setError('');
     try {
       const value = await tasks.publish(plan, `publish-${plan.planId}`);
-      const current = await tasks.getPlan(value.planId);
       if (!alive.current) return;
-      setPlan(current);
+      setPlan(value);
       onPublished();
+      try {
+        const current = await tasks.getPlan(value.planId);
+        if (alive.current) setPlan(current);
+      } catch (e) {
+        if (alive.current)
+          setError(
+            `任务已发布，读取最新包列表失败，可刷新页面核对：${describeLabelingError(e)}`,
+          );
+      }
     } catch (e) {
-      if (alive.current)
-        setError(
-          e instanceof Error ? e.message : '发布失败，可使用同一计划重试',
-        );
+      if (alive.current) setError(describeLabelingError(e));
     } finally {
+      busyRef.current = false;
       if (alive.current) setBusy(false);
     }
   }
   return (
-    <Card title="发布图片分类任务包" style={{ marginBottom: 20 }}>
+    <Card title="3. 发布图片分类任务包" style={{ marginBottom: 20 }}>
       {error && (
         <Alert
           type="error"
@@ -126,6 +163,13 @@ export default function PublishPlan({
       {!specVersionId && (
         <Alert type="info" message="请先保存分类规范，再预览任务包。" />
       )}
+      <Typography.Paragraph type="secondary">
+        任务包使用生成预览时选择的规范。更换规范后请重新预览；已发布任务包继续使用原冻结版本。
+      </Typography.Paragraph>
+      <Alert
+        type="info"
+        message="新计划每包1名人工，自行领取；历史包沿用冻结人数。默认10张，尾包保留，其他包未完成不阻塞本包。跨范围选样和再次发布待后端轮次接口。"
+      />
       {!plan && (
         <Form
           form={form}
@@ -147,15 +191,10 @@ export default function PublishPlan({
           </Form.Item>
           <Form.Item
             name="annotatorsPerSample"
-            label="每包标注人数"
+            label="本轮每包人工人数"
             rules={[{ required: true }]}
           >
-            <InputNumber
-              min={1}
-              max={10}
-              precision={0}
-              disabled={busy || !writable}
-            />
+            <InputNumber min={1} max={1} precision={0} disabled />
           </Form.Item>
           <Button
             htmlType="submit"
@@ -165,6 +204,19 @@ export default function PublishPlan({
             生成打包预览
           </Button>
         </Form>
+      )}
+      {incompatibleDraft && (
+        <Alert
+          type="warning"
+          message="本机旧预览不是本轮每包1人的规则，请先调整参数重新生成。"
+        />
+      )}
+      {draftSpecChanged && (
+        <Alert
+          type="warning"
+          showIcon
+          message="规范已更换或旧预览规范未知，请调整打包参数并重新生成预览后发布。"
+        />
       )}
       {plan && (
         <>
@@ -184,6 +236,7 @@ export default function PublishPlan({
                 size="small"
                 pagination={false}
                 rowKey="packageId"
+                scroll={{ x: 450 }}
                 dataSource={plan.packages}
                 columns={[
                   { title: '包序号', dataIndex: 'sequenceNo' },
@@ -198,7 +251,7 @@ export default function PublishPlan({
               <Button
                 type="primary"
                 loading={busy}
-                disabled={!writable}
+                disabled={!writable || incompatibleDraft || draftSpecChanged}
                 onClick={() => void publish()}
               >
                 确认发布此预览
@@ -209,6 +262,7 @@ export default function PublishPlan({
                   setPlan(undefined);
                   try {
                     localStorage.removeItem(bookmark);
+                    localStorage.removeItem(`${bookmark}:spec`);
                   } catch {
                     /* Optional bookmark. */
                   }

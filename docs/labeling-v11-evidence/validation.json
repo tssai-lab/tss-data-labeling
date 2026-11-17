@@ -1,0 +1,23 @@
+{
+  "date": "2026-11-09",
+  "node": "22.11.0",
+  "baseFrontend": "2e1560203329d8afe90179c3e01182dcc9b27fb6",
+  "baseBackend": "012157c09325fce8e39828e6aa16ac108b80385b",
+  "commands": {
+    "npm ci": "PASS",
+    "npm run tsc": "PASS",
+    "npm test": {
+      "passed": 279,
+      "failed": 0
+    },
+    "npm run build": "PASS, with LABELING_GAP_MOCK=true to verify production gating"
+  },
+  "browser": {
+    "engine": "installed Chrome via Playwright",
+    "viewports": [1280, 768, 390],
+    "screenshots": 22,
+    "data": "synthetic fixtures only"
+  },
+  "realIntegration": "NOT RUN: user confirmed no isolated backend/accounts",
+  "generatedFiles": "Swagger UI and Husky install outputs restored; not included"
+}
