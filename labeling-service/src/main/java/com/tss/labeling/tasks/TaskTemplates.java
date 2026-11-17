@@ -21,6 +21,22 @@ public final class TaskTemplates {
                 resultSchema = "image-classification-result@1.0.0";
                 editor = "image-classification-editor";
             }
+            case "COMPUTER_VISION" -> {
+                id = "computer-vision";
+                input = "label-studio-task-v1";
+                result = "label-studio-v1";
+                inputSchema = "computer-vision-input@1.0.0";
+                resultSchema = "label-studio-result@1.0.0";
+                editor = "label-studio-editor";
+            }
+            case "TIME_SERIES" -> {
+                id = "time-series";
+                input = "label-studio-task-v1";
+                result = "label-studio-v1";
+                inputSchema = "time-series-input@1.0.0";
+                resultSchema = "label-studio-result@1.0.0";
+                editor = "label-studio-editor";
+            }
             case "TIMESERIES_ANNOTATION" -> {
                 id = "energy-station-day";
                 input = "energy-station-day-input-v1";
