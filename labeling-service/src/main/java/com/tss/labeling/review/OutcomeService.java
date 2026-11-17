@@ -49,18 +49,22 @@ public class OutcomeService {
     public JsonNode sampleReviews(ActorContext actor, UUID project, int limit, String cursor) {
         owner(actor, project);
         if (limit < 1 || limit > 100) throw error(400,"INVALID_REQUEST","分页大小应为1至100");
-        UUID after = cursor(cursor);
+        UUID after=new UUID(0,0),afterSpec=new UUID(0,0);
+        if(cursor!=null)try{String[] parts=cursor.split(":",-1);after=UUID.fromString(parts[0]);afterSpec=parts.length==2?UUID.fromString(parts[1]):new UUID(-1,-1);if(parts.length>2)throw new IllegalArgumentException();}
+        catch(IllegalArgumentException exc){throw error(400,"INVALID_CURSOR","审核游标无效");}
         var rows = db.queryForList("""
-                SELECT project_id AS "projectId", sample_id AS "sampleId", spec_version_id AS "specVersionId",
-                  status, source_kind AS "sourceKind", submission_id AS "submissionId", execution_id AS "executionId",
-                  reason, revision, updated_at::text AS "updatedAt"
-                FROM sample_review WHERE project_id=? AND sample_id>? ORDER BY sample_id LIMIT ?
-                """, project, after, limit + 1);
+                SELECT r.project_id AS "projectId", r.sample_id AS "sampleId", r.spec_version_id AS "specVersionId",
+                  r.status, r.source_kind AS "sourceKind", r.submission_id AS "submissionId", r.execution_id AS "executionId",
+                  r.reason, r.revision, r.updated_at::text AS "updatedAt",
+                  s.source_path AS "sourcePath", s.metadata->>'displayName' AS "displayName"
+                FROM sample_review r JOIN sample s ON s.id=r.sample_id
+                WHERE r.project_id=? AND (r.sample_id,r.spec_version_id)>(?,?) ORDER BY r.sample_id,r.spec_version_id LIMIT ?
+                """, project, after,afterSpec, limit + 1);
         boolean more = rows.size() > limit;
         var items = more ? rows.subList(0, limit) : rows;
         Map<String,Object> response = new LinkedHashMap<>();
         response.put("items", items);
-        response.put("nextCursor", more ? items.get(items.size() - 1).get("sampleId").toString() : null);
+        response.put("nextCursor", more ? items.get(items.size() - 1).get("sampleId")+":"+items.get(items.size()-1).get("specVersionId") : null);
         return json.valueToTree(response);
     }
 
@@ -69,23 +73,34 @@ public class OutcomeService {
     @Transactional
     public JsonNode createFinalSnapshot(ActorContext actor, UUID project, FinalInput input, String key) {
         enabled(actor.actorId());
-        one("SELECT id FROM project WHERE id=? AND owner_actor_id=? FOR UPDATE", project, actor.actorId());
+        var row=one("SELECT id,status FROM project WHERE id=? AND owner_actor_id=? FOR UPDATE", project, actor.actorId());
+        if(!List.of("DRAFT","OPEN").contains(row.get("status")))throw error(409,"PROJECT_CLOSED","项目当前只读");
         String op = "POST:/projects/" + project + "/final-snapshots", hash = hash(write(input));
         JsonNode previous = replay(actor.actorId(), op, key, hash);
         if (previous != null) return previous;
         if (input.name() == null || input.name().isBlank()) throw error(422,"INVALID_REQUEST","成果名称不能为空");
-        if (input.sampleIds() == null || input.sampleIds().isEmpty()) throw error(422,"EMPTY_SELECTION","成果范围不能为空");
-        one("SELECT id FROM spec_version WHERE id=? AND project_id=?", input.specVersionId(), project);
-        Set<UUID> unique = new TreeSet<>();
-        for (UUID sid : input.sampleIds()) {
-            if (sid == null) throw error(422,"INVALID_REQUEST","样本ID不能为空");
-            unique.add(sid);
+        Map<UUID,UUID> bindings=new TreeMap<>();
+        if(input.selections()!=null){
+            if(input.sampleIds()!=null||input.specVersionId()!=null)throw error(400,"INVALID_REQUEST","单规范范围与多规范范围不能同时提供");
+            for(FinalSelection selection:input.selections()){
+                if(selection==null||selection.sampleId()==null||selection.specVersionId()==null)throw error(400,"INVALID_REQUEST","样本与规范不能为空");
+                if(bindings.put(selection.sampleId(),selection.specVersionId())!=null)throw error(422,"DUPLICATE_SAMPLE","同一样本只能选定一份最终规范结果");
+            }
+        }else{
+            if(input.specVersionId()==null||input.sampleIds()==null)throw error(400,"INVALID_REQUEST","请选择规范和样本");
+            for(UUID sample:input.sampleIds()){
+                if(sample==null||bindings.put(sample,input.specVersionId())!=null)throw error(422,"DUPLICATE_SAMPLE","成果样本重复或为空");
+            }
         }
-        List<UUID> ids = new ArrayList<>(unique);
+        if(bindings.isEmpty()||bindings.size()>100000)throw error(422,"EMPTY_SELECTION","成果范围为空或超过上限");
+        for(UUID spec:new HashSet<>(bindings.values()))one("SELECT id FROM spec_version WHERE id=? AND project_id=?",spec,project);
+        Set<UUID> specs=new HashSet<>(bindings.values());UUID headerSpec=specs.size()==1?specs.iterator().next():null;
+        List<UUID> ids=new ArrayList<>(bindings.keySet());
         UUID snapshotId = UUID.randomUUID();
         db.update("INSERT INTO final_snapshot(id,project_id,spec_version_id,name,scope_hash,created_by) VALUES (?,?,?,?,?,?)",
-                snapshotId, project, input.specVersionId(), input.name(), hash(write(ids)), actor.actorId());
+                snapshotId, project, headerSpec, input.name(), hash(write(bindings)), actor.actorId());
         for (UUID sampleId : ids) {
+            UUID itemSpec=bindings.get(sampleId);
             boolean active = Boolean.TRUE.equals(db.queryForObject("""
                     SELECT EXISTS (
                       SELECT 1 FROM sample_work_claim c
@@ -95,14 +110,14 @@ public class OutcomeService {
                     """, Boolean.class, project, sampleId));
             if (active) throw error(409,"SAMPLE_BUSY","所选样本仍在处理，不能固化最终成果");
             Map<String,Object> sample = one("SELECT source_path, content_sha256 FROM sample WHERE id=? AND project_id=?", sampleId, project);
-            Map<String,Object> rev = one("SELECT * FROM sample_review WHERE project_id=? AND sample_id=? AND spec_version_id=? FOR UPDATE", project, sampleId, input.specVersionId());
+            Map<String,Object> rev = one("SELECT * FROM sample_review WHERE project_id=? AND sample_id=? AND spec_version_id=? FOR UPDATE", project, sampleId, itemSpec);
             if (!"ACCEPTED".equals(rev.get("status"))) throw error(422,"FINAL_RESULTS_INCOMPLETE","存在未确认样本");
-            JsonNode result = freezeResult(project, input.specVersionId(), (String) rev.get("source_kind"),
+            JsonNode result = freezeResult(project, itemSpec, (String) rev.get("source_kind"),
                     (UUID) rev.get("submission_id"), (UUID) rev.get("execution_id"), sampleId);
             db.update("""
                     INSERT INTO final_snapshot_item(snapshot_id,project_id,sample_id,spec_version_id,source_kind,submission_id,execution_id,result,review_revision,source_path,content_hash)
                     VALUES (?,?,?,?,?,?,?,?::jsonb,?,?,?)
-                    """, snapshotId, project, sampleId, input.specVersionId(), rev.get("source_kind"),
+                    """, snapshotId, project, sampleId, itemSpec, rev.get("source_kind"),
                     rev.get("submission_id"), rev.get("execution_id"), write(result), ((Number) rev.get("revision")).longValue(),
                     sample.get("source_path"), sample.get("content_sha256"));
         }
@@ -156,8 +171,9 @@ public class OutcomeService {
         if (limit < 1 || limit > 100) throw error(400,"INVALID_REQUEST","分页大小应为1至100");
         UUID after = cursor(cursor);
         var rows = db.queryForList("""
-                SELECT id AS "finalSnapshotId", spec_version_id AS "specVersionId", name, scope_hash AS "scopeHash", created_at::text AS "createdAt"
-                FROM final_snapshot WHERE project_id=? AND id>? ORDER BY id LIMIT ?
+                SELECT s.id AS "finalSnapshotId", s.spec_version_id AS "specVersionId", s.name, s.scope_hash AS "scopeHash", s.created_at::text AS "createdAt",
+                  (SELECT count(*) FROM final_snapshot_item i WHERE i.snapshot_id=s.id) AS "sampleCount"
+                FROM final_snapshot s WHERE s.project_id=? AND s.id>? ORDER BY s.id LIMIT ?
                 """, project, after, limit + 1);
         boolean more = rows.size() > limit;
         var items = more ? rows.subList(0, limit) : rows;
@@ -208,18 +224,17 @@ public class OutcomeService {
     /** 校验来源归属与规范一致，返回冻结的结果内容。 */
     private JsonNode freezeResult(UUID project, UUID specVersionId, String sourceKind, UUID submissionId, UUID executionId, UUID sampleId) {
         if ("HUMAN".equals(sourceKind)) {
-            // owner 修改过的结果优先于原始提交，保证审核后的答案进入最终成果。
-            JsonNode modified = db.query("""
-                    SELECT result::text AS result FROM review_item
-                    WHERE submission_id=? AND sample_id=? AND action='MODIFY'
-                    """, rs -> rs.next() ? read(rs.getString(1)) : null, submissionId, sampleId);
-            if (modified != null) return modified;
             Map<String,Object> sub = one("""
                     SELECT s.spec_version_id, si.result::text AS result
                     FROM submission s JOIN submission_item si ON si.submission_id=s.id
                     WHERE s.id=? AND si.sample_id=? AND s.project_id=?
                     """, submissionId, sampleId, project);
             if (!specVersionId.equals(sub.get("spec_version_id"))) throw error(409,"SPEC_MISMATCH","来源规范与审核规范不一致");
+            JsonNode modified = db.query("""
+                    SELECT result::text AS result FROM review_item
+                    WHERE submission_id=? AND sample_id=? AND action='MODIFY'
+                    """, rs -> rs.next() ? read(rs.getString(1)) : null, submissionId, sampleId);
+            if(modified!=null)return modified;
             return read((String) sub.get("result"));
         }
         Map<String,Object> execution = one("SELECT project_id, spec_version_id, status FROM ai_execution WHERE id=?", executionId);
@@ -240,10 +255,11 @@ public class OutcomeService {
     private JsonNode finalSnapshotView(UUID id) {
         Map<String,Object> s = one("SELECT * FROM final_snapshot WHERE id=?", id);
         var items = db.queryForList("""
-                SELECT sample_id AS "sampleId", source_kind AS "sourceKind", submission_id AS "submissionId",
-                  execution_id AS "executionId", result::text AS result, review_revision AS "reviewRevision",
-                  source_path AS "sourcePath", content_hash AS "contentHash"
-                FROM final_snapshot_item WHERE snapshot_id=? ORDER BY sample_id
+                SELECT i.sample_id AS "sampleId", i.spec_version_id AS "specVersionId", i.source_kind AS "sourceKind", i.submission_id AS "submissionId",
+                  i.execution_id AS "executionId", i.result::text AS result, i.review_revision AS "reviewRevision",
+                  i.source_path AS "sourcePath", i.content_hash AS "contentHash", s.metadata->>'displayName' AS "displayName"
+                FROM final_snapshot_item i LEFT JOIN sample s ON s.id=i.sample_id
+                WHERE i.snapshot_id=? ORDER BY i.sample_id
                 """, id);
         for (var item : items) if (item.get("result") != null) item.put("result", read((String) item.get("result")));
         Map<String,Object> out = new LinkedHashMap<>();
@@ -254,6 +270,7 @@ public class OutcomeService {
         out.put("scopeHash", s.get("scope_hash"));
         out.put("createdAt", s.get("created_at"));
         out.put("sampleCount", items.size());
+        out.put("specVersionIds",items.stream().map(item->item.get("specVersionId")).distinct().toList());
         out.put("items", items);
         return json.valueToTree(out);
     }
@@ -265,7 +282,8 @@ public class OutcomeService {
 
     private void lockOwner(ActorContext actor, UUID project) {
         enabled(actor.actorId());
-        one("SELECT id FROM project WHERE id=? AND owner_actor_id=? FOR UPDATE", project, actor.actorId());
+        var row=one("SELECT id,status FROM project WHERE id=? AND owner_actor_id=? FOR UPDATE", project, actor.actorId());
+        if(!List.of("DRAFT","OPEN").contains(row.get("status")))throw error(409,"PROJECT_CLOSED","项目当前只读");
     }
 
     private void enabled(UUID actor) {
@@ -322,5 +340,8 @@ public class OutcomeService {
     public record SampleReviewInput(@NotNull UUID sampleId, @NotNull UUID specVersionId, @NotNull String action,
             String sourceKind, UUID submissionId, UUID executionId, String reason) {}
 
-    public record FinalInput(@NotNull String name, @NotNull UUID specVersionId, @NotNull List<UUID> sampleIds) {}
+    public record FinalSelection(@NotNull UUID sampleId,@NotNull UUID specVersionId) {}
+    public record FinalInput(String name,UUID specVersionId,List<UUID> sampleIds,List<FinalSelection> selections) {
+        public FinalInput(String name,UUID specVersionId,List<UUID> sampleIds){this(name,specVersionId,sampleIds,null);}
+    }
 }

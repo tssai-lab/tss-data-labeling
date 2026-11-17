@@ -59,7 +59,7 @@ public class ImportStorage {
         return result;
     }
 
-    static String sha256(Path file) throws IOException {
+    public static String sha256(Path file) throws IOException {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
             try (InputStream input = Files.newInputStream(file, NOFOLLOW_LINKS)) {

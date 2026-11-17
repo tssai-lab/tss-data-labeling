@@ -6,6 +6,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tss.labeling.identity.ActorService.ActorContext;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
+import com.tss.labeling.ls.NativeResultValidator;
+import com.tss.labeling.ls.TaskRegistry;
 import org.springframework.transaction.annotation.Transactional;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -16,14 +18,15 @@ import static com.tss.labeling.tasks.TaskService.error;
 public class ResultService {
     private final JdbcTemplate db;
     private final ObjectMapper json;
-    public ResultService(JdbcTemplate db, ObjectMapper json) { this.db = db; this.json = json; }
+    private final NativeResultValidator nativeResults;
+    public ResultService(JdbcTemplate db, ObjectMapper json, NativeResultValidator nativeResults) { this.db = db; this.json = json; this.nativeResults=nativeResults; }
 
     @Transactional
     public JsonNode save(ActorContext actor, UUID assignment, UUID sample, ResultController.DraftInput input) {
         Map<String,Object> a = lockedAssignment(actor, assignment, true);
         active(a);
         one("SELECT sample_id FROM package_item WHERE package_id=? AND sample_id=?",a.get("package_id"),sample);
-        validate(a, input.resultFormat(), input.result(), input.explicitDone());
+        validate(a, input.resultFormat(), input.result(), input.explicitDone(), sample);
         Long current = db.query("SELECT revision FROM annotation_draft WHERE assignment_id=? AND sample_id=?",
                 rs -> rs.next() ? rs.getLong(1) : 0L, assignment, sample);
         if (current.longValue() != input.baseRevision().longValue()) throw error(409,"REVISION_CONFLICT","草稿已变化，请重新读取");
@@ -75,7 +78,7 @@ public class ResultService {
         for(var row:rows){
             if(row.get("revision")==null||!Boolean.TRUE.equals(row.get("explicit_done")))throw error(422,"INCOMPLETE_PACKAGE","存在未完成样本");
             if(((Number)row.get("revision")).longValue()!=revisions.get(row.get("sample_id").toString()))throw error(409,"REVISION_CONFLICT","提交版本不是最新草稿");
-            validate(a,(String)row.get("result_format"),read((String)row.get("result")),true);
+            validate(a,(String)row.get("result_format"),read((String)row.get("result")),NativeResultValidator.Stage.SUBMIT,(UUID)row.get("sample_id"));
         }
         UUID id=UUID.randomUUID();
         db.update("""
@@ -99,11 +102,19 @@ public class ResultService {
         Map<String,Object> result=one("""
                 SELECT s.id AS "submissionId",s.assignment_id AS "assignmentId",s.package_id AS "packageId",
                   s.project_id AS "projectId",s.spec_version_id AS "specVersionId",s.submitted_by AS "submittedBy",
-                  s.submitted_at::text AS "submittedAt",s.content_hash AS "contentHash"
+                  s.submitted_at::text AS "submittedAt",s.content_hash AS "contentHash",
+                  author.display_name AS "submittedByName"
                 FROM submission s JOIN project p ON p.id=s.project_id
+                JOIN actor author ON author.id=s.submitted_by
                 WHERE s.id=? AND (s.submitted_by=? OR p.owner_actor_id=?)
                 """,id,actor.actorId(),actor.actorId());
-        var items=db.queryForList("SELECT sample_id AS \"sampleId\",result_id AS \"resultId\",draft_revision AS revision,result_format AS \"resultFormat\",result::text AS result FROM submission_item WHERE submission_id=? ORDER BY sample_id",id);
+        var items=db.queryForList("""
+                SELECT i.sample_id AS "sampleId",i.result_id AS "resultId",i.draft_revision AS revision,
+                  i.result_format AS "resultFormat",i.result::text AS result,
+                  s.source_path AS "sourcePath",s.metadata->>'displayName' AS "displayName"
+                FROM submission_item i JOIN sample s ON s.id=i.sample_id
+                WHERE i.submission_id=? ORDER BY i.sample_id
+                """,id);
         for(var item:items)item.put("result",read((String)item.get("result")));
         result.put("items",items);
         result.put("reviewStatus",reviewStatus(id));
@@ -118,7 +129,12 @@ public class ResultService {
         UUID after;
         try{after=cursor==null?new UUID(0,0):UUID.fromString(cursor);}
         catch(IllegalArgumentException ex){throw error(400,"INVALID_CURSOR","游标无效");}
-        var rows=db.queryForList("SELECT id AS \"submissionId\",assignment_id AS \"assignmentId\",package_id AS \"packageId\",submitted_by AS \"submittedBy\",submitted_at::text AS \"submittedAt\" FROM submission WHERE project_id=? AND id>? ORDER BY id LIMIT ?",project,after,limit+1);
+        var rows=db.queryForList("""
+                SELECT s.id AS "submissionId",s.assignment_id AS "assignmentId",s.package_id AS "packageId",
+                  s.submitted_by AS "submittedBy",author.display_name AS "submittedByName",s.submitted_at::text AS "submittedAt"
+                FROM submission s JOIN actor author ON author.id=s.submitted_by
+                WHERE s.project_id=? AND s.id>? ORDER BY s.id LIMIT ?
+                """,project,after,limit+1);
         boolean more=rows.size()>limit;
         var items=more?rows.subList(0,limit):rows;
         for(var item:items)item.put("reviewStatus",reviewStatus((UUID)item.get("submissionId")));
@@ -171,8 +187,16 @@ public class ResultService {
                     FROM review_item WHERE submission_id=?) r
                 """, rs -> rs.next() ? rs.getString(1) : "OPEN", submissionId, submissionId);
     }
-    private void validate(Map<String,Object> a,String format,JsonNode result,boolean done){
-        Map<String,Object> spec=one("SELECT task_type,labels::text AS labels FROM spec_version WHERE id=?",a.get("spec_version_id"));
+    private void validate(Map<String,Object> a,String format,JsonNode result,boolean done,UUID sample){
+        validate(a,format,result,done?NativeResultValidator.Stage.COMPLETE:NativeResultValidator.Stage.DRAFT,sample);
+    }
+    private void validate(Map<String,Object> a,String format,JsonNode result,NativeResultValidator.Stage stage,UUID sample){
+        boolean done=stage!=NativeResultValidator.Stage.DRAFT;
+        Map<String,Object> spec=one("SELECT task_type,schema_version,editor_config::text AS editor_config,labels::text AS labels FROM spec_version WHERE id=?",a.get("spec_version_id"));
+        if(TaskRegistry.FORMAT.equals(spec.get("schema_version"))) {
+            if(!TaskRegistry.FORMAT.equals(format)) throw error(422,"UNSUPPORTED_FORMAT","结果版本与规范不匹配");
+            nativeResults.validate(read((String)spec.get("editor_config")),result,stage,sample); return;
+        }
         if(!"IMAGE_CLASSIFICATION".equals(spec.get("task_type"))||!"image-classification-v1".equals(format))throw error(422,"UNSUPPORTED_FORMAT","首期仅支持图片单标签分类结果");
         if(result==null||!result.isObject()||result.size()>1||(result.size()==1&&!result.has("labelId")))throw error(422,"INVALID_RESULT","分类结果必须为 labelId 对象");
         if(result.isEmpty()&&!done)return;
@@ -185,7 +209,13 @@ public class ResultService {
         var rows=db.queryForList("SELECT revision,explicit_done AS \"explicitDone\",result_format AS \"resultFormat\",result::text AS result,saved_at::text AS \"savedAt\" FROM annotation_draft WHERE assignment_id=? AND sample_id=?",assignment,sample);
         Map<String,Object> value=new LinkedHashMap<>();
         value.put("assignmentId",assignment);value.put("sampleId",sample);
-        if(rows.isEmpty()){value.put("revision",0);value.put("explicitDone",false);value.put("resultFormat","image-classification-v1");value.put("result",json.createObjectNode());value.put("savedAt",null);}
+        value.put("assignmentRevision",db.queryForObject("SELECT revision FROM assignment WHERE id=?",Long.class,assignment));
+        if(rows.isEmpty()){
+            String schema=db.queryForObject("SELECT sv.schema_version FROM assignment a JOIN task_package t ON t.id=a.package_id JOIN package_plan p ON p.id=t.plan_id JOIN spec_version sv ON sv.id=p.spec_version_id WHERE a.id=?",String.class,assignment);
+            boolean nativeFormat=TaskRegistry.FORMAT.equals(schema);value.put("revision",0);value.put("explicitDone",false);
+            value.put("resultFormat",nativeFormat?TaskRegistry.FORMAT:"image-classification-v1");
+            var empty=json.createObjectNode();if(nativeFormat)empty.putArray("result");value.put("result",empty);value.put("savedAt",null);
+        }
         else{value.putAll(rows.get(0));value.put("result",read((String)value.get("result")));}
         return json.valueToTree(value);
     }

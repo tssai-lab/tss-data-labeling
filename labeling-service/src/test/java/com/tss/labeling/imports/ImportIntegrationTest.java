@@ -77,6 +77,9 @@ class ImportIntegrationTest {
         properties.add("labeling.imports.storage-root", () -> STORAGE);
         properties.add("labeling.imports.chunk-size-bytes", () -> 256);
         properties.add("labeling.imports.worker-enabled", () -> false);
+        if (System.getProperty("ls.test.python") != null) {
+            properties.add("labeling.ls-source.python", () -> System.getProperty("ls.test.python"));
+        }
     }
 
     @Autowired MockMvc mvc;
@@ -84,6 +87,28 @@ class ImportIntegrationTest {
     @Autowired JdbcTemplate db;
     @Autowired ApplicationContext context;
     @org.springframework.boot.test.web.server.LocalServerPort int port;
+
+    @Test void inspectsNativeLabelConfigWithExistingIdentityAndResponseContract() throws Exception {
+        org.junit.jupiter.api.Assumptions.assumeTrue(System.getProperty("ls.test.python") != null,
+                "Specify ls.test.python to test the real vendored source");
+        String payload = json.writeValueAsString(Map.of("labelConfig", """
+                <View><TimeSeries name="signal" value="$readings" valueType="json" timeColumn="t">
+                <Channel column="temperature"/></TimeSeries><Choices name="state" toName="signal">
+                <Choice value="异常"/></Choices></View>
+                """));
+        mvc.perform(post(API + "/label-configs/inspect").contentType("application/json").content(payload))
+                .andExpect(status().isUnauthorized());
+        mvc.perform(post(API + "/label-configs/inspect").header("Authorization", "Bearer config-reader")
+                        .contentType("application/json").content(payload))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.requestId").isNotEmpty())
+                .andExpect(jsonPath("$.data.parsedConfig.state.inputs[0].value").value("readings"))
+                .andExpect(jsonPath("$.data.parsedConfig.state.labels[0]").value("异常"));
+        mvc.perform(post(API + "/label-configs/inspect").header("Authorization", "Bearer config-reader")
+                        .contentType("application/json")
+                        .content(json.writeValueAsString(Map.of("labelConfig", "<!DOCTYPE View><View/>"))))
+                .andExpect(status().isUnprocessableEntity());
+    }
 
     static byte[] image(String format) throws Exception {
         var out = new ByteArrayOutputStream();

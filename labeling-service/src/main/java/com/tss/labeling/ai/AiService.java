@@ -8,6 +8,8 @@ import com.tss.labeling.identity.ActorService.ActorContext;
 import com.tss.labeling.imports.ImportService.SampleFile;
 import com.tss.labeling.imports.ImportStorage;
 import com.tss.labeling.review.OutcomeService;
+import com.tss.labeling.ls.NativeResultValidator;
+import com.tss.labeling.ls.TaskRegistry;
 import jakarta.validation.constraints.NotNull;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.FileSystemResource;
@@ -32,13 +34,15 @@ public class AiService {
     private final ImportStorage storage;
     private final OutcomeService outcomes;
     private final int maxSamples;
+    private final NativeResultValidator nativeResults;
 
-    public AiService(JdbcTemplate db, ObjectMapper json, ImportStorage storage, OutcomeService outcomes,
+    public AiService(JdbcTemplate db, ObjectMapper json, ImportStorage storage, OutcomeService outcomes, NativeResultValidator nativeResults,
             @Value("${labeling.tasks.max-samples:10000}") int maxSamples) {
         this.db = db;
         this.json = json;
         this.storage = storage;
         this.outcomes = outcomes;
+        this.nativeResults=nativeResults;
         this.maxSamples = maxSamples;
     }
 
@@ -328,7 +332,7 @@ public class AiService {
         if ("SUCCEEDED".equals(input.status())) {
             if (input.errorCode() != null || input.errorMessage() != null)
                 throw error(422,"INVALID_REQUEST","成功结果不能包含错误信息");
-            validateResult(e, input.result());
+            validateResult(e, input.result(), sampleId);
             Double confidence = input.confidence();
             if (confidence != null && (!Double.isFinite(confidence) || confidence < 0 || confidence > 1))
                 throw error(422,"INVALID_CONFIDENCE","置信度必须是 [0,1] 内的有限数值");
@@ -484,8 +488,11 @@ public class AiService {
         for (var row : claimed) if (wanted.contains((UUID) row.get("sample_id"))) throw error(409,"SAMPLE_BUSY","所选样本存在进行中的轮次");
     }
 
-    private void validateResult(Map<String,Object> e, JsonNode result) {
-        Map<String,Object> spec = one("SELECT task_type, labels::text AS labels FROM spec_version WHERE id=?", e.get("spec_version_id"));
+    private void validateResult(Map<String,Object> e, JsonNode result, UUID sampleId) {
+        Map<String,Object> spec = one("SELECT task_type, schema_version, editor_config::text AS editor_config, labels::text AS labels FROM spec_version WHERE id=?", e.get("spec_version_id"));
+        if (TaskRegistry.FORMAT.equals(spec.get("schema_version"))) {
+            nativeResults.validate(read((String)spec.get("editor_config")),result,true,sampleId); return;
+        }
         if (!"IMAGE_CLASSIFICATION".equals(spec.get("task_type"))) throw error(422,"UNSUPPORTED_FORMAT","首期仅支持图片单标签分类结果");
         if (result == null || !result.isObject() || result.size() != 1 || !result.has("labelId"))
             throw error(422,"INVALID_RESULT","结果必须为 labelId 对象");

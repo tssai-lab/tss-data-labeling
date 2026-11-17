@@ -8,6 +8,8 @@ import com.tss.labeling.identity.ActorService.ActorContext;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
+import com.tss.labeling.ls.NativeResultValidator;
+import com.tss.labeling.ls.TaskRegistry;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.nio.charset.StandardCharsets;
@@ -22,10 +24,12 @@ public class ReviewService {
 
     private final JdbcTemplate db;
     private final ObjectMapper json;
+    private final NativeResultValidator nativeResults;
 
-    public ReviewService(JdbcTemplate db, ObjectMapper json) {
+    public ReviewService(JdbcTemplate db, ObjectMapper json, NativeResultValidator nativeResults) {
         this.db = db;
         this.json = json;
+        this.nativeResults=nativeResults;
     }
 
     /** 需求方或提交者读取当前审核结论；不校验项目开放状态，已提交结果始终可读。 */
@@ -40,6 +44,7 @@ public class ReviewService {
     public JsonNode reviewItems(ActorContext actor, UUID submissionId,
             List<ReviewController.ItemInput> items, String key) {
         Map<String, Object> s = ownerSubmission(actor, submissionId);
+        writableProject(s.get("project_id"));
         String op = "PUT:/submissions/" + submissionId + "/review/items";
         String requestHash = hash(write(items));
         JsonNode previous = replay(actor.actorId(), op, key, requestHash);
@@ -66,6 +71,7 @@ public class ReviewService {
     public JsonNode decide(ActorContext actor, UUID submissionId,
             ReviewController.DecisionInput input, String key) {
         Map<String, Object> s = ownerSubmission(actor, submissionId);
+        writableProject(s.get("project_id"));
         String op = "POST:/submissions/" + submissionId + "/review/decide";
         String requestHash = hash(write(input));
         JsonNode previous = replay(actor.actorId(), op, key, requestHash);
@@ -80,12 +86,7 @@ public class ReviewService {
                 submissionId);
         for (var row : rows) {
             UUID sampleId = (UUID) row.get("sample_id");
-            String before = (String) row.get("result");
-            // 整份决策不写入新结果：接受沿用冻结答案，退回/待修正只记录结论。
-            upsert(submissionId, sampleId, input.action(), null, null, input.reason(), actor.actorId());
-            syncSampleReview(submissionId, sampleId, input.action(), input.reason(), actor.actorId());
-            audit(s.get("project_id"), submissionId, actor.actorId(), "REVIEW_DECIDE", sampleId,
-                    before, "ACCEPT".equals(input.action()) ? before : null, input.reason());
+            apply(actor,submissionId,s.get("project_id"),sampleId,input.action(),input.reason(),null,"REVIEW_DECIDE");
         }
         JsonNode response = view(submissionId, s);
         remember(actor.actorId(), op, key, requestHash, submissionId, response);
@@ -106,10 +107,13 @@ public class ReviewService {
             throw error(400, "INVALID_CURSOR", "分页游标无效");
         }
         var rows = db.queryForList("""
-                SELECT id AS "auditId", actor_id AS "actorId", action, sample_id AS "sampleId",
-                  before_result::text AS "beforeResult", after_result::text AS "afterResult", reason,
-                  created_at::text AS "createdAt"
-                FROM review_audit WHERE submission_id=? AND id>? ORDER BY id LIMIT ?
+                SELECT a.id AS "auditId", a.actor_id AS "actorId", actor.display_name AS "actorName",
+                  a.action, a.sample_id AS "sampleId", s.source_path AS "sourcePath",
+                  s.metadata->>'displayName' AS "displayName",
+                  a.before_result::text AS "beforeResult", a.after_result::text AS "afterResult", a.reason,
+                  a.created_at::text AS "createdAt"
+                FROM review_audit a JOIN actor ON actor.id=a.actor_id LEFT JOIN sample s ON s.id=a.sample_id
+                WHERE a.submission_id=? AND a.id>? ORDER BY a.id LIMIT ?
                 """, submissionId, after, limit + 1);
         boolean more = rows.size() > limit;
         var items = more ? rows.subList(0, limit) : rows;
@@ -129,30 +133,46 @@ public class ReviewService {
 
     private void apply(ActorContext actor, UUID submissionId, Object projectId,
             UUID sampleId, String action, String reason, JsonNode result) {
+        apply(actor,submissionId,projectId,sampleId,action,reason,result,"REVIEW_ITEM");
+    }
+
+    private void apply(ActorContext actor, UUID submissionId, Object projectId,
+            UUID sampleId, String action, String reason, JsonNode result,String auditAction) {
         Map<String, Object> row = one(
                 "SELECT result_format, result::text AS result FROM submission_item WHERE submission_id=? AND sample_id=?",
                 submissionId, sampleId);
         String before = (String) row.get("result");
         String format = null;
         String after = null;
-        if ("MODIFY".equals(action)) {
-            format = validateModified(submissionId, result);
+        var previous=db.queryForList("SELECT action,result_format,result::text AS result FROM review_item WHERE submission_id=? AND sample_id=?",submissionId,sampleId);
+        if(!previous.isEmpty() && "MODIFY".equals(previous.get(0).get("action"))) {
+            before=(String)previous.get(0).get("result");
+            if("ACCEPT".equals(action)) {
+                action="MODIFY";format=(String)previous.get(0).get("result_format");after=before;
+            }
+        }
+        if ("MODIFY".equals(action) && after==null) {
+            format = validateModified(submissionId, sampleId, result);
             after = write(result);
         }
         upsert(submissionId, sampleId, action, format, after, reason, actor.actorId());
         syncSampleReview(submissionId, sampleId, action, reason, actor.actorId());
         // 接受不改动答案，审计里用冻结答案作为 after，便于追溯“按原样接受”。
         String auditAfter = "ACCEPT".equals(action) ? before : after;
-        audit(projectId, submissionId, actor.actorId(), "REVIEW_ITEM", sampleId, before, auditAfter, reason);
+        audit(projectId, submissionId, actor.actorId(), auditAction, sampleId, before, auditAfter, reason);
     }
 
     /** 修改结果仅支持首期图片单标签分类，标签必须属于提交绑定的规范版本。 */
-    private String validateModified(UUID submissionId, JsonNode result) {
+    private String validateModified(UUID submissionId, UUID sampleId, JsonNode result) {
         Map<String, Object> spec = one("""
-                SELECT sv.task_type, sv.labels::text AS labels
+                SELECT sv.task_type, sv.schema_version, sv.editor_config::text AS editor_config, sv.labels::text AS labels
                 FROM submission s JOIN spec_version sv ON sv.id = s.spec_version_id
                 WHERE s.id = ?
                 """, submissionId);
+        if (TaskRegistry.FORMAT.equals(spec.get("schema_version"))) {
+            nativeResults.validate(read((String)spec.get("editor_config")), result, true, sampleId);
+            return TaskRegistry.FORMAT;
+        }
         if (!"IMAGE_CLASSIFICATION".equals(spec.get("task_type"))) {
             throw error(422, "UNSUPPORTED_FORMAT", "首期仅支持图片单标签分类结果");
         }
@@ -201,7 +221,9 @@ public class ReviewService {
                 """, submissionId);
         UUID projectId = (UUID) submission.get("project_id");
         UUID specVersionId = (UUID) submission.get("spec_version_id");
-        one("SELECT id FROM sample WHERE id=? AND project_id=? FOR UPDATE", sampleId, projectId);
+        // The project lock serializes review pointers; sample inputs are immutable
+        // and the application role deliberately has no UPDATE privilege on them.
+        one("SELECT id FROM sample WHERE id=? AND project_id=?", sampleId, projectId);
 
         boolean accepted = "ACCEPT".equals(action) || "MODIFY".equals(action);
         String status = accepted ? "ACCEPTED" : "NEEDS_REVISION";
@@ -261,9 +283,11 @@ public class ReviewService {
             status = "PARTIAL";
         }
         var items = db.queryForList("""
-                SELECT sample_id AS "sampleId", action, result_format AS "resultFormat",
-                  result::text AS result, reason, reviewed_by AS "reviewedBy", reviewed_at::text AS "reviewedAt"
-                FROM review_item WHERE submission_id=? ORDER BY sample_id
+                SELECT r.sample_id AS "sampleId", r.action, r.result_format AS "resultFormat",
+                  r.result::text AS result, r.reason, r.reviewed_by AS "reviewedBy", r.reviewed_at::text AS "reviewedAt",
+                  reviewer.display_name AS "reviewedByName"
+                FROM review_item r JOIN actor reviewer ON reviewer.id=r.reviewed_by
+                WHERE r.submission_id=? ORDER BY r.sample_id
                 """, submissionId);
         for (var item : items) {
             if (item.get("result") != null) {
@@ -293,7 +317,7 @@ public class ReviewService {
         enabled(actor.actorId());
         return one("""
                 SELECT s.* FROM submission s JOIN project p ON p.id = s.project_id
-                WHERE s.id = ? AND p.owner_actor_id = ? FOR SHARE
+                WHERE s.id = ? AND p.owner_actor_id = ? FOR UPDATE OF p
                 """, submissionId, actor.actorId());
     }
 
@@ -301,6 +325,11 @@ public class ReviewService {
         if (!"ENABLED".equals(one("SELECT status FROM actor WHERE id=? FOR SHARE", actor).get("status"))) {
             throw error(403, "LABELING_DISABLED", "标注账号已停用");
         }
+    }
+
+    private void writableProject(Object project) {
+        String status=(String)one("SELECT status FROM project WHERE id=? FOR SHARE",project).get("status");
+        if(!List.of("DRAFT","OPEN").contains(status))throw error(409,"PROJECT_CLOSED","项目当前只读");
     }
 
     private Map<String, Object> one(String sql, Object... args) {

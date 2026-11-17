@@ -29,13 +29,16 @@ public class TaskService {
     private final int maxSamples;
     private final int maxPackageSize;
     private final int maxAnnotators;
+    private final org.springframework.beans.factory.ObjectProvider<com.tss.labeling.imports.NativeTaskService> nativeInputs;
 
     public TaskService(JdbcTemplate db, ObjectMapper json, ImportStorage storage, OutcomeService outcomes,
+            org.springframework.beans.factory.ObjectProvider<com.tss.labeling.imports.NativeTaskService> nativeInputs,
             @Value("${labeling.tasks.max-samples:10000}") int maxSamples,
             @Value("${labeling.tasks.max-package-size:1000}") int maxPackageSize,
             @Value("${labeling.tasks.max-annotators:10}") int maxAnnotators) {
         this.db = db; this.json = json; this.storage = storage;
         this.outcomes = outcomes;
+        this.nativeInputs=nativeInputs;
         this.maxSamples = maxSamples; this.maxPackageSize = maxPackageSize; this.maxAnnotators = maxAnnotators;
     }
 
@@ -94,6 +97,7 @@ public class TaskService {
             if (!selection(samples).equals(expectedHash)) throw error(409,"SELECTION_CHANGED","样本集合已改变");
             List<UUID> sampleIds = new ArrayList<>();
             for (var s : samples) sampleIds.add((UUID) s.get("id"));
+            nativeInputs.getObject().validateForPublication(projectId,(UUID)plan.get("spec_version_id"),sampleIds);
             checkClaimConflict(projectId, sampleIds);
             int size = ((Number)plan.get("package_size")).intValue(), people = ((Number)plan.get("annotators_per_sample")).intValue();
             // ponytail: 有界同步发布，超过样本上限需拆分批次；大规模发布再引入后台任务。
@@ -195,10 +199,10 @@ public class TaskService {
     public JsonNode items(ActorContext actor,UUID assignment,int limit,String cursor) {
         Map<String,Object> a=assignment(actor,assignment);pageLimit(limit);
         List<Map<String,Object>> rows=db.queryForList("""
-                SELECT s.id AS "sampleId", s.source_path AS "sourcePath", s.media_type AS "mediaType",
+                SELECT s.id AS "sampleId", s.source_path AS "sourcePath", s.metadata->>'displayName' AS "displayName", s.media_type AS "mediaType",
                   s.content_sha256 AS "contentSha256", i.ordinal,
                   d.revision AS "draftRevision", d.explicit_done AS "explicitDone",
-                  d.result_format AS "resultFormat", d.result::text AS result,
+                  d.result_format AS "resultFormat", d.result::text AS result, d.saved_at::text AS "savedAt",
                   ri.reference_result_id AS "referenceResultId"
                 FROM package_item i JOIN sample s ON s.id=i.sample_id
                 LEFT JOIN round_item ri ON ri.round_id=? AND ri.sample_id=s.id
@@ -212,18 +216,23 @@ public class TaskService {
             Object ref = row.remove("referenceResultId");
             if (ref != null) {
                 row.put("referenceResult", db.query("""
-                        SELECT result_format, result::text AS result FROM submission_item
-                        WHERE submission_id=? AND sample_id=?
+                        SELECT si.result_format,CASE WHEN r.action='MODIFY' THEN r.result ELSE si.result END::text AS result,
+                          s.spec_version_id,sv.editor_config::text AS ref_config,current.editor_config::text AS current_config
+                        FROM submission_item si JOIN submission s ON s.id=si.submission_id
+                        JOIN spec_version sv ON sv.id=s.spec_version_id JOIN spec_version current ON current.id=?
+                        LEFT JOIN review_item r ON r.submission_id=si.submission_id AND r.sample_id=si.sample_id
+                        WHERE si.submission_id=? AND si.sample_id=? AND s.project_id=current.project_id
                         """, rs -> rs.next()
-                            ? Map.of("resultFormat", rs.getString(1), "result", read(rs.getString(2)), "sourceKind", "HUMAN")
-                            : null, (UUID) ref, (UUID) row.get("sampleId")));
+                            ? Map.of("resultFormat",rs.getString(1),"result",read(rs.getString(2)),"sourceKind","HUMAN","specVersionId",rs.getObject("spec_version_id").toString(),
+                                "compatible",read(rs.getString("ref_config")).path("parsedConfig").equals(read(rs.getString("current_config")).path("parsedConfig")))
+                            : null, a.get("spec_version_id"),(UUID)ref,(UUID)row.get("sampleId")));
             } else {
                 row.put("referenceResult", null);
             }
         }
         var response=(com.fasterxml.jackson.databind.node.ObjectNode)page(rows,limit,"sampleId");
         Map<String,Object> spec = one("""
-                SELECT s.id AS "specVersionId", s.labels::text AS labels, s.instructions, s.editor_config::text AS "editorConfig"
+                SELECT s.id AS "specVersionId",s.task_type AS "taskType",s.schema_version AS "schemaVersion", s.labels::text AS labels, s.instructions, s.editor_config::text AS "editorConfig"
                 FROM spec_version s WHERE s.id=?
                 """,a.get("spec_version_id"));
         spec.put("labels",read((String)spec.get("labels")));
@@ -233,6 +242,10 @@ public class TaskService {
         response.put("packageId", a.get("package_id").toString());
         response.put("roundId", a.get("round_id").toString());
         response.put("status", a.get("status").toString());
+        response.put("revision",((Number)a.get("revision")).longValue());
+        response.put("projectId",a.get("project_id").toString());
+        response.put("projectName",one("SELECT name FROM project WHERE id=?",a.get("project_id")).get("name").toString());
+        response.put("roundInstructions",Objects.toString(one("SELECT instructions FROM publication_round WHERE id=?",a.get("round_id")).get("instructions"),""));
         response.put("readOnly", "SUBMITTED".equals(a.get("status")));
         return response;
     }
@@ -410,7 +423,8 @@ public class TaskService {
                 JOIN task_package t ON t.id=a.package_id JOIN package_plan plan ON plan.id=t.plan_id
                 WHERE a.id=? AND a.actor_id=?
                 """,id,actor.actorId());
-        open(project((UUID)a.get("project_id"),false));
+        var project=project((UUID)a.get("project_id"),false);
+        if(!("COMPLETED".equals(project.get("status")) && "SUBMITTED".equals(a.get("status")))) open(project);
         one("SELECT id FROM assignment WHERE id=? AND status IN ('CLAIMED','IN_PROGRESS','SUBMITTED') FOR SHARE",id);
         return a;
     }
@@ -457,6 +471,7 @@ public class TaskService {
             Map<String,Object> row = new LinkedHashMap<>();
             row.put("id", id);
             row.put("project_id", project);
+            if(refs.get(id)!=null)one("SELECT s.id FROM submission s JOIN submission_item si ON si.submission_id=s.id WHERE s.id=? AND s.project_id=? AND si.sample_id=?",refs.get(id),project,id);
             row.put("referenceResultId", refs.get(id));
             rows.add(row);
         }
@@ -465,7 +480,7 @@ public class TaskService {
     /** 发布时从计划读取冻结样本；batch 计划取批次样本，selection 计划取冻结清单。 */
     private List<Map<String,Object>> planSamples(Map<String,Object> plan) {
         if (plan.get("batch_id") != null) return samples((UUID) plan.get("batch_id"));
-        JsonNode list = read((String) plan.get("selection_json"));
+        JsonNode list = read(Objects.toString(plan.get("selection_json"),"[]"));
         List<Map<String,Object>> rows = new ArrayList<>();
         for (JsonNode node : list) {
             Map<String,Object> row = new LinkedHashMap<>();

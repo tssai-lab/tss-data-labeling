@@ -1,4 +1,6 @@
 /.github/workflows/*.yml text eol=lf
+/labeling-service/ls-source-adapter/** text=auto eol=lf
+/labeling-service/**/*.sh text eol=lf
 /backend/.dockerignore text eol=lf
 /backend/Dockerfile text eol=lf
 /backend/**/*.sh text eol=lf

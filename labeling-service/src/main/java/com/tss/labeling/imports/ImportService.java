@@ -47,10 +47,10 @@ public class ImportService {
         if (cached != null) return cached;
         writable(state);
         String task = db.queryForObject("SELECT task_type FROM project WHERE id = ?", String.class, project);
-        if (!"IMAGE_CLASSIFICATION".equals(task)) throw failure(422, "UNSUPPORTED_FORMAT", "当前仅支持图片分类项目");
+        com.tss.labeling.ls.TaskRegistry.requireType(task);
         if (!body.filename().toLowerCase(Locale.ROOT).endsWith(".zip")
                 || body.filename().contains("/") || body.filename().contains("\\")) {
-            throw failure(422, "UNSUPPORTED_FORMAT", "请上传 ZIP 图片压缩包");
+            throw failure(422, "UNSUPPORTED_FORMAT", "请上传 ZIP 数据压缩包");
         }
         if (body.sizeBytes() > settings.maxArchiveBytes()) throw failure(413, "UPLOAD_TOO_LARGE", "压缩包超过部署配置上限");
         UUID batch = UUID.randomUUID();
@@ -161,7 +161,8 @@ public class ImportService {
         ArchiveParser.ParsedArchive parsed;
         try {
             verifyArchive(batch, view(batch));
-            parsed = parser.parse(batch);
+            String taskType=db.queryForObject("SELECT task_type FROM project WHERE id=?",String.class,projectOf(batch));
+            parsed = parser.parse(batch,taskType);
         } catch (ArchiveParser.Rejected exception) {
             failed(batch, exception.code, exception.getMessage()); return;
         } catch (BusinessException exception) {
@@ -176,11 +177,18 @@ public class ImportService {
                     VALUES (?, ?, ?, ?, ?, ?, ?, CAST(? AS jsonb)) ON CONFLICT (batch_id, source_path) DO NOTHING
                     """, sample.id(), project, batch, sample.sourcePath(), sample.storageKey(), sample.sha256(), sample.mediaType(), writeJson(sample.metadata()));
         }
+        for (var resource:parsed.resources()) {
+            db.update("""
+                    INSERT INTO input_resource(id,project_id,batch_id,source_path,storage_key,content_sha256,media_type,metadata)
+                    VALUES (?,?,?,?,?,?,?,?::jsonb) ON CONFLICT(batch_id,source_path) DO NOTHING
+                    """,resource.id(),project,batch,resource.sourcePath(),resource.storageKey(),resource.sha256(),resource.mediaType(),writeJson(resource.metadata()));
+        }
+        db.update("UPDATE import_batch SET resource_count=? WHERE id=?",parsed.resources().size(),batch);
         db.update("""
                 UPDATE import_batch SET status = ?, valid_sample_count = ?, error_count = ?, errors = CAST(? AS jsonb),
                 error_code = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?
-                """, parsed.samples().isEmpty() ? "FAILED" : "READY", parsed.samples().size(), parsed.errorCount(),
-                writeJson(parsed.errors()), parsed.samples().isEmpty() ? "NO_VALID_SAMPLES" : null, batch);
+                """, parsed.samples().isEmpty() && parsed.resources().isEmpty() ? "FAILED" : "READY", parsed.samples().size(), parsed.errorCount(),
+                writeJson(parsed.errors()), parsed.samples().isEmpty() && parsed.resources().isEmpty() ? "NO_VALID_SAMPLES" : null, batch);
     }
 
     private void failed(UUID batch, String code, String message) {
@@ -262,6 +270,7 @@ public class ImportService {
     }
 
     private static void writable(String state) {
+        if ("COMPLETED".equals(state)) throw failure(409, "PROJECT_COMPLETED", "项目已完成，只能查看和导出");
         if ("PAUSED".equals(state)) throw failure(409, "PROJECT_PAUSED", "项目已暂停");
         if ("ARCHIVED".equals(state)) throw failure(409, "PROJECT_ARCHIVED", "项目已归档");
     }
@@ -271,7 +280,7 @@ public class ImportService {
                 row.getObject("id").toString(), row.getObject("project_id").toString(), row.getString("status"),
                 row.getLong("size_bytes"), row.getLong("received_bytes"), row.getInt("chunk_size_bytes"),
                 row.getBoolean("original_complete"), row.getInt("valid_sample_count"), row.getInt("error_count"),
-                readJson(row.getString("errors")), row.getString("error_code")), batch);
+                readJson(row.getString("errors")), row.getString("error_code"),row.getInt("resource_count")), batch);
     }
 
     private BatchView replay(UUID actor, String operation, String key, String hash) {
@@ -323,5 +332,5 @@ public class ImportService {
 
     public record BatchView(String batchId, String projectId, String status, long sizeBytes, long receivedBytes,
                             int chunkSizeBytes, boolean originalComplete, int validSampleCount, int errorCount,
-                            JsonNode errors, String errorCode) { }
+                            JsonNode errors, String errorCode, int resourceCount) { }
 }

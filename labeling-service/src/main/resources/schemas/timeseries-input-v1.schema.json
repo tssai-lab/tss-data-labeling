@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:annotation:timeseries-input:1.0.0",
+  "title": "通用时序内联输入草案，尚未接入后端服务",
+  "type": "object",
+  "required": ["inputFormat", "schemaId", "sampleId", "inputHash", "payload"],
+  "properties": {
+    "inputFormat": {"const": "timeseries-input-v1"},
+    "schemaId": {"const": "timeseries-input@1.0.0"},
+    "sampleId": {"type": "string", "minLength": 1},
+    "inputHash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "payload": {
+      "type": "object",
+      "required": ["time", "channels"],
+      "properties": {
+        "time": {
+          "type": "object",
+          "required": ["kind", "unit", "values"],
+          "properties": {
+            "kind": {"enum": ["number", "timestamp"]},
+            "unit": {"type": "string", "minLength": 1},
+            "values": {"type": "array", "minItems": 2, "maxItems": 50000, "items": {"type": "number"}}
+          },
+          "allOf": [{"if": {"properties": {"kind": {"const": "timestamp"}}}, "then": {"properties": {"unit": {"const": "ms"}, "values": {"items": {"type": "integer", "minimum": -8640000000000000, "maximum": 8640000000000000}}}}}]
+        },
+        "channels": {
+          "type": "array", "minItems": 1, "maxItems": 16,
+          "items": {
+            "type": "object", "required": ["column", "label", "unit", "values"],
+            "properties": {
+              "column": {"type": "string", "pattern": "^(?!time$)[A-Za-z_][A-Za-z0-9_.-]*$"},
+              "label": {"type": "string", "minLength": 1},
+              "unit": {"type": "string"},
+              "values": {"type": "array", "minItems": 2, "maxItems": 50000, "items": {"type": ["number", "null"]}}
+            }
+          }
+        }
+      }
+    }
+  },
+  "$comment": "结构草案。严格递增、通道列名唯一、长度一致、摘要、权限、单位和结果兼容性须由服务端语义校验；此文件存在不表示相关 API 已实现。"
+}
