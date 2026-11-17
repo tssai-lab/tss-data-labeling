@@ -127,7 +127,7 @@ class CodeAssetPublishIntegrationTest {
 
     @Container
     private static final GenericContainer<?> MINIO = new GenericContainer<>(
-            DockerImageName.parse("quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z")
+            DockerImageName.parse("minio/minio:RELEASE.2025-09-07T16-13-09Z")
     )
             .withEnv("MINIO_ROOT_USER", MINIO_ACCESS_KEY)
             .withEnv("MINIO_ROOT_PASSWORD", MINIO_SECRET_KEY)
