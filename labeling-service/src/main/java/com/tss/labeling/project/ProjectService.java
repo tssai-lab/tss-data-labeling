@@ -49,6 +49,8 @@ public class ProjectService {
             String idempotencyKey
     ) {
         String taskType = normalizeTaskType(request.taskType());
+        com.tss.labeling.tasks.TaskTemplates.validate(
+                taskType, request.templateId(), request.templateVersion());
         UUID projectId = UUID.randomUUID();
         String requestHash = hash(toJson(objectMapper.valueToTree(request)));
         boolean created = beginIdempotency(
@@ -85,12 +87,13 @@ public class ProjectService {
         }
         orderedArguments.add(limit + 1);
 
-        List<ProjectRow> rows = jdbcTemplate.query("""
-                SELECT id, owner_actor_id, name, description, task_type, status,
-                       revision, created_at, updated_at
-                FROM project
-                WHERE owner_actor_id = ?
-                """ + cursorClause + " ORDER BY created_at DESC, id DESC LIMIT ?",
+        List<ProjectRow> rows = jdbcTemplate.query(
+                        """
+                        SELECT id, owner_actor_id, name, description, task_type, status,
+                               revision, created_at, updated_at
+                        FROM project
+                        WHERE deleted_at IS NULL AND owner_actor_id = ?
+                        """ + cursorClause + " ORDER BY created_at DESC, id DESC LIMIT ?",
                 (result, rowNumber) -> projectRow(result), orderedArguments.toArray());
 
         boolean hasMore = rows.size() > limit;
@@ -121,8 +124,11 @@ public class ProjectService {
     ) {
         UUID projectId = parseId(projectIdValue);
         String taskType = normalizeTaskType(request.taskType());
+        com.tss.labeling.tasks.TaskTemplates.validate(
+                taskType, request.templateId(), request.templateVersion());
         if (!TaskRegistry.FORMAT.equals(request.schemaVersion())) validateLabels(request.labels());
-        else if(request.labels()==null || !request.labels().isArray()) throw new ResponseStatusException(HttpStatus.BAD_REQUEST);
+        else if (request.labels() == null || !request.labels().isArray())
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST);
         JsonNode editorConfig = request.editorConfig();
         if (editorConfig == null) {
             editorConfig = objectMapper.createObjectNode();
@@ -138,16 +144,18 @@ public class ProjectService {
                 actor.actorId(), operation, idempotencyKey, requestHash, specVersionId);
         lockEnabledActor(actor.actorId());
         if (!created) {
-            return jdbcTemplate.queryForObject("""
-                    SELECT id, project_id, version_no, task_type, labels, instructions,
-                           editor_config, schema_version, created_at
-                    FROM spec_version WHERE id = ? AND project_id = ?
-                    """, (result, rowNumber) -> specVersion(result),
+            return jdbcTemplate.queryForObject(
+                    """
+SELECT id, project_id, version_no, task_type, labels, instructions,
+       editor_config, schema_version, template_id,template_version,input_schema_id,result_schema_id,schema_digest,created_at
+FROM spec_version WHERE id = ? AND project_id = ?
+""", (result, rowNumber) -> specVersion(result),
                     projectIdFromIdempotency(actor.actorId(), operation, idempotencyKey), projectId);
         }
 
         String projectTaskType = jdbcTemplate.query(
-                "SELECT task_type FROM project WHERE id = ? AND owner_actor_id = ? AND status IN ('DRAFT','OPEN') FOR UPDATE",
+                        "SELECT task_type FROM project WHERE id = ? AND owner_actor_id = ? AND"
+                            + " deleted_at IS NULL AND status IN ('DRAFT','OPEN') FOR UPDATE",
                 result -> result.next() ? result.getString(1) : null,
                 projectId,
                 actor.actorId()
@@ -161,31 +169,41 @@ public class ProjectService {
 
         editorConfig = registry.freeze(taskType, request.schemaVersion(), editorConfig);
         Integer versionNo = jdbcTemplate.queryForObject(
-                "SELECT COALESCE(MAX(version_no), 0) + 1 FROM spec_version WHERE project_id = ?",
+                        "SELECT COALESCE(MAX(version_no), 0) + 1 FROM spec_version WHERE project_id"
+                            + " = ?",
                 Integer.class,
                 projectId
         );
-        jdbcTemplate.update("""
-                INSERT INTO spec_version
-                    (id, project_id, version_no, task_type, labels, instructions, editor_config, schema_version)
-                VALUES (?, ?, ?, ?, CAST(? AS jsonb), ?, CAST(? AS jsonb), ?)
-                """, specVersionId, projectId, versionNo, taskType,
+        jdbcTemplate.update(
+                """
+INSERT INTO spec_version
+    (id, project_id, version_no, task_type, labels, instructions, editor_config, schema_version)
+VALUES (?, ?, ?, ?, CAST(? AS jsonb), ?, CAST(? AS jsonb), ?)
+""", specVersionId, projectId, versionNo, taskType,
                 toJson(request.labels()), blankToEmpty(request.instructions()),
                 toJson(editorConfig), request.schemaVersion().trim());
-        return jdbcTemplate.queryForObject("""
-                SELECT id, project_id, version_no, task_type, labels, instructions,
-                       editor_config, schema_version, created_at
-                FROM spec_version WHERE id = ? AND project_id = ?
-                """, (result, rowNumber) -> specVersion(result), specVersionId, projectId);
+        var template = com.tss.labeling.tasks.TaskTemplates.forType(taskType);
+        jdbcTemplate.update(
+                "UPDATE spec_version SET"
+                    + " template_id=?,template_version=?,input_schema_id=?,result_schema_id=?,schema_digest=?"
+                    + " WHERE id=?",
+                template.get("templateId"),
+                template.get("templateVersion"),
+                template.get("inputSchemaId"),
+                template.get("resultSchemaId"),
+                com.tss.labeling.tasks.TaskTemplates.digest(taskType),
+                specVersionId);
+        return jdbcTemplate.queryForObject(
+                "SELECT * FROM spec_version WHERE id=? AND project_id=?", (result, rowNumber) -> specVersion(result), specVersionId, projectId);
     }
 
     private ProjectView findProject(UUID projectId, UUID ownerActorId) {
         ProjectRow project = jdbcTemplate.query(
-                """
-                SELECT id, owner_actor_id, name, description, task_type, status,
-                       revision, created_at, updated_at
-                FROM project WHERE id = ? AND owner_actor_id = ?
-                """,
+                        """
+                        SELECT id, owner_actor_id, name, description, task_type, status,
+                               revision, created_at, updated_at
+                        FROM project WHERE id = ? AND owner_actor_id = ? AND deleted_at IS NULL
+                        """,
                 result -> result.next() ? projectRow(result) : null,
                 projectId,
                 ownerActorId
@@ -193,11 +211,12 @@ public class ProjectService {
         if (project == null) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND);
         }
-        List<SpecVersionView> specs = jdbcTemplate.query("""
-                SELECT id, project_id, version_no, task_type, labels, instructions,
-                       editor_config, schema_version, created_at
-                FROM spec_version WHERE project_id = ? ORDER BY version_no DESC
-                """, (result, rowNumber) -> specVersion(result), projectId);
+        List<SpecVersionView> specs = jdbcTemplate.query(
+                        """
+SELECT id, project_id, version_no, task_type, labels, instructions,
+       editor_config, schema_version, template_id,template_version,input_schema_id,result_schema_id,schema_digest,created_at
+FROM spec_version WHERE project_id = ? ORDER BY version_no DESC
+""", (result, rowNumber) -> specVersion(result), projectId);
         return new ProjectView(
                 project.id().toString(),
                 project.ownerActorId().toString(),
@@ -236,6 +255,11 @@ public class ProjectService {
                 result.getString("instructions"),
                 readJson(result.getString("editor_config")),
                 result.getString("schema_version"),
+                result.getString("template_id"),
+                result.getString("template_version"),
+                result.getString("input_schema_id"),
+                result.getString("result_schema_id"),
+                result.getString("schema_digest"),
                 result.getTimestamp("created_at").toInstant()
         );
     }
@@ -338,18 +362,20 @@ public class ProjectService {
         if (key == null || key.isBlank() || key.length() > 200) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST);
         }
-        int inserted = jdbcTemplate.update("""
-                INSERT INTO idempotency_record (actor_id, operation, idempotency_key, request_hash, resource_id)
-                VALUES (?, ?, ?, ?, ?)
-                ON CONFLICT (actor_id, operation, idempotency_key) DO NOTHING
-                """, actorId, operation, key, requestHash, resourceId);
+        int inserted = jdbcTemplate.update(
+                        """
+INSERT INTO idempotency_record (actor_id, operation, idempotency_key, request_hash, resource_id)
+VALUES (?, ?, ?, ?, ?)
+ON CONFLICT (actor_id, operation, idempotency_key) DO NOTHING
+""", actorId, operation, key, requestHash, resourceId);
         if (inserted == 1) {
             return true;
         }
-        String existingHash = jdbcTemplate.queryForObject("""
-                SELECT request_hash FROM idempotency_record
-                WHERE actor_id = ? AND operation = ? AND idempotency_key = ?
-                """, String.class, actorId, operation, key);
+        String existingHash = jdbcTemplate.queryForObject(
+                        """
+                        SELECT request_hash FROM idempotency_record
+                        WHERE actor_id = ? AND operation = ? AND idempotency_key = ?
+                        """, String.class, actorId, operation, key);
         if (!requestHash.equals(existingHash)) {
             throw new ResponseStatusException(HttpStatus.CONFLICT);
         }
@@ -422,6 +448,11 @@ public class ProjectService {
             String instructions,
             JsonNode editorConfig,
             String schemaVersion,
+            String templateId,
+            String templateVersion,
+            String inputSchemaId,
+            String resultSchemaId,
+            String schemaDigest,
             Instant createdAt
     ) {
     }

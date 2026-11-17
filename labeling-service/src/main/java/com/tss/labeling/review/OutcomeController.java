@@ -58,7 +58,8 @@ public class OutcomeController {
             @PathVariable UUID projectId, @RequestHeader("Idempotency-Key") String key,
             @Valid @RequestBody FinalSnapshotRequest body, HttpServletRequest req) {
         return response(outcomes.createFinalSnapshot(actor(auth), projectId,
-                new OutcomeService.FinalInput(body.name(), body.specVersionId(), body.sampleIds(),body.selections()), key), req);
+                new OutcomeService.FinalInput(body.name(), body.specVersionId(), body.sampleIds(),
+                                body.selectionId(), body.selections()), key), req);
     }
 
     @GetMapping("/final-snapshots/{finalSnapshotId}")
@@ -77,5 +78,6 @@ public class OutcomeController {
     public record ReviewSamplesRequest(@NotEmpty @Size(max = 10000) List<OutcomeService.SampleReviewInput> items) {}
 
     public record FinalSnapshotRequest(@NotNull @Size(max = 120) String name, UUID specVersionId,
-            List<UUID> sampleIds,@Valid List<OutcomeService.FinalSelection> selections) {}
+            @Size(max = 10000) List<UUID> sampleIds,
+            UUID selectionId, @Valid @Size(max = 10000) List<OutcomeService.FinalSelection> selections) {}
 }

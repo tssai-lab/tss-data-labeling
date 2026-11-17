@@ -13,7 +13,7 @@ import static com.tss.labeling.tasks.TaskService.error;
 @Service
 public class TaskRegistry {
     public static final String FORMAT = "label-studio-v1";
-    private static final Set<String> TYPES = Set.of("IMAGE_CLASSIFICATION", "COMPUTER_VISION", "TIME_SERIES");
+    private static final Set<String> TYPES = Set.of("IMAGE_CLASSIFICATION", "COMPUTER_VISION", "TIME_SERIES", "TIMESERIES_ANNOTATION");
     private final LsSourceAdapter source;
     private final ObjectMapper json;
     private final TemplateCatalog templates;
@@ -34,7 +34,7 @@ public class TaskRegistry {
     public JsonNode freeze(String type, String schema, JsonNode config) {
         requireType(type);
         if (!FORMAT.equals(schema)) {
-            if (!"IMAGE_CLASSIFICATION".equals(type)) throw error(422,"UNSUPPORTED_FORMAT","请使用原生 LS 规范版本");
+            if (!Set.of("IMAGE_CLASSIFICATION", "TIMESERIES_ANNOTATION").contains(type)) throw error(422,"UNSUPPORTED_FORMAT","请使用原生 LS 规范版本");
             return config;
         }
         String xml=config.path("labelConfig").asText();

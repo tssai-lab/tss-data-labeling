@@ -64,7 +64,7 @@ public class SourceExportService {
         enabled(actor);
         var row=one("SELECT id AS \"exportId\",snapshot_id AS \"finalSnapshotId\",format,status,file_size AS \"fileSize\",error_code AS \"errorCode\" FROM source_export_job WHERE id=? AND owner_actor_id=?",id,actor.actorId());
         var out=(ObjectNode)json.valueToTree(row);
-        if("READY".equals(row.get("status")))out.put("downloadUrl","/api/labeling/v1/exports/"+id+"/file");
+        if("READY".equals(row.get("status")))out.put("downloadUrl","/api/labeling/v1/source-exports/"+id+"/file");
         return out;
     }
 

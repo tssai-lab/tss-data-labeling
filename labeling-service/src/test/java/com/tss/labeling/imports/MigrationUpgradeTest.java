@@ -11,7 +11,7 @@ import static org.junit.jupiter.api.Assertions.*;
 /** A dedicated throwaway cluster, never the developer's running database. */
 class MigrationUpgradeTest {
     @org.junit.jupiter.api.io.TempDir java.nio.file.Path legacyMigrations;
-    @Test void upgradesPopulatedV14ToV20WithoutChangingLegacyResults() throws Exception {
+    @Test void upgradesPopulatedV14ToV23WithoutChangingLegacyResults() throws Exception {
         try (var pg = EmbeddedPostgres.builder().start()) {
             var db = new JdbcTemplate(pg.getPostgresDatabase());
             db.execute("CREATE ROLE tss_labeling_app LOGIN");
@@ -44,7 +44,7 @@ class MigrationUpgradeTest {
             String frozen = db.queryForObject("SELECT result::text FROM labeling.final_snapshot_item WHERE snapshot_id=?",String.class,snapshot);
 
             var current = Flyway.configure().dataSource(pg.getPostgresDatabase()).defaultSchema("labeling").schemas("labeling").load();
-            assertEquals(6,current.migrate().migrationsExecuted);
+            assertEquals(9,current.migrate().migrationsExecuted);
             current.validate();
             assertEquals(0,current.migrate().migrationsExecuted);
             assertEquals(before,db.queryForMap("SELECT result::text AS result,result_id FROM labeling.submission_item WHERE submission_id=?",submission));

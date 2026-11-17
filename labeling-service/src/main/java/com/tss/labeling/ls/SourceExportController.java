@@ -27,9 +27,9 @@ public class SourceExportController {
     @GetMapping("/final-snapshots/{snapshot}/exports")
     public ApiResponse<JsonNode> list(@RequestHeader(value="Authorization",required=false)String auth,@PathVariable UUID snapshot,
             @RequestParam(defaultValue="20")int limit,@RequestParam(required=false)String cursor,HttpServletRequest req){return response(service.list(actor(auth),snapshot,limit,cursor),req);}
-    @GetMapping("/exports/{id}")
+    @GetMapping("/source-exports/{id}")
     public ApiResponse<JsonNode> get(@RequestHeader(value="Authorization",required=false)String auth,@PathVariable UUID id,HttpServletRequest req){return response(service.get(actor(auth),id),req);}
-    @GetMapping("/exports/{id}/file")
+    @GetMapping("/source-exports/{id}/file")
     public ResponseEntity<Resource> file(@RequestHeader(value="Authorization",required=false)String auth,@PathVariable UUID id){
         var file=service.file(actor(auth),id);
         return ResponseEntity.ok().contentType(MediaType.APPLICATION_OCTET_STREAM).contentLength(file.sizeBytes())

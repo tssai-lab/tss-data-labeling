@@ -41,7 +41,8 @@ public class ResultController {
             @PathVariable UUID projectId,@RequestParam(defaultValue="20") int limit,
             @RequestParam(required=false) String cursor,HttpServletRequest req){return response(results.list(actor(auth),projectId,limit,cursor),req);}
     public record DraftInput(@NotNull @Min(0) Long baseRevision,@NotNull Boolean explicitDone,
-                             @NotBlank @Size(max=80) String resultFormat,@NotNull JsonNode result){}
+                             @NotBlank @Size(max=80) String resultFormat,@NotNull JsonNode result,
+            String inputHash){}
     public record RevisionItem(@NotNull UUID sampleId,@NotNull @Min(1) Long revision){}
     public record SubmitInput(@NotEmpty @Size(max=10000) List<@NotNull @Valid RevisionItem> items){}
 }
