@@ -17,7 +17,7 @@ export type ResultRow = {
   sourcePath: string;
   specVersionId: string;
   resultId: string | null;
-  result: { labelId?: string } | null;
+  result: import('./labelingTasks').ClassificationResult | null;
   sourceKind: SourceKind | null;
   sourceActor: string | null;
   packageId?: string | null;
@@ -88,7 +88,7 @@ export type ExportJob = {
 };
 export type WorkflowPage<T> = { items: T[]; nextCursor: string | null };
 
-/** fafefca only updates documentation; these routes still require verified backend integration. */
+/** Legacy synthetic workflow contract. Real screens use labelingOwner, including its CAS writes. */
 export const workflowBackendReady = false;
 export const realWorkflowCall: WorkflowCall = (method, path, body, key) =>
   method === 'GET'

@@ -18,6 +18,7 @@ function setup(read) {
     }
   }
   const api = loadTypeScriptModule(entry, {
+    './labelingOwner': { ownerApi: {} },
     './labeling': {
       LabelingError,
       labelingJson: async (...args) => {
@@ -43,46 +44,45 @@ test('草稿进入发布准备，开放和只读项目进入结果工作台，�
   }
 });
 
-test('非草稿不能删除，也不会调用网络', async () => {
-  const { api, calls } = setup(() => draft);
-  for (const status of ['OPEN', 'PAUSED', 'ARCHIVED', 'UNKNOWN']) {
-    await assert.rejects(api.previewDraftDeletion({ ...draft, status }), {
-      code: 'PROJECT_NOT_DRAFT',
-    });
-  }
-  assert.equal(calls.length, 0);
-});
-
-test('确认删除前重查项目；状态或版本变化拒绝预览删除', async () => {
-  for (const [current, code] of [
-    [{ ...draft, status: 'OPEN' }, 'PROJECT_NOT_DRAFT'],
-    [{ ...draft, revision: 4 }, 'REVISION_CONFLICT'],
-    [{ ...draft, projectId: 'another' }, 'PROJECT_MISMATCH'],
-  ]) {
-    const { api } = setup(() => current);
-    await assert.rejects(api.previewDraftDeletion(draft), { code });
-  }
-});
-
-test('合法草稿只产生标明预览的回执，不发送猜测的删除接口', async () => {
-  const { api, calls } = setup(() => draft);
-  const result = await api.previewDraftDeletion(draft);
-  assert.equal(result.mode, 'preview');
-  assert.equal(result.projectId, draft.projectId);
-  assert.equal(calls.length, 1);
-  assert.equal(calls[0][0], '/projects/p%2Fone');
-  assert.equal(calls[0].length, 1);
-});
-
-test('权限及网络错误保留，不自动伪造删除成功', async () => {
-  for (const status of [403, 404, 503]) {
-    const failure = Object.assign(new Error('读取失败'), { status });
-    const { api } = setup(() => {
-      throw failure;
-    });
-    await assert.rejects(
-      api.previewDraftDeletion(draft),
-      (error) => error === failure,
+test('draft deletion sends the actual DELETE contract with revision and reason, and preserves failures', async () => {
+  const writes = [];
+  const api = loadTypeScriptModule(entry, {
+    './labeling': { LabelingError: class extends Error {} },
+    './labelingOwner': {
+      ownerApi: {
+        state: async (...args) => {
+          writes.push(args);
+          return { deleted: true };
+        },
+      },
+    },
+  });
+  assert.equal(
+    (await api.deleteDraftProject(draft, '  清理草稿  ', 'key')).deleted,
+    true,
+  );
+  assert.deepEqual(JSON.parse(JSON.stringify(writes)), [
+    ['p/one', 'delete', { baseRevision: 3, reason: '清理草稿' }, 'key'],
+  ]);
+  for (const status of ['OPEN', 'PAUSED', 'ARCHIVED'])
+    assert.throws(() =>
+      api.deleteDraftProject({ ...draft, status }, 'reason', 'key'),
     );
-  }
+  assert.throws(() => api.deleteDraftProject(draft, '   ', 'key'));
+  assert.equal(writes.length, 1);
+  const failure = new Error('network');
+  const failed = loadTypeScriptModule(entry, {
+    './labeling': {},
+    './labelingOwner': {
+      ownerApi: {
+        state: async () => {
+          throw failure;
+        },
+      },
+    },
+  });
+  await assert.rejects(
+    failed.deleteDraftProject(draft, 'reason', 'key'),
+    (e) => e === failure,
+  );
 });

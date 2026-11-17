@@ -7,7 +7,7 @@ import {
   TeamOutlined,
   UserOutlined,
 } from '@ant-design/icons';
-import { Link, useLocation, useModel } from '@umijs/max';
+import { history, Link, useLocation, useModel } from '@umijs/max';
 import { type MouseEvent, useEffect, useState } from 'react';
 import { AvatarDropdown, AvatarName } from '@/components';
 import type { Project } from '@/services/labeling';
@@ -47,7 +47,9 @@ export default function Navigation({
   const view = new URLSearchParams(search).get('view') || 'review';
   const inWorkbench = pathname.endsWith('/workbench');
   const active = inWorkbench
-    ? view
+    ? view === 'export'
+      ? 'export'
+      : 'review'
     : pathname === '/labeling/admin/users'
       ? 'users'
       : pathname.startsWith('/labeling/assignments')
@@ -73,18 +75,37 @@ export default function Navigation({
           {
             key: 'review',
             to: workbench,
-            name: '结果审核',
+            name: '结果工作台',
             icon: <CheckSquareOutlined />,
           },
           {
             key: 'export',
             to: `${workbench}?view=export`,
-            name: '成果导出',
+            name: '成果快照',
             icon: <DownloadOutlined />,
           },
         ]
       : []),
   ];
+  function navigate(event: MouseEvent<HTMLAnchorElement>, to: string) {
+    if (!canLeave()) {
+      event.preventDefault();
+      return;
+    }
+    if (
+      !beforeAccountAction ||
+      event.ctrlKey ||
+      event.metaKey ||
+      event.shiftKey ||
+      event.altKey ||
+      event.button !== 0
+    )
+      return;
+    event.preventDefault();
+    void Promise.resolve(beforeAccountAction()).then((allowed) => {
+      if (allowed) history.push(to);
+    });
+  }
   const secondary = [
     {
       key: 'mine',
@@ -112,8 +133,18 @@ export default function Navigation({
   return (
     <>
       <header className={styles.workspaceHeader}>
-        <PlatformBrand />
-        <Link to="/labeling" className={styles.projectSwitcher}>
+        <PlatformBrand
+          onClick={(event: MouseEvent<HTMLAnchorElement>) =>
+            navigate(event, '/platforms')
+          }
+        />
+        <Link
+          to="/labeling"
+          className={styles.projectSwitcher}
+          onClick={(event: MouseEvent<HTMLAnchorElement>) =>
+            navigate(event, '/labeling')
+          }
+        >
           项目：{project?.name || '选择项目'} <span aria-hidden="true">⌄</span>
         </Link>
         <div className={styles.headerAccount}>
@@ -144,7 +175,7 @@ export default function Navigation({
                   aria-current={active === item.key ? 'page' : undefined}
                   className={`${styles.navTab} ${active === item.key ? styles.navTabActive : ''}`}
                   onClick={(event: MouseEvent<HTMLAnchorElement>) => {
-                    if (!canLeave()) event.preventDefault();
+                    navigate(event, item.to);
                   }}
                 >
                   <span aria-hidden="true">{item.icon}</span>

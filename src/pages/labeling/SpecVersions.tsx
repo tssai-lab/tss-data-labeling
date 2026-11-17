@@ -20,6 +20,7 @@ import {
   post,
   type SpecVersion,
 } from '@/services/labeling';
+import { energyLabels } from '@/services/labelingEnergy.mjs';
 
 export default function SpecVersions({
   project,
@@ -50,7 +51,9 @@ export default function SpecVersions({
     setLabels(
       spec
         ? spec.labels.map((l) => ({ ...l }))
-        : [{ id: `label-${operationKey()}`, name: '' }],
+        : project.taskType === 'TIMESERIES_ANNOTATION'
+          ? energyLabels.map((id) => ({ id, name: id }))
+          : [{ id: `label-${operationKey()}`, name: '' }],
     );
     setInstructions(spec?.instructions || '');
     setEditing(true);
@@ -68,11 +71,17 @@ export default function SpecVersions({
       return;
     }
     const body = {
-      taskType: 'IMAGE_CLASSIFICATION',
+      taskType: project.taskType,
+      templateId:
+        project.taskType === 'TIMESERIES_ANNOTATION'
+          ? 'energy-station-day'
+          : 'image-classification',
+      templateVersion: '1.0.0',
       labels: labels.map((l) => ({ id: l.id, name: l.name.trim() })),
       instructions,
       editorConfig: {},
-      schemaVersion: '1.0',
+      schemaVersion:
+        project.taskType === 'TIMESERIES_ANNOTATION' ? '1.0.0' : '1.0',
     };
     const payload = JSON.stringify(body);
     if (attempt.current?.payload !== payload)
@@ -109,10 +118,11 @@ export default function SpecVersions({
     }
   }
   return (
-    <Card title="1. 分类规范与历史版本">
+    <Card title="1. 标注规范与历史版本">
       <Typography.Paragraph type="secondary">
-        数据类型：图片 ·
-        任务形式：单标签分类。空选择表示未完成；“无目标”如有业务含义，须建为合法分类。
+        {project.taskType === 'TIMESERIES_ANNOTATION'
+          ? '站点日能耗：24 小时曲线，完成需一个规范内主标签；点、区间、备注可选。标签语义仍需业务专家确认。'
+          : '图片单标签分类。空选择表示未完成；“无目标”如有业务含义，须建为合法分类。'}
       </Typography.Paragraph>
       {error && <Alert type="error" showIcon message={error} />}
       {specs.length > 0 && (
@@ -125,7 +135,7 @@ export default function SpecVersions({
             onChange={onSelect}
             options={specs.map((s) => ({
               value: s.specVersionId,
-              label: `版本 ${s.versionNo} · ${s.specVersionId}`,
+              label: `规范版本 ${s.versionNo}`,
             }))}
           />
           <Space wrap>
@@ -171,12 +181,6 @@ export default function SpecVersions({
                   )
                 }
               />
-              <Typography.Text
-                type="secondary"
-                style={{ overflowWrap: 'anywhere' }}
-              >
-                {label.id}
-              </Typography.Text>
               <Space wrap>
                 <Button
                   size="small"

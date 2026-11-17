@@ -6,6 +6,8 @@ export const taskTemplates = Object.freeze([
     name: '图片单标签分类',
     taskType: 'IMAGE_CLASSIFICATION',
     inputFormat: 'image',
+    inputSchemaId: 'image-classification-input@1.0.0',
+    resultSchemaId: 'image-classification-result@1.0.0',
     resultFormat: 'image-classification-v1',
     editorKey: 'image-classification-editor',
     enabled: true,
@@ -13,14 +15,14 @@ export const taskTemplates = Object.freeze([
   Object.freeze({
     id: 'energy-station-day',
     version: '1.0.0',
-    name: '站点日能耗时序（试标）',
+    name: '站点日能耗标注',
     taskType: 'TIMESERIES_ANNOTATION',
     inputFormat: 'energy-station-day-input-v1',
     inputSchemaId: 'energy-station-day-input@1.0.0',
     resultSchemaId: 'energy-station-day-result@1.0.0',
     resultFormat: 'annotation-record-v1',
     editorKey: 'energy-station-day-editor',
-    enabled: false,
+    enabled: true,
   }),
 ]);
 export function resolveTaskTemplate(binding = {}, { preview = false } = {}) {
@@ -54,10 +56,7 @@ export function resolveTaskTemplate(binding = {}, { preview = false } = {}) {
         '任务模板、输入、结果或编辑器版本不匹配，已停止编辑',
       );
   if (!template.enabled && !preview)
-    fail(
-      'TEMPLATE_UNSUPPORTED',
-      '该模板尚未完成后端接入，只能在独立合成演示中试标',
-    );
+    fail('TEMPLATE_UNSUPPORTED', '该模板当前未启用');
   return template;
 }
 export function assertClassificationWork(work) {

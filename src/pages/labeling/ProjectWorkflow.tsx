@@ -1,4 +1,4 @@
-import { history, Link, useParams } from '@umijs/max';
+import { history, useParams } from '@umijs/max';
 import { Alert, Button, Card, Space, Spin } from 'antd';
 import { useEffect, useState } from 'react';
 import {
@@ -21,29 +21,10 @@ export function CapabilitiesNotice({
           showIcon
           type="info"
           message="人工结果交回后仍待需求方审核，不代表任务完成"
-          description="下方展示真实已交回记录。AI、审核、修订与成果导出待后端接入；接口请求失败时显示实际错误。"
+          description="在结果工作台审核与修订答案，按固定范围再次发布或交给 AI，再将已确认答案保存为成果并导出 ZIP。"
         />
       )}
-      <Space wrap style={{ marginTop: withNotice ? 16 : 0 }}>
-        {[
-          'AI范围执行',
-          '需求方审核',
-          '需求方修订',
-          '再次发布',
-          '集成建议',
-          '成果CSV导出',
-        ].map((name) => (
-          <Button key={name} disabled>
-            {name}
-          </Button>
-        ))}
-        {process.env.NODE_ENV !== 'production' &&
-          process.env.LABELING_GAP_MOCK === 'true' && (
-            <Link to="/labeling/demo">
-              <Button>预览审核、AI与成果流程</Button>
-            </Link>
-          )}
-      </Space>
+      <Space wrap style={{ marginTop: withNotice ? 16 : 0 }}></Space>
     </Card>
   );
 }
@@ -97,8 +78,14 @@ export default function ProjectWorkflow() {
       )}
       {project &&
         project.status !== 'DRAFT' &&
-        (project.taskType === 'IMAGE_CLASSIFICATION' ? (
-          <ProjectReviewWorkbench key={project.projectId} project={project} />
+        (['IMAGE_CLASSIFICATION', 'TIMESERIES_ANNOTATION'].includes(
+          project.taskType,
+        ) ? (
+          <ProjectReviewWorkbench
+            key={project.projectId}
+            project={project}
+            onProjectChanged={() => setRetry((n) => n + 1)}
+          />
         ) : (
           <Alert
             type="info"

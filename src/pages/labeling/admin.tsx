@@ -14,6 +14,7 @@ import { useEffect, useState } from 'react';
 import { describeLabelingError } from '@/services/labeling';
 import { type LabelingUser, labelingAdmin } from '@/services/labelingAdmin';
 import { type LabelingIdentity, tasks } from '@/services/labelingTasks';
+import AgentRegistration from './AgentRegistration';
 import WorkspaceLayout from './WorkspaceLayout';
 
 export default function Users() {
@@ -200,6 +201,7 @@ export default function Users() {
           </Form.Item>
         </Form>
       </Modal>
+      {me?.labelingAdmin && <AgentRegistration />}
     </WorkspaceLayout>
   );
 }

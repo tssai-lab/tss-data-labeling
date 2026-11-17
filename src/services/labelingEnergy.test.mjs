@@ -103,7 +103,7 @@ test('typed annotations roundtrip primary, secondary, point, half-open interval 
     assert.throws(() => validateEnergyResult(copy, input));
   }
 });
-test('structural validity and completion differ; unknown human certainty is allowed, missing reasons cannot masquerade as done', async () => {
+test('minimum technical completion requires a valid primary label; reasons and human certainty remain optional pending expert rules', async () => {
   const input = (await setup()).inputs[0];
   const empty = encodeEnergyResult(emptyEnergyValue(), input);
   assert.equal(validateEnergyResult(empty, input), true);
@@ -112,7 +112,12 @@ test('structural validity and completion differ; unknown human certainty is allo
     { ...emptyEnergyValue(), primary: 'idle_zero', certainty: 'UNKNOWN' },
     input,
   );
-  assert.throws(() => validateEnergyResult(abnormal, input, true));
+  assert.equal(validateEnergyResult(abnormal, input, true), true);
+  const minimal = encodeEnergyResult(
+    { ...emptyEnergyValue(), primary: 'idle_zero' },
+    input,
+  );
+  assert.equal(validateEnergyResult(minimal, input, true), true);
   const whole = encodeEnergyResult(
     {
       ...emptyEnergyValue(),

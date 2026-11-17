@@ -1,9 +1,10 @@
 import { redirectToLogin } from '@/utils/loginRedirect';
 import { STORAGE_KEYS, storage } from '@/utils/storage';
+import type { TaskBinding } from './labelingTemplates.mjs';
 
 export type Page<T> = { items: T[]; nextCursor: string | null };
 export type Label = { id: string; name: string };
-export type SpecVersion = {
+export type SpecVersion = TaskBinding & {
   specVersionId: string;
   versionNo: number;
   labels: Label[];
@@ -29,7 +30,13 @@ export type Batch = {
   originalComplete: boolean;
   validSampleCount: number;
   errorCount: number;
-  errors: { sourcePath: string; code: string; message: string }[];
+  errors: {
+    sourcePath: string;
+    sourceRow?: number;
+    field?: string;
+    code: string;
+    message: string;
+  }[];
   errorCode?: string | null;
 };
 export type Sample = {
@@ -144,7 +151,7 @@ export function pageQuery(cursor?: string | null): string {
   return query.toString();
 }
 
-/** Authorized file response for the future final-snapshot export route; never puts tokens in URLs. */
+/** Authorized ZIP download; tokens stay in headers. */
 export async function labelingZip(
   path: string,
   signal?: AbortSignal,

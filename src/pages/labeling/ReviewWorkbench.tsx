@@ -11,6 +11,7 @@ import {
   Typography,
 } from 'antd';
 import { useEffect, useId, useState } from 'react';
+import { resultLabel } from '@/services/labelingStructured';
 import type { ResultRow } from '@/services/labelingWorkflow';
 import s from './reviewWorkbench.less';
 
@@ -81,6 +82,8 @@ type Props = {
   onHistory: (row: ResultRow) => void;
   onRevise: (row: ResultRow) => void;
   labels: readonly { id: string; name: string }[];
+  renderPreview?: (row: ResultRow) => React.ReactNode;
+  allowRevision?: boolean;
 };
 export default function ReviewWorkbench(props: Props) {
   const { rows, selectedId, busy, loading } = props;
@@ -134,7 +137,12 @@ export default function ReviewWorkbench(props: Props) {
             disabled={busy || loading}
             value={props.filter.reviewStatus}
             onChange={(value) => props.onFilter('reviewStatus', value)}
-            options={['PENDING', 'NEEDS_REVISION', 'ACCEPTED'].map((value) => ({
+            options={[
+              'UNREVIEWED',
+              'PENDING',
+              'NEEDS_REVISION',
+              'ACCEPTED',
+            ].map((value) => ({
               value,
               label: reviewStatusNames[value],
             }))}
@@ -180,7 +188,7 @@ export default function ReviewWorkbench(props: Props) {
           }
           onRow={(item) => ({
             tabIndex: 0,
-            'aria-label': `${sampleName(item.sampleId)}，${props.labels.find((l) => l.id === item.result?.labelId)?.name || '无答案'}`,
+            'aria-label': `${sampleName(item.sampleId)}，${props.labels.find((l) => l.id === resultLabel(item.result))?.name || '无答案'}`,
             onClick: (event) => {
               if (
                 !(event.target as HTMLElement).closest(
@@ -269,16 +277,18 @@ export default function ReviewWorkbench(props: Props) {
           )}
         </div>
       </section>
-      <section className={s.panel} aria-label="原图预览">
+      <section className={s.panel} aria-label="样本数据预览">
         <div className={s.panelHeading}>
-          <h2>原图预览</h2>
+          <h2>样本数据预览</h2>
         </div>
         <div className={s.imageMeta}>
           <span>{row ? sampleName(row.sampleId) : '未选择样本'}</span>
           <span>{row ? `${index + 1} / ${rows.length} 已加载` : ''}</span>
         </div>
         <div className={s.imageFrame} data-sample-id={row?.sampleId || ''}>
-          {row && images[row.sampleId] && !failedImage ? (
+          {row && props.renderPreview ? (
+            props.renderPreview(row)
+          ) : row && images[row.sampleId] && !failedImage ? (
             <img
               key={row.sampleId}
               src={images[row.sampleId]}
@@ -314,7 +324,9 @@ export default function ReviewWorkbench(props: Props) {
           </Button>
         </div>
         <p className={s.imageCaption}>
-          按 sampleId 绑定的本地合成图，仅用于交互演示
+          {props.renderPreview
+            ? '通过标注服务按样本授权读取数据'
+            : '按 sampleId 绑定的本地合成图，仅用于交互演示'}
         </p>
       </section>
       <section className={s.panel} aria-label="审核详情">
@@ -335,7 +347,7 @@ export default function ReviewWorkbench(props: Props) {
               {[
                 [
                   '候选标签',
-                  props.labels.find((l) => l.id === row.result?.labelId)
+                  props.labels.find((l) => l.id === resultLabel(row.result))
                     ?.name || '无候选答案',
                 ],
                 [
@@ -387,13 +399,15 @@ export default function ReviewWorkbench(props: Props) {
               >
                 标记待修正
               </Button>
-              <Button
-                type="link"
-                disabled={!canReview}
-                onClick={() => props.onRevise(row)}
-              >
-                修订为新候选
-              </Button>
+              {props.allowRevision !== false && (
+                <Button
+                  type="link"
+                  disabled={!canReview}
+                  onClick={() => props.onRevise(row)}
+                >
+                  修订为新候选
+                </Button>
+              )}
             </div>
             <div className={s.smallHint}>
               审核 revision {row.reviewRevision} · {row.specVersionId}
