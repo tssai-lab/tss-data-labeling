@@ -13,6 +13,7 @@ import { useEffect, useRef, useState } from 'react';
 import { describeLabelingError, operationKey } from '@/services/labeling';
 import type { Plan } from '@/services/labelingTasks';
 import { tasks } from '@/services/labelingTasks';
+import ui from './workspaceUi.less';
 
 export default function PublishPlan({
   projectId,
@@ -170,113 +171,129 @@ export default function PublishPlan({
         type="info"
         message="每包由一名标注人领取并完整提交。默认每包 10 个样本，最后一包保留剩余样本；需要重新标注部分样本时，请到结果工作台选择。"
       />
-      {!plan && (
-        <Form
-          form={form}
-          layout="inline"
-          initialValues={{ packageSize: 10, annotatorsPerSample: 1 }}
-          onFinish={() => void preview()}
-        >
-          <Form.Item
-            name="packageSize"
-            label="每包样本数"
-            rules={[{ required: true }]}
-          >
-            <InputNumber
-              min={1}
-              max={1000}
-              precision={0}
-              disabled={busy || !writable}
-            />
-          </Form.Item>
-          <Form.Item
-            name="annotatorsPerSample"
-            label="本轮每包人工人数"
-            rules={[{ required: true }]}
-          >
-            <InputNumber min={1} max={1} precision={0} disabled />
-          </Form.Item>
-          <Button
-            htmlType="submit"
-            loading={busy}
-            disabled={!specVersionId || !writable || busy}
-          >
-            生成打包预览
-          </Button>
-        </Form>
-      )}
-      {incompatibleDraft && (
-        <Alert
-          type="warning"
-          message="本机旧预览不是本轮每包1人的规则，请先调整参数重新生成。"
-        />
-      )}
-      {draftSpecChanged && (
-        <Alert
-          type="warning"
-          showIcon
-          message="规范已更换或旧预览规范未知，请调整打包参数并重新生成预览后发布。"
-        />
-      )}
-      {plan && (
-        <>
-          <Typography.Paragraph style={{ marginTop: 20 }}>
-            共 {plan.sampleCount} 个样本，{plan.packageSampleCounts.length}{' '}
-            个任务包，总工作量 {plan.totalWorkload} 次标注。各包样本数：
-            {plan.packageSampleCounts.join(' / ')}。
-          </Typography.Paragraph>
-          {plan.status === 'PUBLISHED' ? (
-            <>
-              <Alert
-                type="success"
-                showIcon
-                message="任务包已发布，包成员和分类规范已冻结"
-              />
-              <Table
-                size="small"
-                pagination={false}
-                rowKey="packageId"
-                scroll={{ x: 450 }}
-                dataSource={plan.packages}
-                columns={[
-                  { title: '包序号', dataIndex: 'sequenceNo' },
-                  { title: '样本数', dataIndex: 'sampleCount' },
-                  { title: '标注人数', dataIndex: 'requiredCount' },
-                ]}
-              />
-              <Link to="/labeling/tasks">前往任务广场领取</Link>
-            </>
-          ) : (
-            <Space>
+      <div className={ui.twoColumns}>
+        <section className={ui.section}>
+          <h3>打包参数</h3>
+          {plan && <p>参数已随预览固定。需要更改时，选择“调整打包参数”。</p>}
+          {!plan && (
+            <Form
+              form={form}
+              layout="vertical"
+              initialValues={{ packageSize: 10, annotatorsPerSample: 1 }}
+              onFinish={() => void preview()}
+            >
+              <Form.Item
+                name="packageSize"
+                label="每包样本数"
+                rules={[{ required: true }]}
+              >
+                <InputNumber
+                  min={1}
+                  max={1000}
+                  precision={0}
+                  disabled={busy || !writable}
+                />
+              </Form.Item>
+              <Form.Item
+                name="annotatorsPerSample"
+                label="本轮每包人工人数"
+                rules={[{ required: true }]}
+              >
+                <InputNumber min={1} max={1} precision={0} disabled />
+              </Form.Item>
               <Button
-                type="primary"
+                htmlType="submit"
                 loading={busy}
-                disabled={!writable || incompatibleDraft || draftSpecChanged}
-                onClick={() => void publish()}
+                disabled={!specVersionId || !writable || busy}
               >
-                确认发布此预览
+                生成打包预览
               </Button>
-              <Button
-                disabled={busy || !writable}
-                onClick={() => {
-                  setPlan(undefined);
-                  try {
-                    localStorage.removeItem(bookmark);
-                    localStorage.removeItem(`${bookmark}:spec`);
-                  } catch {
-                    /* Optional bookmark. */
-                  }
-                }}
-              >
-                调整打包参数
-              </Button>
-              <Typography.Text type="secondary">
-                发布后不可修改包成员、规范和人数。
-              </Typography.Text>
-            </Space>
+            </Form>
           )}
-        </>
-      )}
+        </section>
+        <section className={ui.section}>
+          <h3>发布预览</h3>
+          {!plan && (
+            <p className={ui.emptyNote}>
+              设置每包样本数，生成预览后核对样本、包数与工作量，再确认发布。
+            </p>
+          )}
+          {incompatibleDraft && (
+            <Alert
+              type="warning"
+              message="本机旧预览不是本轮每包1人的规则，请先调整参数重新生成。"
+            />
+          )}
+          {draftSpecChanged && (
+            <Alert
+              type="warning"
+              showIcon
+              message="规范已更换或旧预览规范未知，请调整打包参数并重新生成预览后发布。"
+            />
+          )}
+          {plan && (
+            <>
+              <Typography.Paragraph style={{ marginTop: 20 }}>
+                共 {plan.sampleCount} 个样本，{plan.packageSampleCounts.length}{' '}
+                个任务包，总工作量 {plan.totalWorkload} 次标注。各包样本数：
+                {plan.packageSampleCounts.join(' / ')}。
+              </Typography.Paragraph>
+              {plan.status === 'PUBLISHED' ? (
+                <>
+                  <Alert
+                    type="success"
+                    showIcon
+                    message="任务包已发布，包成员和分类规范已冻结"
+                  />
+                  <Table
+                    size="small"
+                    pagination={false}
+                    rowKey="packageId"
+                    scroll={{ x: 450 }}
+                    dataSource={plan.packages}
+                    columns={[
+                      { title: '包序号', dataIndex: 'sequenceNo' },
+                      { title: '样本数', dataIndex: 'sampleCount' },
+                      { title: '标注人数', dataIndex: 'requiredCount' },
+                    ]}
+                  />
+                  <Link to="/labeling/tasks">前往任务广场领取</Link>
+                </>
+              ) : (
+                <Space>
+                  <Button
+                    type="primary"
+                    loading={busy}
+                    disabled={
+                      !writable || incompatibleDraft || draftSpecChanged
+                    }
+                    onClick={() => void publish()}
+                  >
+                    确认发布此预览
+                  </Button>
+                  <Button
+                    disabled={busy || !writable}
+                    onClick={() => {
+                      setPlan(undefined);
+                      try {
+                        localStorage.removeItem(bookmark);
+                        localStorage.removeItem(`${bookmark}:spec`);
+                      } catch {
+                        /* Optional bookmark. */
+                      }
+                    }}
+                  >
+                    调整打包参数
+                  </Button>
+                  <Typography.Text type="secondary">
+                    发布后不可修改包成员、规范和人数。
+                  </Typography.Text>
+                </Space>
+              )}
+            </>
+          )}
+        </section>
+      </div>
     </Card>
   );
 }

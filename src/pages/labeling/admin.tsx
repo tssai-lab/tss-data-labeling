@@ -16,6 +16,7 @@ import { type LabelingUser, labelingAdmin } from '@/services/labelingAdmin';
 import { type LabelingIdentity, tasks } from '@/services/labelingTasks';
 import AgentRegistration from './AgentRegistration';
 import WorkspaceLayout from './WorkspaceLayout';
+import ui from './workspaceUi.less';
 
 export default function Users() {
   const [me, setMe] = useState<LabelingIdentity>();
@@ -81,7 +82,12 @@ export default function Users() {
   }
   return (
     <WorkspaceLayout>
-      <h1>标注用户管理</h1>
+      <header className={ui.pageHeader}>
+        <div>
+          <h1>标注用户管理</h1>
+          <p>管理标注资格与管理员权限，所有变更保留操作原因。</p>
+        </div>
+      </header>
       <Alert
         type="info"
         showIcon

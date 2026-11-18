@@ -8,7 +8,6 @@ import {
   Select,
   Space,
   Tabs,
-  Tag,
 } from 'antd';
 import { useEffect, useState } from 'react';
 import type { Project } from '@/services/labeling';
@@ -29,6 +28,7 @@ import LiveSnapshots from './LiveSnapshots';
 import ProjectBreadcrumbs from './ProjectBreadcrumbs';
 import ProjectManagement from './ProjectManagement';
 import SubmissionReview from './SubmissionReview';
+import ui from './workspaceUi.less';
 
 export default function ProjectReviewWorkbench({
   project,
@@ -101,39 +101,34 @@ export default function ProjectReviewWorkbench({
   return (
     <>
       <ProjectBreadcrumbs projectId={project.projectId} current="结果工作台" />
-      <Card size="small" style={{ marginBottom: 16 }}>
-        <Space wrap style={{ width: '100%', justifyContent: 'space-between' }}>
-          <div>
-            <h1 style={{ margin: 0 }}>{project.name} · 结果工作台</h1>
-            <p style={{ marginBottom: 0 }}>
-              处理已交回的答案。准备规范、导入新数据请到
-              <Link to={`${root}?panel=publish`}>任务发布</Link>。
-            </p>
-          </div>
-          <Select
-            aria-label="结果工作台规范版本"
-            value={specId}
-            disabled={busy}
-            onChange={(value) => {
-              setSpecId(value);
-              setSelected([]);
-              setFilterRequest(undefined);
-            }}
-            options={specs.map((item) => ({
-              value: item.specVersionId,
-              label: `规范版本 ${item.versionNo}`,
-            }))}
-          />
-        </Space>
-      </Card>
-      <details style={{ marginBottom: 12 }}>
-        <summary>项目状态管理</summary>
-        <ProjectManagement
-          project={project}
-          onChanged={() => onProjectChanged?.()}
+      <header className={ui.pageHeader}>
+        <div>
+          <h1>
+            {active === 'review'
+              ? '需求方结果与审核'
+              : workbenchViews.find((view) => view.key === active)?.label}
+          </h1>
+          <p>
+            {workbenchViews.find((view) => view.key === active)?.description}
+          </p>
+        </div>
+        <Select
+          aria-label="结果工作台规范版本"
+          value={specId}
+          disabled={busy}
+          onChange={(value) => {
+            setSpecId(value);
+            setSelected([]);
+            setFilterRequest(undefined);
+          }}
+          options={specs.map((item) => ({
+            value: item.specVersionId,
+            label: `规范 v${item.versionNo}`,
+          }))}
         />
-      </details>
+      </header>
       <Tabs
+        className={ui.workbenchTabs}
         activeKey={active}
         onChange={changeView}
         items={workbenchViews.map((view) => ({
@@ -142,36 +137,33 @@ export default function ProjectReviewWorkbench({
           disabled: busy,
         }))}
       />
-      <p>{workbenchViews.find((view) => view.key === active)?.description}</p>
-      {active !== 'sources' && (
-        <Space wrap style={{ marginBottom: 12 }}>
-          <Tag>已选择 {scope.length} 个样本</Tag>
-          {scope.length > 0 && (
-            <>
-              <Button
-                disabled={busy || active === 'publish'}
-                onClick={() => changeView('publish')}
-              >
-                重新标注
-              </Button>
-              <Button
-                disabled={busy || active === 'ai'}
-                onClick={() => changeView('ai')}
-              >
-                交给 AI 处理
-              </Button>
-              <Button
-                disabled={busy || active === 'export' || !canFinalize(scope)}
-                onClick={() => changeView('export')}
-              >
-                保存为成果
-              </Button>
-              <Button disabled={busy} onClick={() => setSelected([])}>
-                清空选择
-              </Button>
-            </>
-          )}
-        </Space>
+      {scope.length > 0 && (
+        <div className={ui.selectionBar}>
+          <strong>已选择 {scope.length} 个样本</strong>
+          <Space wrap>
+            <Button
+              disabled={busy || active === 'publish'}
+              onClick={() => changeView('publish')}
+            >
+              重新标注
+            </Button>
+            <Button
+              disabled={busy || active === 'ai'}
+              onClick={() => changeView('ai')}
+            >
+              交给 AI 处理
+            </Button>
+            <Button
+              disabled={busy || active === 'export' || !canFinalize(scope)}
+              onClick={() => changeView('export')}
+            >
+              保存为成果
+            </Button>
+            <Button disabled={busy} type="text" onClick={() => setSelected([])}>
+              清空选择
+            </Button>
+          </Space>
+        </div>
       )}
       {(visited.has('review') || active === 'review') && (
         <div hidden={active !== 'review'}>
@@ -259,7 +251,7 @@ export default function ProjectReviewWorkbench({
         </div>
       )}
       {(visited.has('sources') || active === 'sources') && (
-        <div hidden={active !== 'sources'}>
+        <div className={ui.twoColumns} hidden={active !== 'sources'}>
           <LiveAggregation {...common} />
           <SubmissionReview
             projectId={project.projectId}
@@ -278,6 +270,13 @@ export default function ProjectReviewWorkbench({
           )}
         </div>
       )}
+      <details className={ui.projectTools}>
+        <summary>项目管理 · {project.name}</summary>
+        <ProjectManagement
+          project={project}
+          onChanged={() => onProjectChanged?.()}
+        />
+      </details>
     </>
   );
 }

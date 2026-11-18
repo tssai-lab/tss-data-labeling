@@ -7,13 +7,13 @@ import {
   Popover,
   Select,
   Table,
-  Tag,
   Typography,
 } from 'antd';
 import { useEffect, useId, useState } from 'react';
 import { resultLabel } from '@/services/labelingStructured';
 import type { ResultRow } from '@/services/labelingWorkflow';
 import s from './reviewWorkbench.less';
+import StatusBadge from './StatusBadge';
 
 export const reviewStatusNames: Record<string, string> = {
   PENDING: '待审核',
@@ -35,10 +35,13 @@ export const confidenceText = (row: ResultRow) =>
       : row.confidence === null || row.confidence === undefined
         ? '未知'
         : String(row.confidence);
-const sampleName = (id: string) =>
-  /^demo-sample-\d+$/.test(id)
+const sampleName = (id: string, path?: string) =>
+  path?.split('/').pop() ||
+  (/^demo-sample-\d+$/.test(id)
     ? `样本 ${id.split('-').at(-1)?.padStart(2, '0')}`
-    : id;
+    : id.length > 14
+      ? `${id.slice(0, 8)}…`
+      : id);
 const images = Object.freeze(
   Object.fromEntries(
     Array.from({ length: 12 }, (_, i) => [
@@ -53,13 +56,9 @@ export function ReviewStatus({ row }: { row: ResultRow }) {
       ? 'PENDING'
       : row.reviewStatus;
   return (
-    <Tag
-      color={
-        row.activeProcessing ? 'blue' : status === 'ACCEPTED' ? 'green' : 'gold'
-      }
-    >
+    <StatusBadge status={row.activeProcessing ? 'RUNNING' : status}>
       {row.activeProcessing ? '处理中' : reviewStatusNames[status] || status}
-    </Tag>
+    </StatusBadge>
   );
 }
 type Props = {
@@ -84,6 +83,7 @@ type Props = {
   labels: readonly { id: string; name: string }[];
   renderPreview?: (row: ResultRow) => React.ReactNode;
   allowRevision?: boolean;
+  onScopePreview?: () => void;
 };
 export default function ReviewWorkbench(props: Props) {
   const { rows, selectedId, busy, loading } = props;
@@ -148,33 +148,19 @@ export default function ReviewWorkbench(props: Props) {
             }))}
           />
         </div>
-        <div className={s.filterExtra}>
-          <Select
-            aria-label="答案筛选"
-            placeholder="全部候选状态"
-            allowClear
-            value={props.filter.hasResult}
-            disabled={busy || loading}
-            onChange={(value) => props.onFilter('hasResult', value)}
-            options={[
-              { value: 'true', label: '有候选答案' },
-              { value: 'false', label: '无候选答案' },
-            ]}
-          />
-          <Button disabled={busy || loading} onClick={props.onClear}>
-            清除筛选
-          </Button>
-        </div>
-        {Object.entries(props.filter)
-          .filter(
-            ([key]) =>
-              !['sourceKind', 'reviewStatus', 'hasResult'].includes(key),
-          )
-          .map(([key, value]) => (
-            <Tag key={key}>
-              {key}: {value}
-            </Tag>
-          ))}
+        {Object.values(props.filter).some(Boolean) && (
+          <div className={s.filterExtra}>
+            <Button
+              size="small"
+              type="text"
+              disabled={busy || loading}
+              onClick={props.onClear}
+            >
+              清除筛选
+            </Button>
+            <span>当前筛选范围</span>
+          </div>
+        )}
         <Table<ResultRow>
           className={s.sampleTable}
           rowKey="sampleId"
@@ -188,7 +174,7 @@ export default function ReviewWorkbench(props: Props) {
           }
           onRow={(item) => ({
             tabIndex: 0,
-            'aria-label': `${sampleName(item.sampleId)}，${props.labels.find((l) => l.id === resultLabel(item.result))?.name || '无答案'}`,
+            'aria-label': `${sampleName(item.sampleId, item.sourcePath)}，${props.labels.find((l) => l.id === resultLabel(item.result))?.name || '无答案'}`,
             onClick: (event) => {
               if (
                 !(event.target as HTMLElement).closest(
@@ -210,7 +196,7 @@ export default function ReviewWorkbench(props: Props) {
           rowSelection={{
             selectedRowKeys: props.chosen,
             onChange: props.onChoose,
-            columnWidth: 30,
+            columnWidth: 28,
             getCheckboxProps: (item) => ({
               disabled: busy || loading || item.activeProcessing,
             }),
@@ -218,11 +204,11 @@ export default function ReviewWorkbench(props: Props) {
           columns={[
             {
               title: '样本',
-              width: 82,
+              width: 108,
               render: (_, item) => (
                 <>
-                  <span className={s.sampleName}>
-                    {sampleName(item.sampleId)}
+                  <span className={s.sampleName} title={item.sampleId}>
+                    {sampleName(item.sampleId, item.sourcePath)}
                   </span>
                   <Popover
                     trigger="click"
@@ -251,11 +237,6 @@ export default function ReviewWorkbench(props: Props) {
                 '—',
             },
             {
-              title: '来源',
-              width: 57,
-              render: (_, item) => sourceNames[item.sourceKind || ''] || '—',
-            },
-            {
               title: '审核状态',
               width: 80,
               render: (_, item) => <ReviewStatus row={item} />,
@@ -264,8 +245,17 @@ export default function ReviewWorkbench(props: Props) {
         />
         <div className={s.listFooter}>
           <span>
-            当前范围 {props.total ?? '—'} 个样本 · 已加载 {rows.length} 行
+            已勾选 {props.chosen.length} 个 · 已加载 {rows.length} 行
           </span>
+          {props.onScopePreview && (
+            <Button
+              size="small"
+              disabled={busy || loading || props.total === 0}
+              onClick={props.onScopePreview}
+            >
+              固定范围预览
+            </Button>
+          )}
           {props.cursor && (
             <Button
               size="small"
@@ -282,7 +272,9 @@ export default function ReviewWorkbench(props: Props) {
           <h2>样本数据预览</h2>
         </div>
         <div className={s.imageMeta}>
-          <span>{row ? sampleName(row.sampleId) : '未选择样本'}</span>
+          <span>
+            {row ? sampleName(row.sampleId, row.sourcePath) : '未选择样本'}
+          </span>
           <span>{row ? `${index + 1} / ${rows.length} 已加载` : ''}</span>
         </div>
         <div className={s.imageFrame} data-sample-id={row?.sampleId || ''}>
@@ -355,7 +347,11 @@ export default function ReviewWorkbench(props: Props) {
                   `${sourceNames[row.sourceKind || ''] || '—'} · ${row.modelVersion || '不适用'}`,
                 ],
                 ['AI置信度', confidenceText(row)],
-                ['结果版本', row.resultId || '—'],
+                [
+                  '结果版本',
+                  row.resultId ? `${row.resultId.slice(0, 8)}…` : '—',
+                ],
+                ['审核版本', `revision ${row.reviewRevision}`],
               ].map(([label, value]) => (
                 <div className={s.detailRow} key={label}>
                   <dt>{label}</dt>
@@ -372,7 +368,7 @@ export default function ReviewWorkbench(props: Props) {
               查看来源历史
             </Button>
             <label className={s.reason} htmlFor={reasonId}>
-              <span>操作原因</span>
+              <span>待修正原因</span>
               <Input.TextArea
                 id={reasonId}
                 aria-label="操作原因"

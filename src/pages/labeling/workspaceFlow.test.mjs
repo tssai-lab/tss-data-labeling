@@ -44,6 +44,7 @@ function renderer(file, props, dependencies = {}, storage = new Map()) {
     entry,
     {
       react,
+      './workspaceUi.less': { default: {} },
       './index.less': new Proxy({}, { get: (_, key) => key }),
       ...dependencies,
     },
@@ -90,6 +91,7 @@ test('全局导航去除重复和旧入口，审核与导出只在项目内出�
     './Navigation.tsx',
     {},
     {
+      antd: { Button: 'Button' },
       '@ant-design/icons': new Proxy({}, { get: (_, key) => key }),
       '@umijs/max': {
         Link: 'Link',
@@ -109,7 +111,7 @@ test('全局导航去除重复和旧入口，审核与导出只在项目内出�
       .nodes('Link')
       .filter((node) => node.props['aria-current'] === 'page')
       .map(text),
-    ['任务发布'],
+    ['我的项目'],
   );
   for (const label of ['项目数据', '旧版 Demo', '结果工作台', '成果快照']) {
     assert.equal(

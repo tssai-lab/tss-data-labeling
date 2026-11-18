@@ -25,6 +25,7 @@ import {
   validateEnergyResult,
 } from '@/services/labelingEnergy.mjs';
 import type { EnergySave } from '@/services/labelingEnergyDemo.mjs';
+import ui from './workspaceUi.less';
 
 export type EnergyEditorProps = {
   input: EnergyInput;
@@ -175,316 +176,332 @@ export default function EnergyEditorAdapter({
         showIcon
         message={`${input.context.status} · 可用历史 ${input.context.availableHistoryDays} 天；不推断30天规则。${summary.missing ? `缺测 ${summary.missing} 个小时，曲线断开。` : '零值是实际数值，不等于缺测。'}`}
       />
-      <svg
-        role="img"
-        aria-label="北京时间24小时能耗曲线，点击选择小时，拖选区间"
-        viewBox="0 0 800 235"
-        style={{
-          width: '100%',
-          touchAction: 'pan-y',
-          background: '#f6f8fc',
-          marginTop: 12,
-        }}
-        onPointerDown={(event) => {
-          if (!disabled) {
-            drag.current = eventHour(event);
-            event.currentTarget.setPointerCapture(event.pointerId);
-          }
-        }}
-        onPointerUp={(event) => {
-          if (drag.current === null) return;
-          const last = eventHour(event);
-          setHour(Math.min(drag.current, last));
-          setEnd(Math.min(24, Math.max(drag.current, last) + 1));
-          drag.current = null;
-        }}
-      >
-        <title>能耗kWh；零值和缺测分别表示；日值不参与曲线</title>
-        <path d="M45 30 V190 H750" fill="none" stroke="#667085" />
-        {segments.map((points) => (
-          <polyline
-            key={points}
-            points={points}
-            fill="none"
-            stroke="#1677ff"
-            strokeWidth="2"
-          />
-        ))}
-        {Array.from(
-          { length: zoom[1] - zoom[0] + 1 },
-          (_, i) => i + zoom[0],
-        ).map((h) => (
-          <g key={h}>
-            {series[h] === null ? (
-              <text x={x(h)} y="180" textAnchor="middle" fill="#d4380d">
-                缺
-              </text>
-            ) : (
-              <circle
-                cx={x(h)}
-                cy={y(series[h] ?? 0)}
-                r={hour === h ? 6 : 3}
-                fill={
-                  value.points.some((p) => p.hour === h) ? '#d4380d' : '#1677ff'
+      <div className={ui.energyLayout}>
+        <section className={ui.energyCurve} aria-label="曲线与定位标记">
+          <svg
+            role="img"
+            aria-label="北京时间24小时能耗曲线，点击选择小时，拖选区间"
+            viewBox="0 0 800 235"
+            style={{
+              width: '100%',
+              touchAction: 'pan-y',
+              background: '#f6f8fc',
+              marginTop: 12,
+            }}
+            onPointerDown={(event) => {
+              if (!disabled) {
+                drag.current = eventHour(event);
+                event.currentTarget.setPointerCapture(event.pointerId);
+              }
+            }}
+            onPointerUp={(event) => {
+              if (drag.current === null) return;
+              const last = eventHour(event);
+              setHour(Math.min(drag.current, last));
+              setEnd(Math.min(24, Math.max(drag.current, last) + 1));
+              drag.current = null;
+            }}
+          >
+            <title>能耗kWh；零值和缺测分别表示；日值不参与曲线</title>
+            <path d="M45 30 V190 H750" fill="none" stroke="#667085" />
+            {segments.map((points) => (
+              <polyline
+                key={points}
+                points={points}
+                fill="none"
+                stroke="#1e40af"
+                strokeWidth="2"
+              />
+            ))}
+            {Array.from(
+              { length: zoom[1] - zoom[0] + 1 },
+              (_, i) => i + zoom[0],
+            ).map((h) => (
+              <g key={h}>
+                {series[h] === null ? (
+                  <text x={x(h)} y="180" textAnchor="middle" fill="#962f34">
+                    缺
+                  </text>
+                ) : (
+                  <circle
+                    cx={x(h)}
+                    cy={y(series[h] ?? 0)}
+                    r={hour === h ? 6 : 3}
+                    fill={
+                      value.points.some((p) => p.hour === h)
+                        ? '#962f34'
+                        : '#1e40af'
+                    }
+                  />
+                )}
+                {(h === zoom[0] || h === zoom[1] || h % 3 === 0) && (
+                  <text x={x(h)} y="213" textAnchor="middle" fontSize="14">
+                    {h}:00
+                  </text>
+                )}
+              </g>
+            ))}
+            {value.intervals.map((p) => (
+              <rect
+                key={p.id}
+                x={Math.max(45, x(p.startHour))}
+                y="35"
+                width={Math.max(
+                  0,
+                  Math.min(745, x(p.endHour)) - Math.max(45, x(p.startHour)),
+                )}
+                height="155"
+                fill="#d69a35"
+                opacity="0.18"
+              />
+            ))}
+            <text x="45" y="20" fontSize="14">
+              {max} kWh
+            </text>
+          </svg>
+          <Space wrap>
+            <span>查看小时范围</span>
+            <InputNumber
+              aria-label="曲线起始小时"
+              min={0}
+              max={zoom[1] - 1}
+              value={zoom[0]}
+              onChange={(v) => v !== null && setZoom([v, zoom[1]])}
+            />
+            <InputNumber
+              aria-label="曲线结束小时"
+              min={zoom[0] + 1}
+              max={23}
+              value={zoom[1]}
+              onChange={(v) => v !== null && setZoom([zoom[0], v])}
+            />
+            <Button onClick={() => setZoom([0, 23])}>查看全天</Button>
+          </Space>
+          <Space wrap style={{ marginTop: 12 }}>
+            <span>
+              当前小时 {hour}:00 ·{' '}
+              {series[hour] === null ? '缺测' : `${series[hour]} kWh`}
+            </span>
+            <Select
+              aria-label="选择小时"
+              virtual={false}
+              value={hour}
+              style={{ width: 110 }}
+              options={Array.from({ length: 24 }, (_, h) => ({
+                value: h,
+                label: `${h}:00`,
+              }))}
+              onChange={setHour}
+              disabled={disabled}
+            />
+            <span>区间结束（不含）</span>
+            <InputNumber
+              aria-label="区间结束小时"
+              min={hour + 1}
+              max={24}
+              value={end}
+              onChange={(v) => v !== null && setEnd(v)}
+              disabled={disabled}
+            />
+            <Select
+              aria-label="定位标签"
+              virtual={false}
+              placeholder="选择定位标签"
+              value={mark || undefined}
+              options={options}
+              onChange={setMark}
+              disabled={disabled}
+              style={{ width: 160 }}
+            />
+            <Button
+              disabled={disabled || !mark}
+              onClick={() =>
+                patch({
+                  points: [
+                    ...value.points,
+                    { id: crypto.randomUUID(), hour, labelId: mark },
+                  ],
+                })
+              }
+            >
+              添加小时标记
+            </Button>
+            <Button
+              disabled={disabled || !mark || end <= hour}
+              onClick={() =>
+                patch({
+                  intervals: [
+                    ...value.intervals,
+                    {
+                      id: crypto.randomUUID(),
+                      startHour: hour,
+                      endHour: end,
+                      labelId: mark,
+                    },
+                  ],
+                })
+              }
+            >
+              添加区间标记
+            </Button>
+          </Space>
+          <div style={{ margin: '12px 0' }}>
+            {value.points.map((p) => (
+              <Tag
+                key={p.id}
+                closable={!disabled}
+                onClose={() =>
+                  patch({ points: value.points.filter((v) => v.id !== p.id) })
                 }
+              >
+                {p.hour}:00 · {p.labelId}
+              </Tag>
+            ))}
+            {value.intervals.map((p) => (
+              <Tag
+                key={p.id}
+                closable={!disabled}
+                onClose={() =>
+                  patch({
+                    intervals: value.intervals.filter((v) => v.id !== p.id),
+                  })
+                }
+              >
+                [{p.startHour}:00,{p.endHour}:00) · {p.labelId}
+              </Tag>
+            ))}
+          </div>
+        </section>
+        <section className={ui.energyFields} aria-label="当前样本标注">
+          <h3>当前样本标注</h3>
+          <Space direction="vertical" style={{ width: '100%' }}>
+            {reference && draft.revision === 0 && (
+              <Alert
+                type="info"
+                message="固定参考，待人工确认；参考不自动完成"
               />
             )}
-            {(h === zoom[0] || h === zoom[1] || h % 3 === 0) && (
-              <text x={x(h)} y="213" textAnchor="middle" fontSize="14">
-                {h}:00
-              </text>
-            )}
-          </g>
-        ))}
-        {value.intervals.map((p) => (
-          <rect
-            key={p.id}
-            x={Math.max(45, x(p.startHour))}
-            y="35"
-            width={Math.max(
-              0,
-              Math.min(745, x(p.endHour)) - Math.max(45, x(p.startHour)),
-            )}
-            height="155"
-            fill="#faad14"
-            opacity="0.18"
-          />
-        ))}
-        <text x="45" y="20" fontSize="14">
-          {max} kWh
-        </text>
-      </svg>
-      <Space wrap>
-        <span>查看小时范围</span>
-        <InputNumber
-          aria-label="曲线起始小时"
-          min={0}
-          max={zoom[1] - 1}
-          value={zoom[0]}
-          onChange={(v) => v !== null && setZoom([v, zoom[1]])}
-        />
-        <InputNumber
-          aria-label="曲线结束小时"
-          min={zoom[0] + 1}
-          max={23}
-          value={zoom[1]}
-          onChange={(v) => v !== null && setZoom([zoom[0], v])}
-        />
-        <Button onClick={() => setZoom([0, 23])}>查看全天</Button>
-      </Space>
-      <Space wrap style={{ marginTop: 12 }}>
-        <span>
-          当前小时 {hour}:00 ·{' '}
-          {series[hour] === null ? '缺测' : `${series[hour]} kWh`}
-        </span>
-        <Select
-          aria-label="选择小时"
-          virtual={false}
-          value={hour}
-          style={{ width: 110 }}
-          options={Array.from({ length: 24 }, (_, h) => ({
-            value: h,
-            label: `${h}:00`,
-          }))}
-          onChange={setHour}
-          disabled={disabled}
-        />
-        <span>区间结束（不含）</span>
-        <InputNumber
-          aria-label="区间结束小时"
-          min={hour + 1}
-          max={24}
-          value={end}
-          onChange={(v) => v !== null && setEnd(v)}
-          disabled={disabled}
-        />
-        <Select
-          aria-label="定位标签"
-          virtual={false}
-          placeholder="选择定位标签"
-          value={mark || undefined}
-          options={options}
-          onChange={setMark}
-          disabled={disabled}
-          style={{ width: 160 }}
-        />
-        <Button
-          disabled={disabled || !mark}
-          onClick={() =>
-            patch({
-              points: [
-                ...value.points,
-                { id: crypto.randomUUID(), hour, labelId: mark },
-              ],
-            })
-          }
-        >
-          添加小时标记
-        </Button>
-        <Button
-          disabled={disabled || !mark || end <= hour}
-          onClick={() =>
-            patch({
-              intervals: [
-                ...value.intervals,
-                {
-                  id: crypto.randomUUID(),
-                  startHour: hour,
-                  endHour: end,
-                  labelId: mark,
-                },
-              ],
-            })
-          }
-        >
-          添加区间标记
-        </Button>
-      </Space>
-      <div style={{ margin: '12px 0' }}>
-        {value.points.map((p) => (
-          <Tag
-            key={p.id}
-            closable={!disabled}
-            onClose={() =>
-              patch({ points: value.points.filter((v) => v.id !== p.id) })
-            }
-          >
-            {p.hour}:00 · {p.labelId}
-          </Tag>
-        ))}
-        {value.intervals.map((p) => (
-          <Tag
-            key={p.id}
-            closable={!disabled}
-            onClose={() =>
-              patch({ intervals: value.intervals.filter((v) => v.id !== p.id) })
-            }
-          >
-            [{p.startHour}:00,{p.endHour}:00) · {p.labelId}
-          </Tag>
-        ))}
-      </div>
-      <Space direction="vertical" style={{ width: '100%' }}>
-        {reference && draft.revision === 0 && (
-          <Alert type="info" message="固定参考，待人工确认；参考不自动完成" />
-        )}
-        <label htmlFor={`${controlId}-primary`}>
-          主标签（以当前冻结规范为准）
-          <Select
-            id={`${controlId}-primary`}
-            aria-label="能耗主标签"
-            virtual={false}
-            value={value.primary || undefined}
-            placeholder="请选择，不默认正常"
-            options={options}
-            onChange={(primary) => patch({ primary })}
-            disabled={disabled}
-            style={{ width: '100%' }}
-          />
-        </label>
-        <label htmlFor={`${controlId}-secondary`}>
-          补充标签
-          <Select
-            id={`${controlId}-secondary`}
-            aria-label="能耗补充标签"
-            virtual={false}
-            mode="multiple"
-            value={value.secondary}
-            options={options}
-            onChange={(secondary) => patch({ secondary })}
-            disabled={disabled}
-            style={{ width: '100%' }}
-          />
-        </label>
-        <label htmlFor={`${controlId}-notes`}>
-          备注（可选，建议填写异常依据）
-          <Input.TextArea
-            id={`${controlId}-notes`}
-            aria-label="能耗备注"
-            value={value.notes}
-            maxLength={2000}
-            onChange={(event) => patch({ notes: event.target.value })}
-            disabled={disabled}
-          />
-        </label>
-        <Checkbox
-          checked={Boolean(value.wholeDayReason)}
-          disabled={disabled}
-          onChange={(event) =>
-            patch({
-              wholeDayReason: event.target.checked
-                ? '整日疑似：请补充依据'
-                : '',
-            })
-          }
-        >
-          异常无法精确定位，明确记录整日疑似
-        </Checkbox>
-        {value.wholeDayReason && (
-          <Input
-            aria-label="整日疑似依据"
-            value={value.wholeDayReason}
-            maxLength={2000}
-            onChange={(event) => patch({ wholeDayReason: event.target.value })}
-            disabled={disabled}
-          />
-        )}
-        <label htmlFor={`${controlId}-certainty`}>
-          人工自评（可选，不写入模型 confidence）
-          <Select
-            id={`${controlId}-certainty`}
-            aria-label="人工自评"
-            value={value.certainty || undefined}
-            options={['HIGH', 'MEDIUM', 'LOW', 'UNKNOWN'].map((v) => ({
-              value: v,
-              label: v,
-            }))}
-            onChange={(certainty) => patch({ certainty })}
-            disabled={disabled}
-            style={{ width: '100%' }}
-          />
-        </label>
-        {error && (
-          <Alert
-            type="error"
-            message={error}
-            description="保留本地内容。请使用宿主的重新读取操作核对，不自动重放。"
-          />
-        )}
-        <Space wrap>
-          {allowIncomplete && (
-            <Button
+            <label htmlFor={`${controlId}-primary`}>
+              主标签（以当前冻结规范为准）
+              <Select
+                id={`${controlId}-primary`}
+                aria-label="能耗主标签"
+                virtual={false}
+                value={value.primary || undefined}
+                placeholder="请选择，不默认正常"
+                options={options}
+                onChange={(primary) => patch({ primary })}
+                disabled={disabled}
+                style={{ width: '100%' }}
+              />
+            </label>
+            <label htmlFor={`${controlId}-secondary`}>
+              补充标签
+              <Select
+                id={`${controlId}-secondary`}
+                aria-label="能耗补充标签"
+                virtual={false}
+                mode="multiple"
+                value={value.secondary}
+                options={options}
+                onChange={(secondary) => patch({ secondary })}
+                disabled={disabled}
+                style={{ width: '100%' }}
+              />
+            </label>
+            <label htmlFor={`${controlId}-notes`}>
+              备注（可选，建议填写异常依据）
+              <Input.TextArea
+                id={`${controlId}-notes`}
+                aria-label="能耗备注"
+                value={value.notes}
+                maxLength={2000}
+                onChange={(event) => patch({ notes: event.target.value })}
+                disabled={disabled}
+              />
+            </label>
+            <Checkbox
+              checked={Boolean(value.wholeDayReason)}
               disabled={disabled}
-              loading={saving}
-              onClick={() => void save(false)}
+              onChange={(event) =>
+                patch({
+                  wholeDayReason: event.target.checked
+                    ? '整日疑似：请补充依据'
+                    : '',
+                })
+              }
             >
-              保存未完成草稿
-            </Button>
-          )}
-          <Button
-            type="primary"
-            disabled={disabled || !valid}
-            loading={saving}
-            onClick={() => void save(true)}
-          >
-            {allowIncomplete
-              ? '保存并完成当前样本'
-              : '保存需求方修订（仍待确认）'}
-          </Button>
-          <Button
-            disabled={disabled}
-            onClick={() => setValue(emptyEnergyValue())}
-          >
-            清空当前标注
-          </Button>
-        </Space>
-        <Typography.Text type="secondary">
-          {readOnly
-            ? '只读结果'
-            : `revision ${draft.revision} · ${dirty ? '尚未保存' : '与平台草稿一致'}`}
-          。仅当前样本；完整交包与owner确认由宿主分别操作。
-        </Typography.Text>
-      </Space>
+              异常无法精确定位，明确记录整日疑似
+            </Checkbox>
+            {value.wholeDayReason && (
+              <Input
+                aria-label="整日疑似依据"
+                value={value.wholeDayReason}
+                maxLength={2000}
+                onChange={(event) =>
+                  patch({ wholeDayReason: event.target.value })
+                }
+                disabled={disabled}
+              />
+            )}
+            <label htmlFor={`${controlId}-certainty`}>
+              人工自评（可选，不写入模型 confidence）
+              <Select
+                id={`${controlId}-certainty`}
+                aria-label="人工自评"
+                value={value.certainty || undefined}
+                options={['HIGH', 'MEDIUM', 'LOW', 'UNKNOWN'].map((v) => ({
+                  value: v,
+                  label: v,
+                }))}
+                onChange={(certainty) => patch({ certainty })}
+                disabled={disabled}
+                style={{ width: '100%' }}
+              />
+            </label>
+            {error && (
+              <Alert
+                type="error"
+                message={error}
+                description="保留本地内容。请使用宿主的重新读取操作核对，不自动重放。"
+              />
+            )}
+            <Space wrap>
+              {allowIncomplete && (
+                <Button
+                  disabled={disabled}
+                  loading={saving}
+                  onClick={() => void save(false)}
+                >
+                  保存未完成草稿
+                </Button>
+              )}
+              <Button
+                type="primary"
+                disabled={disabled || !valid}
+                loading={saving}
+                onClick={() => void save(true)}
+              >
+                {allowIncomplete
+                  ? '保存并完成当前样本'
+                  : '保存需求方修订（仍待确认）'}
+              </Button>
+              <Button
+                disabled={disabled}
+                onClick={() => setValue(emptyEnergyValue())}
+              >
+                清空当前标注
+              </Button>
+            </Space>
+            <Typography.Text type="secondary">
+              {readOnly
+                ? '只读结果'
+                : `revision ${draft.revision} · ${dirty ? '尚未保存' : '与平台草稿一致'}`}
+              。仅当前样本；完整交包与owner确认由宿主分别操作。
+            </Typography.Text>
+          </Space>
+        </section>
+      </div>
     </Card>
   );
 }

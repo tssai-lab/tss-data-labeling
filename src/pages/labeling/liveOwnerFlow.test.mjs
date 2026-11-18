@@ -68,6 +68,10 @@ function boundary() {
     './StructuredPreview': { default: 'StructuredPreview' },
     '@/services/labelingStructured': { resultLabel: (r) => r?.labelId },
     './OriginalImage': { default: 'OriginalImage' },
+    './ResultMetrics': { default: 'ResultMetrics' },
+    './ScopeSummary': { default: 'ScopeSummary' },
+    './StatusBadge': { default: 'StatusBadge' },
+    './workspaceUi.less': { default: {} },
   };
   return { confirms, messages, deps };
 }

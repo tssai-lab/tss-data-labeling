@@ -1,7 +1,8 @@
-import { Alert, App, Button, Card, Input, Space, Tag } from 'antd';
+import { Alert, App, Button, Card, Input, Space } from 'antd';
 import { useEffect, useRef, useState } from 'react';
 import { describeLabelingError } from '@/services/labeling';
 import { type ExportJob, ownerApi } from '@/services/labelingOwner';
+import StatusBadge from './StatusBadge';
 import useOwnerAction from './useOwnerAction';
 
 export default function LiveExport({
@@ -150,13 +151,13 @@ export default function LiveExport({
       {job && (
         <>
           <p>
-            <Tag>
+            <StatusBadge status={job.status}>
               {
                 { QUEUED: '生成中', SUCCEEDED: '已生成', FAILED: '失败' }[
                   job.status
                 ]
               }
-            </Tag>
+            </StatusBadge>
             {job.exportId}
           </p>
           {job.errorCode && <Alert type="error" message={job.errorCode} />}

@@ -48,6 +48,32 @@ function client(fetch) {
   return { api: exports, state };
 }
 
+test('native binary resources use the shared authorization and cancellation boundary', async () => {
+  const signal = new AbortController().signal;
+  const { api } = client(async (path, init) => {
+    assert.equal(path, '/api/labeling/v1/resources/sample');
+    assert.equal(init.headers.get('Authorization'), 'Bearer test-token');
+    assert.equal(init.signal, signal);
+    return new Response('csv-data', {
+      headers: { 'Content-Type': 'text/csv' },
+    });
+  });
+  assert.equal(
+    await (await api.labelingBlob('/resources/sample', signal)).text(),
+    'csv-data',
+  );
+  const { api: failed } = client(async () =>
+    Response.json(
+      { error: { code: 'FORBIDDEN', message: 'Denied' } },
+      { status: 403 },
+    ),
+  );
+  await assert.rejects(
+    failed.labelingBlob('/resources/sample'),
+    (e) => e.status === 403 && e.code === 'FORBIDDEN',
+  );
+});
+
 test('complete sends no body, reuses supplied idempotency key, and unwraps data', async () => {
   const { api } = client(async (path, init) => {
     assert.equal(path, '/api/labeling/v1/imports/batch/complete');
@@ -101,16 +127,37 @@ test('expired session clears token and redirects instead of pretending to load p
 });
 
 test('403 retains token, code and requestId; only the explicit admin mutation permits data:null', async () => {
-  const denied = client(async () => Response.json({ error: { code: 'FORBIDDEN', message: '无权限' }, requestId: 'permission-check' }, { status: 403 }));
-  await assert.rejects(denied.api.labelingJson('/admin/users'), e => e.status === 403 && e.requestId === 'permission-check');
-  assert.equal(denied.state.removed, false); assert.equal(denied.state.redirected, false);
+  const denied = client(async () =>
+    Response.json(
+      {
+        error: { code: 'FORBIDDEN', message: '无权限' },
+        requestId: 'permission-check',
+      },
+      { status: 403 },
+    ),
+  );
+  await assert.rejects(
+    denied.api.labelingJson('/admin/users'),
+    (e) => e.status === 403 && e.requestId === 'permission-check',
+  );
+  assert.equal(denied.state.removed, false);
+  assert.equal(denied.state.redirected, false);
   const empty = client(async () => Response.json({ data: null }));
-  assert.equal(await empty.api.labelingJson('/admin/users/actor', { method: 'PATCH' }, true), null);
+  assert.equal(
+    await empty.api.labelingJson(
+      '/admin/users/actor',
+      { method: 'PATCH' },
+      true,
+    ),
+    null,
+  );
   await assert.rejects(empty.api.labelingJson('/projects'));
   const list = client(async () => Response.json({ data: [] }));
   assert.equal((await list.api.labelingJson('/admin/users')).length, 0);
   for (const data of ['text', 1, false]) {
-    await assert.rejects(client(async () => Response.json({ data })).api.labelingJson('/projects'));
+    await assert.rejects(
+      client(async () => Response.json({ data })).api.labelingJson('/projects'),
+    );
   }
 });
 
@@ -132,9 +179,20 @@ test('future export download retains bearer authorization and rejects gateway HT
   const { api } = client(async (path, init) => {
     assert.equal(path, '/api/labeling/v1/exports/fixed/download');
     assert.equal(init.headers.get('Authorization'), 'Bearer test-token');
-    return new Response('zip-bytes', { headers: { 'Content-Type': 'application/zip' } });
+    return new Response('zip-bytes', {
+      headers: { 'Content-Type': 'application/zip' },
+    });
   });
-  assert.equal((await api.labelingZip('/exports/fixed/download')).type, 'application/zip');
-  const gateway = client(async () => new Response('<html/>', { headers: { 'Content-Type': 'text/html' } }));
-  await assert.rejects(gateway.api.labelingZip('/exports/fixed/download'), /未返回 ZIP/);
+  assert.equal(
+    (await api.labelingZip('/exports/fixed/download')).type,
+    'application/zip',
+  );
+  const gateway = client(
+    async () =>
+      new Response('<html/>', { headers: { 'Content-Type': 'text/html' } }),
+  );
+  await assert.rejects(
+    gateway.api.labelingZip('/exports/fixed/download'),
+    /未返回 ZIP/,
+  );
 });
