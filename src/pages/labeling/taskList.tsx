@@ -9,7 +9,6 @@ import {
   Select,
   Space,
   Table,
-  Tag,
 } from 'antd';
 import { useEffect, useRef, useState } from 'react';
 import { describeLabelingError, operationKey } from '@/services/labeling';
@@ -17,8 +16,10 @@ import type { Assignment, Package } from '@/services/labelingTasks';
 import { tasks } from '@/services/labelingTasks';
 import MySubmissions from './MySubmissions';
 import OperationHistory from './OperationHistory';
+import StatusBadge from './StatusBadge';
 import useOwnerAction from './useOwnerAction';
 import WorkspaceLayout from './WorkspaceLayout';
+import ui from './workspaceUi.less';
 
 type Row = Partial<Package> & Partial<Assignment>;
 export default function TaskList() {
@@ -100,7 +101,16 @@ export default function TaskList() {
 
   return (
     <WorkspaceLayout>
-      <h1>{mine ? '我的标注任务' : '任务广场'}</h1>
+      <header className={ui.pageHeader}>
+        <div>
+          <h1>{mine ? '我的标注任务' : '任务广场'}</h1>
+          <p>
+            {mine
+              ? '继续已领取任务，保存逐样本草稿后完整提交任务包。'
+              : '查看开放任务包，核对项目与工作量后领取。'}
+          </p>
+        </div>
+      </header>
       {mine && (
         <details>
           <summary>本人提交与操作记录</summary>
@@ -117,11 +127,11 @@ export default function TaskList() {
         />
       )}
       {mine && (
-        <Card title="本人提交历史与查询">
+        <Card title="任务筛选与提交查询">
           <Alert
             type="info"
-            message="已提交领取来自真实本人任务分页；状态筛选仅针对已加载数据。"
-            description="服务尚无按本人查询提交历史/由领取查 submissionId 的接口。新会话可通过已知提交编号读取真实冻结结果；本机回执不能代表跨设备历史。"
+            message="状态筛选只作用于已加载的任务"
+            description="展开上方“本人提交与操作记录”可查看提交历史；也可在这里输入提交编号直接查看结果。"
           />
           <Space wrap style={{ marginTop: 16 }}>
             <Input
@@ -154,7 +164,18 @@ export default function TaskList() {
               'SUBMITTED',
               'RELEASED',
               'REVOKED',
-            ].map((value) => ({ value, label: value }))}
+            ].map((value) => ({
+              value,
+              label: (
+                {
+                  CLAIMED: '已领取',
+                  IN_PROGRESS: '标注中',
+                  SUBMITTED: '已交回',
+                  RELEASED: '已放弃',
+                  REVOKED: '已撤销',
+                } as Record<string, string>
+              )[value],
+            }))}
           />
           <Input.TextArea
             aria-label="放弃领取原因"
@@ -223,7 +244,7 @@ export default function TaskList() {
                     title: '状态',
                     dataIndex: 'status',
                     render: (value: string) => (
-                      <Tag color={value === 'SUBMITTED' ? 'green' : 'blue'}>
+                      <StatusBadge status={value}>
                         {(
                           {
                             CLAIMED: '已领取',
@@ -231,7 +252,7 @@ export default function TaskList() {
                             SUBMITTED: '已交回 · 待需求方审核',
                           } as Record<string, string>
                         )[value] || value}
-                      </Tag>
+                      </StatusBadge>
                     ),
                   },
                   {

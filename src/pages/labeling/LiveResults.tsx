@@ -27,6 +27,7 @@ import {
 import { resultLabel } from '@/services/labelingStructured';
 import type { Selection, SelectionItem } from '@/services/labelingWorkflow';
 import OriginalImage from './OriginalImage';
+import ResultMetrics from './ResultMetrics';
 import ReviewWorkbench, {
   confidenceText,
   reviewStatusNames,
@@ -34,6 +35,8 @@ import ReviewWorkbench, {
 } from './ReviewWorkbench';
 import StructuredPreview from './StructuredPreview';
 import useOwnerAction from './useOwnerAction';
+import { workspaceVariables } from './workspaceTheme';
+import ui from './workspaceUi.less';
 
 export default function LiveResults({
   projectId,
@@ -58,6 +61,8 @@ export default function LiveResults({
 }) {
   const { modal } = App.useApp();
   const action = useOwnerAction(onBusyChange, writeBlocked);
+  const [scopeOpen, setScopeOpen] = useState(false);
+  const [excludeText, setExcludeText] = useState('');
   const [rows, setRows] = useState<LiveResult[]>([]),
     [filter, setFilter] = useState<ResultFilter>({});
   const [stats, setStats] = useState<ResultStatistics>(),
@@ -104,6 +109,7 @@ export default function LiveResults({
     JSON.stringify(selected.map(selectionItem)),
     purpose,
     scopeMode,
+    excludeText,
   ]);
   async function load(next?: string | null) {
     const current = ++version.current;
@@ -117,7 +123,11 @@ export default function LiveResults({
     try {
       const [page, statistics] = await Promise.all([
         ownerApi.results(projectId, effective, next),
-        ownerApi.statistics(projectId, effective),
+        ownerApi.statistics(projectId, {
+          ...effective,
+          hasResult: undefined,
+          reviewStatus: undefined,
+        }),
       ]);
       if (version.current !== current) return;
       if (!next) pageCursors.current.clear();
@@ -245,7 +255,17 @@ export default function LiveResults({
           purpose: 'REVIEW',
           reviewAction: purpose,
           ...(scopeMode === 'filter'
-            ? { filter: effective, excludeSampleIds: [] }
+            ? {
+                filter: effective,
+                excludeSampleIds: [
+                  ...new Set(
+                    excludeText
+                      .split(/[\n,，]+/)
+                      .map((value) => value.trim())
+                      .filter(Boolean),
+                  ),
+                ],
+              }
             : { items: selected.map(selectionItem) }),
         },
         operationKey(),
@@ -276,18 +296,46 @@ export default function LiveResults({
   }
   return (
     <>
-      <Card size="small">
+      <ResultMetrics
+        statistics={stats}
+        active={
+          filter.reviewStatus === 'ACCEPTED'
+            ? 'accepted'
+            : filter.hasResult === 'true'
+              ? 'hasResult'
+              : filter.hasResult === 'false'
+                ? 'noResult'
+                : filter.reviewStatus
+                  ? undefined
+                  : 'all'
+        }
+        disabled={loading || action.busy}
+        onChange={(metric) =>
+          setFilter((old) => ({
+            ...old,
+            hasResult:
+              metric === 'hasResult'
+                ? 'true'
+                : metric === 'noResult'
+                  ? 'false'
+                  : undefined,
+            reviewStatus: metric === 'accepted' ? 'ACCEPTED' : undefined,
+          }))
+        }
+      />
+      <div className={ui.resultsTools}>
+        <span>统计基于当前规范及来源范围 · 点击卡片筛选</span>
         <Space wrap>
-          {stats && (
-            <span>
-              当前筛选：{stats.total} 个样本 · 有答案 {stats.hasResultCount} ·
-              无答案 {stats.noResultCount} · 已确认 {stats.acceptedCount} ·
-              待修正 {stats.needsRevisionCount} · 处理中 {stats.activeCount}
-              （实时统计）
-            </span>
-          )}
           <Button
-            disabled={action.busy || loading}
+            size="small"
+            disabled={loading || action.busy}
+            onClick={() => setScopeOpen(true)}
+          >
+            批量范围预览
+          </Button>
+          <Button
+            size="small"
+            disabled={loading || action.busy}
             onClick={() => {
               onSelected([]);
               void load();
@@ -296,7 +344,9 @@ export default function LiveResults({
             刷新结果
           </Button>
         </Space>
-        <details style={{ marginTop: 12 }}>
+      </div>
+      <div>
+        <details className={ui.advancedFilters}>
           <summary>高级筛选：按任务编号或置信度分档</summary>
           <Space wrap style={{ marginTop: 12 }}>
             {(
@@ -356,7 +406,7 @@ export default function LiveResults({
         {(error || action.error) && (
           <Alert type="error" showIcon message={error || action.error} />
         )}
-        <Space wrap style={{ marginTop: 12 }}>
+        <Space hidden={!selected.length} wrap className={ui.selectionBar}>
           <Tag>已勾选 {selected.length} 个具体样本</Tag>
           <Button
             disabled={
@@ -388,7 +438,7 @@ export default function LiveResults({
             清空勾选
           </Button>
         </Space>
-        {(selected.length > 0 || purpose === 'NEEDS_REVISION') && (
+        {selected.length > 0 && (
           <Input.TextArea
             style={{ marginTop: 12 }}
             aria-label="批量待修正原因"
@@ -400,7 +450,7 @@ export default function LiveResults({
             onChange={(event) => setBulkReason(event.target.value)}
           />
         )}
-      </Card>
+      </div>
       <ReviewWorkbench
         rows={rows}
         selectedId={selectedId}
@@ -439,6 +489,7 @@ export default function LiveResults({
         }}
         labels={spec.labels}
         allowRevision={true}
+        onScopePreview={() => setScopeOpen(true)}
         renderPreview={(row) =>
           spec.taskType === 'TIMESERIES_ANNOTATION' ? (
             <StructuredPreview projectId={projectId} row={row} spec={spec} />
@@ -451,111 +502,176 @@ export default function LiveResults({
           )
         }
       />
-      <details style={{ marginTop: 16 }}>
-        <summary>高级：预览并审核全部筛选结果</summary>
-        <Card title="固定范围预览" style={{ marginTop: 16 }}>
-          <p>
-            固定预览记录样本、候选版本及审核版本。范围固定后，审核按此清单原子执行；任一样本变化或范围过期时整体拒绝，需重新预览。
-          </p>
-          <Space wrap>
-            <Select
-              aria-label="预览范围"
-              value={scopeMode}
-              onChange={setScopeMode}
-              options={[
-                { value: 'explicit', label: '明确勾选的样本' },
-                { value: 'filter', label: '当前筛选的全部匹配样本' },
-              ]}
-            />
-            <Select
-              aria-label="预览用途"
-              value={purpose}
-              onChange={setPurpose}
-              options={[
-                { value: 'ACCEPT', label: '确认采用' },
-                { value: 'NEEDS_REVISION', label: '待修正' },
-              ]}
-            />
-            <Button
-              loading={freezing}
-              disabled={
-                loading ||
-                action.busy ||
-                (scopeMode === 'explicit' && !selected.length)
-              }
-              onClick={() => void freeze()}
-            >
-              创建固定预览
-            </Button>
-          </Space>
-          {freezeError && <Alert type="error" message={freezeError} />}
-          {frozen && (
-            <>
-              <p>
-                固定 {frozen.selection.count} 个样本 · 已确认{' '}
-                {frozen.stats.acceptedCount} · 有答案{' '}
-                {frozen.stats.hasResultCount} · 到期时间{' '}
-                {new Date(frozen.selection.expiresAt).toLocaleString('zh-CN')}
-              </p>
-              <p style={{ overflowWrap: 'anywhere' }}>
-                范围编号：{frozen.selection.selectionId} · 校验摘要：
-                {frozen.selection.selectionHash}
-              </p>
-              {['ACCEPT', 'NEEDS_REVISION'].includes(purpose) && (
-                <Button
-                  disabled={
-                    action.busy ||
-                    freezing ||
-                    Date.parse(frozen.selection.expiresAt) <= Date.now()
-                  }
-                  onClick={() =>
-                    modal.confirm({
-                      title: `对固定的 ${frozen.selection.count} 个样本执行${purpose === 'ACCEPT' ? '确认采用' : '标记待修正'}？`,
-                      content:
-                        '仅处理上方固定范围。待修正使用批量原因；版本变化或过期时请重新预览。',
-                      onOk: async () => {
-                        const body = {
-                          selectionId: frozen.selection.selectionId,
-                          action: purpose as 'ACCEPT' | 'NEEDS_REVISION',
-                          reason: bulkReason.trim(),
-                        };
-                        if (purpose === 'NEEDS_REVISION' && !body.reason) {
-                          action.setError('请填写批量待修正原因');
-                          return;
-                        }
-                        const value = await action.run(
-                          'frozen-review',
-                          body,
-                          (key) => ownerApi.atomicReview(projectId, body, key),
-                          '固定范围审核已保存',
-                        );
-                        if (value) {
-                          setFrozen(undefined);
-                          onChanged();
-                        }
-                      },
-                    })
-                  }
-                >
-                  执行固定范围审核
-                </Button>
-              )}
-              <Table
-                rowKey="sampleId"
-                size="small"
-                dataSource={frozen.items}
-                pagination={{ pageSize: 10 }}
-                scroll={{ x: 650 }}
-                columns={[
-                  { title: '样本编号', dataIndex: 'sampleId' },
-                  { title: '候选结果编号', dataIndex: 'resultId' },
-                  { title: '审核版本', dataIndex: 'reviewRevision' },
+      <Drawer
+        rootStyle={workspaceVariables}
+        title="批量审核固定范围预览"
+        open={scopeOpen}
+        width={960}
+        onClose={() => {
+          if (!action.busy) setScopeOpen(false);
+        }}
+      >
+        <div className={ui.scopeColumns}>
+          <Card title="配置审核范围">
+            {action.error && (
+              <Alert type="error" showIcon message={action.error} />
+            )}
+            <p>
+              固定预览记录样本、候选版本及审核版本。范围固定后，审核按此清单原子执行；任一样本变化或范围过期时整体拒绝，需重新预览。
+            </p>
+            <Space wrap>
+              <Select
+                aria-label="预览范围"
+                value={scopeMode}
+                onChange={setScopeMode}
+                options={[
+                  { value: 'explicit', label: '明确勾选的样本' },
+                  { value: 'filter', label: '当前筛选的全部匹配样本' },
                 ]}
               />
-            </>
-          )}
-        </Card>
-      </details>
+              <Select
+                aria-label="预览用途"
+                value={purpose}
+                onChange={setPurpose}
+                options={[
+                  { value: 'ACCEPT', label: '确认采用' },
+                  { value: 'NEEDS_REVISION', label: '待修正' },
+                ]}
+              />
+              <Button
+                loading={freezing}
+                disabled={
+                  loading ||
+                  action.busy ||
+                  (scopeMode === 'explicit' && !selected.length)
+                }
+                onClick={() => void freeze()}
+              >
+                创建固定预览
+              </Button>
+            </Space>
+            {scopeMode === 'filter' && (
+              <Input.TextArea
+                aria-label="本次排除样本"
+                placeholder="本次排除（可选）：每行一个真实样本编号"
+                value={excludeText}
+                onChange={(event) => setExcludeText(event.target.value)}
+                disabled={freezing || action.busy}
+                rows={2}
+                style={{ marginTop: 12 }}
+              />
+            )}
+            <p style={{ marginTop: 12 }}>
+              更改筛选、勾选或排除项后，须重新生成固定预览。
+            </p>
+            {purpose === 'NEEDS_REVISION' && (
+              <Input.TextArea
+                aria-label="固定范围待修正原因"
+                placeholder="填写本次固定范围共同的待修正原因"
+                value={bulkReason}
+                maxLength={500}
+                rows={3}
+                disabled={action.busy}
+                onChange={(event) => setBulkReason(event.target.value)}
+              />
+            )}
+            {freezeError && <Alert type="error" message={freezeError} />}
+          </Card>
+          <Card title="固定样本清单">
+            {!frozen && (
+              <p className={ui.emptyNote}>
+                创建预览后，在这里核对真实样本清单与到期时间。
+              </p>
+            )}
+            {frozen && (
+              <>
+                <p>
+                  固定 {frozen.selection.count} 个样本 · 已确认{' '}
+                  {frozen.stats.acceptedCount} · 有答案{' '}
+                  {frozen.stats.hasResultCount} · 到期时间{' '}
+                  {new Date(frozen.selection.expiresAt).toLocaleString('zh-CN')}
+                </p>
+                <details>
+                  <summary>范围编号与校验摘要</summary>
+                  <p style={{ overflowWrap: 'anywhere' }}>
+                    范围编号：{frozen.selection.selectionId} · 校验摘要：
+                    {frozen.selection.selectionHash}
+                  </p>
+                </details>
+                <Table
+                  rowKey="sampleId"
+                  size="small"
+                  dataSource={frozen.items}
+                  pagination={{ pageSize: 10 }}
+                  scroll={{ x: 400 }}
+                  columns={[
+                    {
+                      title: '样本',
+                      dataIndex: 'sampleId',
+                      ellipsis: true,
+                      render: (id: string) => (
+                        <span title={id}>
+                          {id.length > 14 ? `${id.slice(0, 8)}…` : id}
+                        </span>
+                      ),
+                    },
+                    {
+                      title: '候选结果',
+                      dataIndex: 'resultId',
+                      ellipsis: true,
+                    },
+                    { title: '审核版本', dataIndex: 'reviewRevision' },
+                  ]}
+                />
+                <div className={ui.scopeFooter}>
+                  {['ACCEPT', 'NEEDS_REVISION'].includes(purpose) && (
+                    <Button
+                      disabled={
+                        action.busy ||
+                        freezing ||
+                        (purpose === 'NEEDS_REVISION' && !bulkReason.trim()) ||
+                        Date.parse(frozen.selection.expiresAt) <= Date.now()
+                      }
+                      onClick={() =>
+                        modal.confirm({
+                          title: `对固定的 ${frozen.selection.count} 个样本执行${purpose === 'ACCEPT' ? '确认采用' : '标记待修正'}？`,
+                          content:
+                            '仅处理上方固定范围。待修正使用批量原因；版本变化或过期时请重新预览。',
+                          onOk: async () => {
+                            const body = {
+                              selectionId: frozen.selection.selectionId,
+                              action: purpose as 'ACCEPT' | 'NEEDS_REVISION',
+                              reason: bulkReason.trim(),
+                            };
+                            if (purpose === 'NEEDS_REVISION' && !body.reason) {
+                              action.setError('请填写批量待修正原因');
+                              return;
+                            }
+                            const value = await action.run(
+                              'frozen-review',
+                              body,
+                              (key) =>
+                                ownerApi.atomicReview(projectId, body, key),
+                              '固定范围审核已保存',
+                            );
+                            if (value) {
+                              setFrozen(undefined);
+                              setScopeOpen(false);
+                              onChanged();
+                            }
+                          },
+                        })
+                      }
+                    >
+                      执行固定范围审核
+                    </Button>
+                  )}
+                </div>
+              </>
+            )}
+          </Card>
+        </div>
+      </Drawer>
       <Drawer
         title="修订答案（保存后仍需确认）"
         open={Boolean(revisionRow)}

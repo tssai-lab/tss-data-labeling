@@ -105,6 +105,7 @@ function host(search = '') {
         },
       },
     },
+    './workspaceUi.less': { default: {} },
     antd: Object.fromEntries(
       [
         'Alert',
@@ -221,6 +222,8 @@ test('an outdated republish preview response cannot re-enable a plan for a diffe
       },
     },
     '@/services/labelingTasks': { tasks: {} },
+    './ScopeSummary': { default: 'ScopeSummary' },
+    './workspaceUi.less': { default: {} },
   });
   r.render();
   r.nodes('Button')

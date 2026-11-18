@@ -3,11 +3,14 @@ import {
   CheckSquareOutlined,
   DownloadOutlined,
   ExportOutlined,
+  FolderOutlined,
+  MenuOutlined,
   SendOutlined,
   TeamOutlined,
   UserOutlined,
 } from '@ant-design/icons';
 import { history, Link, useLocation, useModel } from '@umijs/max';
+import { Button } from 'antd';
 import { type MouseEvent, useEffect, useState } from 'react';
 import { AvatarDropdown, AvatarName } from '@/components';
 import type { Project } from '@/services/labeling';
@@ -25,6 +28,7 @@ export default function Navigation({
   beforeAccountAction?: () => boolean | Promise<boolean>;
 }) {
   const { pathname, search } = useLocation();
+  const [mobileOpen, setMobileOpen] = useState(false);
   const [admin, setAdmin] = useState(false);
   useEffect(() => {
     const abort = new AbortController();
@@ -56,14 +60,26 @@ export default function Navigation({
         ? 'mine'
         : pathname.startsWith('/labeling/tasks')
           ? 'pool'
-          : 'publish';
+          : projectId
+            ? 'publish'
+            : 'projects';
   const links = [
     {
-      key: 'publish',
-      to: projectId ? `${data}?panel=publish` : '/labeling',
-      name: '任务发布',
-      icon: <SendOutlined />,
+      key: 'projects',
+      to: '/labeling',
+      name: '我的项目',
+      icon: <FolderOutlined />,
     },
+    ...(projectId
+      ? [
+          {
+            key: 'publish',
+            to: projectId ? `${data}?panel=publish` : '/labeling',
+            name: '任务发布',
+            icon: <SendOutlined />,
+          },
+        ]
+      : []),
     {
       key: 'pool',
       to: '/labeling/tasks',
@@ -88,6 +104,7 @@ export default function Navigation({
       : []),
   ];
   function navigate(event: MouseEvent<HTMLAnchorElement>, to: string) {
+    setMobileOpen(false);
     if (!canLeave()) {
       event.preventDefault();
       return;
@@ -133,6 +150,15 @@ export default function Navigation({
   return (
     <>
       <header className={styles.workspaceHeader}>
+        <Button
+          className={styles.navToggle}
+          type="text"
+          icon={<MenuOutlined />}
+          aria-label="展开工作区导航"
+          aria-expanded={mobileOpen}
+          aria-controls="labeling-workspace-navigation"
+          onClick={() => setMobileOpen((open) => !open)}
+        />
         <PlatformBrand
           onClick={(event: MouseEvent<HTMLAnchorElement>) =>
             navigate(event, '/platforms')
@@ -161,8 +187,12 @@ export default function Navigation({
           )}
         </div>
       </header>
-      <aside className={styles.sidebar}>
+      <aside
+        className={`${styles.sidebar} ${mobileOpen ? styles.sidebarOpen : ''}`}
+        id="labeling-workspace-navigation"
+      >
         <nav className={styles.navigation} aria-label="标注平台导航">
+          <div className={styles.navCaption}>工作区</div>
           {[links, secondary].map((group, index) => (
             <div
               className={styles.navGroup}

@@ -30,9 +30,11 @@ import {
   ownerApi,
   selectionItem,
 } from '@/services/labelingOwner';
-import { statusName } from '@/services/labelingWorkspace';
 import ProjectHistory from './ProjectHistory';
+import ScopeSummary from './ScopeSummary';
+import StatusBadge from './StatusBadge';
 import useOwnerAction from './useOwnerAction';
+import ui from './workspaceUi.less';
 
 export default function LiveAi({
   projectId,
@@ -283,7 +285,13 @@ export default function LiveAi({
   }
   return (
     <>
-      <div hidden={!selected.length}>
+      <div className={ui.twoColumns} hidden={!selected.length}>
+        <ScopeSummary
+          projectId={projectId}
+          spec={spec}
+          selected={selected}
+          disabled={action.busy || loading}
+        />
         <Card title="创建 AI 标注任务">
           <Alert
             type="info"
@@ -293,10 +301,10 @@ export default function LiveAi({
           {(error || action.error) && (
             <Alert type="error" message={error || action.error} />
           )}
-          <Space wrap style={{ marginTop: 16 }}>
+          <Space direction="vertical" style={{ marginTop: 14, width: '100%' }}>
             <Select
               aria-label="选择 AI Agent"
-              style={{ width: 300 }}
+              style={{ width: '100%' }}
               value={agentId}
               disabled={action.busy}
               placeholder={
@@ -337,7 +345,7 @@ export default function LiveAi({
               disabled={action.busy}
               maxLength={500}
               onChange={(e) => setInstructions(e.target.value)}
-              style={{ width: 300 }}
+              style={{ width: '100%' }}
             />
             <Button
               type="primary"
@@ -402,10 +410,10 @@ export default function LiveAi({
               {execution.executionId}
             </Typography.Paragraph>
             <p>
-              <Tag>{statusName(execution.status)}</Tag>总计{' '}
-              {execution.sampleCount} · 成功 {execution.successCount} · 失败{' '}
-              {execution.failedCount} · 待处理 {execution.pendingCount} · 已取消{' '}
-              {execution.cancelledCount}
+              <StatusBadge status={execution.status} />
+              总计 {execution.sampleCount} · 成功 {execution.successCount} ·
+              失败 {execution.failedCount} · 待处理 {execution.pendingCount} ·
+              已取消 {execution.cancelledCount}
             </p>
             <Progress
               percent={
@@ -497,7 +505,11 @@ export default function LiveAi({
               scroll={{ x: 650 }}
               columns={[
                 { title: '样本', dataIndex: 'sampleId' },
-                { title: '处理状态', dataIndex: 'status', render: statusName },
+                {
+                  title: '处理状态',
+                  dataIndex: 'status',
+                  render: (status: string) => <StatusBadge status={status} />,
+                },
                 {
                   title: '答案',
                   render: (_, item) => item.result?.labelId || '—',

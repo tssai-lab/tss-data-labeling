@@ -25,6 +25,7 @@ import { resultLabel } from '@/services/labelingStructured';
 import { canFinalize } from '@/services/labelingWorkspace';
 import LiveExport from './LiveExport';
 import useOwnerAction from './useOwnerAction';
+import ui from './workspaceUi.less';
 
 export default function LiveSnapshots({
   projectId,
@@ -157,14 +158,7 @@ export default function LiveSnapshots({
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
   return (
-    <>
-      <LiveExport
-        projectId={projectId}
-        snapshotIds={exportIds.map(String)}
-        taskType={spec.taskType}
-        active={active}
-        onBusyChange={onBusyChange}
-      />
+    <div className={ui.twoColumns}>
       <Card title="成果快照">
         <Alert
           type="info"
@@ -309,6 +303,13 @@ export default function LiveSnapshots({
           </>
         )}
       </Card>
-    </>
+      <LiveExport
+        projectId={projectId}
+        snapshotIds={exportIds.map(String)}
+        taskType={spec.taskType}
+        active={active}
+        onBusyChange={onBusyChange}
+      />
+    </div>
   );
 }

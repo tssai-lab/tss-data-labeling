@@ -47,8 +47,10 @@ import ProjectHistory from './ProjectHistory';
 import ProjectManagement from './ProjectManagement';
 import PublishPlan from './PublishPlan';
 import SpecVersions from './SpecVersions';
+import StatusBadge from './StatusBadge';
 import StructuredPreview from './StructuredPreview';
 import WorkspaceLayout from './WorkspaceLayout';
+import ui from './workspaceUi.less';
 
 const { Text, Paragraph } = Typography;
 const statusNames: Record<string, string> = {
@@ -158,6 +160,18 @@ export default function Labeling() {
   const [identityError, setIdentityError] = useState('');
   const [identityRetry, setIdentityRetry] = useState(0);
   const [projects, setProjects] = useState<Project[]>([]);
+  const [projectQuery, setProjectQuery] = useState('');
+  const [projectStatus, setProjectStatus] = useState('ALL');
+  const [managedId, setManagedId] = useState<string>();
+  const managedProject =
+    projects.find((item) => item.projectId === managedId) || projects[0];
+  const filteredProjects = projects.filter(
+    (item) =>
+      (projectStatus === 'ALL' || item.status === projectStatus) &&
+      `${item.name} ${item.description || ''}`
+        .toLocaleLowerCase()
+        .includes(projectQuery.trim().toLocaleLowerCase()),
+  );
   const [projectCursor, setProjectCursor] = useState<string | null>(null);
   const [project, setProject] = useState<Project>();
   const [loading, setLoading] = useState(false);
@@ -597,9 +611,19 @@ export default function Labeling() {
             <Paragraph type="secondary">{project.description}</Paragraph>
           )}
         </div>
+        {identity && !projectId && (
+          <Button
+            type="primary"
+            icon={<PlusOutlined />}
+            disabled={!identity.canCreateProject}
+            onClick={() => setCreating(true)}
+          >
+            创建项目
+          </Button>
+        )}
         {project && (
           <Space wrap>
-            <Tag>{statusNames[project.status] || project.status}</Tag>
+            <StatusBadge status={project.status} />
             <ProjectManagement
               project={project}
               onChanged={() => {
@@ -649,23 +673,7 @@ export default function Labeling() {
         </Spin>
       )}
       {identity && !projectId && (
-        <>
-          <section className={styles.projectStats} aria-label="已加载项目统计">
-            {[
-              ['已加载项目', projects.length],
-              ['开放项目', projects.filter((p) => p.status === 'OPEN').length],
-              ['草稿项目', projects.filter((p) => p.status === 'DRAFT').length],
-              [
-                '已归档',
-                projects.filter((p) => p.status === 'ARCHIVED').length,
-              ],
-            ].map(([label, value]) => (
-              <div key={label}>
-                <span>{label}</span>
-                <strong>{loading ? '—' : value}</strong>
-              </div>
-            ))}
-          </section>
+        <div className={ui.projectColumns}>
           <Card
             title="我创建的项目"
             extra={
@@ -677,25 +685,58 @@ export default function Labeling() {
                 >
                   刷新
                 </Button>
-                <Button
-                  type="primary"
-                  icon={<PlusOutlined />}
-                  disabled={!identity.canCreateProject}
-                  onClick={() => setCreating(true)}
-                >
-                  创建项目
-                </Button>
               </Space>
             }
           >
+            <div className={ui.inlineSearch}>
+              <Input
+                allowClear
+                aria-label="搜索已加载项目"
+                placeholder="搜索已加载项目名称或说明"
+                value={projectQuery}
+                onChange={(event) => setProjectQuery(event.target.value)}
+              />
+              <Select
+                aria-label="筛选已加载项目状态"
+                value={projectStatus}
+                onChange={setProjectStatus}
+                style={{ minWidth: 115 }}
+                options={[
+                  { value: 'ALL', label: '全部状态' },
+                  ...['DRAFT', 'OPEN', 'PAUSED', 'ARCHIVED'].map((value) => ({
+                    value,
+                    label: statusNames[value],
+                  })),
+                ]}
+              />
+            </div>
+            <p className={styles.headingHint} style={{ marginBottom: 12 }}>
+              已加载 {projects.length} 个项目 · 当前匹配{' '}
+              {filteredProjects.length} 个
+              {projectCursor ? '，可继续加载更多' : ''}
+            </p>
             <Table<Project>
+              onRow={(item) => ({
+                onClick: () => setManagedId(item.projectId),
+              })}
+              rowClassName={(item) =>
+                item.projectId === managedProject?.projectId
+                  ? styles.selectedRow
+                  : ''
+              }
               rowKey="projectId"
               loading={loading}
-              dataSource={projects}
+              dataSource={filteredProjects}
               pagination={false}
               locale={{
                 emptyText: (
-                  <Empty description="还没有项目，创建第一个标注项目" />
+                  <Empty
+                    description={
+                      projects.length
+                        ? '没有匹配的已加载项目'
+                        : '还没有项目，创建第一个标注项目'
+                    }
+                  />
                 ),
               }}
               columns={[
@@ -717,9 +758,7 @@ export default function Labeling() {
                 {
                   title: '状态',
                   dataIndex: 'status',
-                  render: (status: string) => (
-                    <Tag>{statusNames[status] || status}</Tag>
-                  ),
+                  render: (status: string) => <StatusBadge status={status} />,
                 },
                 {
                   title: '创建时间',
@@ -742,11 +781,14 @@ export default function Labeling() {
                           任务发布
                         </Link>
                       )}
-                      <ProjectManagement
-                        project={item}
-                        onChanged={() => void listProjects()}
-                        onDeleted={() => void listProjects()}
-                      />
+                      <Button
+                        type="link"
+                        size="small"
+                        aria-label={`管理项目 ${item.name}`}
+                        onClick={() => setManagedId(item.projectId)}
+                      >
+                        管理
+                      </Button>
                     </Space>
                   ),
                 },
@@ -763,7 +805,52 @@ export default function Labeling() {
               </Button>
             )}
           </Card>
-        </>
+          <Card
+            title={
+              managedProject ? `项目管理 · ${managedProject.name}` : '项目管理'
+            }
+          >
+            {managedProject ? (
+              <>
+                <StatusBadge status={managedProject.status} />
+                <p>{managedProject.description || '暂无项目说明'}</p>
+                <dl className={ui.metadata}>
+                  <div>
+                    <dt>任务类型</dt>
+                    <dd>
+                      {taskTemplates.find(
+                        (item) => item.taskType === managedProject.taskType,
+                      )?.name || managedProject.taskType}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>创建时间</dt>
+                    <dd>
+                      {new Date(managedProject.createdAt).toLocaleString(
+                        'zh-CN',
+                      )}
+                    </dd>
+                  </div>
+                </dl>
+                <div style={{ marginTop: 14 }}>
+                  <ProjectManagement
+                    project={managedProject}
+                    onChanged={() => void listProjects()}
+                    onDeleted={() => {
+                      setManagedId(undefined);
+                      void listProjects();
+                    }}
+                  />
+                </div>
+                <p className={styles.headingHint}>
+                  选择左侧项目的“管理”，可查看对应操作。草稿项目允许删除；其他状态按可用操作管理。
+                </p>
+              </>
+            ) : (
+              <Empty description="选择一个项目查看可用管理操作" />
+            )}
+          </Card>
+        </div>
       )}
       {identity && projectId && loading && (
         <Spin>

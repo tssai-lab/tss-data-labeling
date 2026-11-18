@@ -1,6 +1,8 @@
-import { Alert, Button, Empty, Spin } from 'antd';
+import { ZoomInOutlined } from '@ant-design/icons';
+import { Alert, Button, Empty, Image, Spin } from 'antd';
 import { useEffect, useState } from 'react';
 import { describeLabelingError, sampleBlob } from '@/services/labeling';
+import ui from './workspaceUi.less';
 
 export default function OriginalImage({
   projectId,
@@ -11,12 +13,14 @@ export default function OriginalImage({
 }) {
   const [url, setUrl] = useState(''),
     [error, setError] = useState('');
+  const [previewOpen, setPreviewOpen] = useState(false);
   const [retry, setRetry] = useState(0),
     [loading, setLoading] = useState(false);
   useEffect(() => {
     const abort = new AbortController();
     let objectUrl = '';
     setUrl('');
+    setPreviewOpen(false);
     setError('');
     setLoading(true);
     void sampleBlob(projectId, sampleId, abort.signal)
@@ -49,12 +53,27 @@ export default function OriginalImage({
           }
         />
       ) : url ? (
-        <img
-          src={url}
-          alt={`样本 ${sampleId} 的授权原图`}
-          style={{ maxWidth: '100%', maxHeight: 450, objectFit: 'contain' }}
-          onError={() => setError('原图解码失败')}
-        />
+        <button
+          type="button"
+          className={ui.imageButton}
+          aria-label="查看原图大图"
+          onClick={() => setPreviewOpen(true)}
+        >
+          <Image
+            src={url}
+            alt={`样本 ${sampleId} 的授权原图`}
+            preview={{
+              visible: previewOpen,
+              onVisibleChange: setPreviewOpen,
+              mask: null,
+            }}
+            onError={() => setError('原图解码失败')}
+          />
+          <span className={ui.imageZoom}>
+            <ZoomInOutlined aria-hidden="true" />
+            放大
+          </span>
+        </button>
       ) : (
         <Empty description="暂无原图" />
       )}

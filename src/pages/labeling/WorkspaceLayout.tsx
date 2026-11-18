@@ -3,6 +3,7 @@ import type { PropsWithChildren } from 'react';
 import type { Project } from '@/services/labeling';
 import styles from './index.less';
 import Navigation from './Navigation';
+import { workspaceTheme, workspaceVariables } from './workspaceTheme';
 
 export default function WorkspaceLayout({
   children,
@@ -15,28 +16,21 @@ export default function WorkspaceLayout({
   workbench?: boolean;
 }>) {
   return (
-    <ConfigProvider
-      theme={{
-        token: {
-          colorPrimary: '#3765d9',
-          colorInfo: '#3765d9',
-          colorText: '#172b45',
-          colorTextSecondary: '#718096',
-          colorBgLayout: '#f3f6fb',
-          colorBorder: '#dce3ec',
-          colorBorderSecondary: '#e8edf4',
-          borderRadius: 10,
-          fontSize: 14,
-          controlHeight: 38,
-        },
-      }}
-    >
-      <main className={`${styles.page} ${styles.workspacePage}`}>
+    <ConfigProvider theme={workspaceTheme}>
+      <main
+        style={workspaceVariables}
+        className={`${styles.page} ${styles.workspacePage}`}
+      >
+        <a className={styles.skipLink} href="#labeling-main-content">
+          跳转到主要内容
+        </a>
         <Navigation
           project={project}
           beforeAccountAction={beforeAccountAction}
         />
         <section
+          id="labeling-main-content"
+          tabIndex={-1}
           className={`${styles.content} ${workbench ? styles.workbenchContent : ''}`}
         >
           {children}
