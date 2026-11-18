@@ -1,0 +1,2 @@
+# Preserve the pinned upstream source bytes on Windows checkouts.
+/vendor/label-studio/** text=auto eol=lf

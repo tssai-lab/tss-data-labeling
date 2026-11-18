@@ -1,0 +1,11 @@
+{
+  "sourceVersion": "1.23.2",
+  "sourceCommit": "df96d79183156e556d91825d15fa7721f1145e1a",
+  "policy": "Keep these upstream CSV/time-series behaviors unchanged.",
+  "files": {
+    "components/TimeSeries/TimeSeriesVisualizer.jsx": "131a068fe7c1a4f77ee0957b3f1b01f98c405c2583a6e749eb22da97ab93b0da",
+    "tags/object/TimeSeries.jsx": "8c92d95b7177cd65a221b3d43a4277575a12b9619eb30ba855a116ff5c30be7a",
+    "tags/object/TimeSeries/helpers.js": "0e7a9ba41eea1e49ef048bc332c35f9c70f94c54d1f19e3746bbd2a7478ba70c",
+    "utils/data.js": "ba985bf243129eed8027b6b5f828cf834dca6d33f0ceb803fb6438b1ac2ae4d1"
+  }
+}
