@@ -105,8 +105,8 @@ class NativeWorkflowIntegrationTest {
         postApi("owner","/projects/"+project+"/spec-versions",Map.of("taskType","TIME_SERIES","schemaVersion","label-studio-v1","labels",List.of(),"editorConfig",Map.of("labelConfig",XML)),404);
         for(String format:List.of("JSON","CSV","TSV")) {
             String export=postApi("owner","/final-snapshots/"+snapshot+"/exports",Map.of("format",format),202).path("exportId").asText();
-            exports.runOnce();assertEquals("READY",getApi("owner","/exports/"+export).path("status").asText());
-            byte[] archive=mvc.perform(get(API+"/exports/"+export+"/file").header("Authorization","Bearer owner"))
+            exports.runOnce();assertEquals("READY",getApi("owner","/source-exports/"+export).path("status").asText());
+            byte[] archive=mvc.perform(get(API+"/source-exports/"+export+"/file").header("Authorization","Bearer owner"))
                     .andExpect(status().isOk()).andReturn().getResponse().getContentAsByteArray();
             Map<String,String> files=new HashMap<>();
             try(var zip=new ZipInputStream(new ByteArrayInputStream(archive),StandardCharsets.UTF_8)) {
@@ -254,8 +254,8 @@ class NativeWorkflowIntegrationTest {
         String snapshotId=snapshot.path("finalSnapshotId").asText();
         for(String format:List.of("JSON","JSON_MIN","CSV","TSV")){
             String export=postApi("owner","/final-snapshots/"+snapshotId+"/exports",Map.of("format",format),202).path("exportId").asText();exports.runOnce();
-            assertEquals("READY",getApi("owner","/exports/"+export).path("status").asText());
-            byte[] bytes=mvc.perform(get(API+"/exports/"+export+"/file").header("Authorization","Bearer owner")).andExpect(status().isOk()).andReturn().getResponse().getContentAsByteArray();
+            assertEquals("READY",getApi("owner","/source-exports/"+export).path("status").asText());
+            byte[] bytes=mvc.perform(get(API+"/source-exports/"+export+"/file").header("Authorization","Bearer owner")).andExpect(status().isOk()).andReturn().getResponse().getContentAsByteArray();
             Map<String,byte[]> files=new HashMap<>();try(var zip=new ZipInputStream(new ByteArrayInputStream(bytes),StandardCharsets.UTF_8)){for(var entry=zip.getNextEntry();entry!=null;entry=zip.getNextEntry())files.put(entry.getName(),zip.readAllBytes());}
             JsonNode manifest=json.readTree(files.get("manifest.json"));assertEquals(2,manifest.path("groups").size());assertEquals(2,manifest.path("samples").size());
             assertEquals(2,files.keySet().stream().filter(name->name.endsWith("label_config.xml")).count());
@@ -294,8 +294,8 @@ class NativeWorkflowIntegrationTest {
         String snapshot=postApi("owner","/projects/"+project+"/final-snapshots",Map.of("name","检测成果","specVersionId",spec,"sampleIds",List.of(sample)),201).path("finalSnapshotId").asText();
         for(String format:List.of("JSON","JSON_MIN","CSV","TSV","COCO","YOLO")){
             String export=postApi("owner","/final-snapshots/"+snapshot+"/exports",Map.of("format",format),202).path("exportId").asText();exports.runOnce();
-            assertEquals("READY",getApi("owner","/exports/"+export).path("status").asText(),format);
-            byte[] archive=mvc.perform(get(API+"/exports/"+export+"/file").header("Authorization","Bearer owner")).andExpect(status().isOk()).andReturn().getResponse().getContentAsByteArray();
+            assertEquals("READY",getApi("owner","/source-exports/"+export).path("status").asText(),format);
+            byte[] archive=mvc.perform(get(API+"/source-exports/"+export+"/file").header("Authorization","Bearer owner")).andExpect(status().isOk()).andReturn().getResponse().getContentAsByteArray();
             Map<String,byte[]> files=new HashMap<>();try(var zip=new ZipInputStream(new ByteArrayInputStream(archive),StandardCharsets.UTF_8)){for(var entry=zip.getNextEntry();entry!=null;entry=zip.getNextEntry())files.put(entry.getName(),zip.readAllBytes());}
             assertTrue(files.containsKey("manifest.json"));assertTrue(files.keySet().stream().anyMatch(name->name.endsWith(".png")));
             if(format.equals("COCO"))assertEquals(4,json.readTree(files.get("result.json")).at("/annotations/0/bbox").size());

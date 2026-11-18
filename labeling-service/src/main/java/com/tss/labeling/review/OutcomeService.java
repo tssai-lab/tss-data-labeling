@@ -270,8 +270,10 @@ VALUES (?,?,?,?,?,'REPUBLISHED',?,?,?,?,?,?)
         UUID after = cursor(cursor);
         var rows = db.queryForList(
                         """
-SELECT id AS "finalSnapshotId", spec_version_id AS "specVersionId", name, scope_hash AS "scopeHash", created_at::text AS "createdAt"
-FROM final_snapshot WHERE project_id=? AND id>? ORDER BY id LIMIT ?
+SELECT fs.id AS "finalSnapshotId", fs.spec_version_id AS "specVersionId", fs.name,
+  fs.scope_hash AS "scopeHash", fs.created_at::text AS "createdAt",
+  (SELECT count(*) FROM final_snapshot_item i WHERE i.snapshot_id=fs.id) AS "sampleCount"
+FROM final_snapshot fs WHERE fs.project_id=? AND fs.id>? ORDER BY fs.id LIMIT ?
 """, project, after, limit + 1);
         boolean more = rows.size() > limit;
         var items = more ? rows.subList(0, limit) : rows;
@@ -354,7 +356,16 @@ VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
                         sample,
                         "HUMAN".equals(kind) ? submission : execution);
         if (rows.size() != 1) throw error(422,"RESULT_NOT_REVIEWABLE", "来源没有唯一的当前可审核答案，请按明确结果版本审核");
-        return rows.get(0);
+        Map<String,Object> source = rows.get(0);
+        if ("HUMAN".equals(kind)) {
+            String reviewed = db.query(
+                    "SELECT result::text FROM review_item WHERE submission_id=? AND sample_id=?"
+                            + " AND action='MODIFY' AND result IS NOT NULL",
+                    rs -> rs.next() ? rs.getString(1) : null,
+                    submission, sample);
+            if (reviewed != null) source.put("result", reviewed);
+        }
+        return source;
     }
 
     private JsonNode freezeResult(
@@ -382,6 +393,10 @@ FROM final_snapshot_item WHERE snapshot_id=? ORDER BY sample_id
         out.put("scopeHash", s.get("scope_hash"));
         out.put("createdAt", s.get("created_at"));
         out.put("sampleCount", items.size());
+        var specVersionIds = db.queryForList(
+                "SELECT DISTINCT spec_version_id FROM final_snapshot_item WHERE snapshot_id=? ORDER BY spec_version_id",
+                UUID.class, id);
+        out.put("specVersionIds", specVersionIds);
         out.put("items", items);
         return json.valueToTree(out);
     }

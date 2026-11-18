@@ -37,7 +37,12 @@ jobs:
           labeling-service/target/ls-build-env/bin/python -m pip install --no-index --require-hashes --find-links labeling-service/target/ls-wheels -r labeling-service/ls-source-adapter/requirements.lock
           labeling-service/target/ls-build-env/bin/python labeling-service/scripts/runtime_check.py --adapter-root labeling-service/ls-source-adapter
       - name: 构建标注服务
-        run: mvn -B -ntp -f labeling-service/pom.xml "-Dls.test.python=$PWD/labeling-service/target/ls-build-env/bin/python" verify
+        run: |
+          mvn -B -ntp -f labeling-service/pom.xml \
+            "-Dls.test.python=$PWD/labeling-service/target/ls-build-env/bin/python" \
+            "-Dlabeling.ls-source.python=$PWD/labeling-service/target/ls-build-env/bin/python" \
+            "-Dlabeling.ls-source.adapter-root=$PWD/labeling-service/ls-source-adapter" \
+            verify
       - name: 发布边界测试
         run: |
           python -m unittest discover -s labeling-service/scripts -p 'test_*.py'

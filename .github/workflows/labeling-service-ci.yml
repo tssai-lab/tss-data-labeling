@@ -27,10 +27,24 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: 准备锁定的 Label Studio 源码运行环境
+        run: |
+          python -m pip download --only-binary=:all: --require-hashes --dest labeling-service/target/ls-wheels -r labeling-service/ls-source-adapter/requirements.lock
+          python -m venv labeling-service/target/ls-build-env
+          labeling-service/target/ls-build-env/bin/python -m pip install --no-index --require-hashes --find-links labeling-service/target/ls-wheels -r labeling-service/ls-source-adapter/requirements.lock
+          labeling-service/target/ls-build-env/bin/python labeling-service/scripts/runtime_check.py --adapter-root labeling-service/ls-source-adapter
       - name: PostgreSQL 迁移、权限、并发和 HTTP 全链路回归
         env:
           LABELING_NODE_E2E: 'true'
-        run: mvn -B -ntp -f labeling-service/pom.xml verify
+        run: |
+          mvn -B -ntp -f labeling-service/pom.xml \
+            "-Dls.test.python=$PWD/labeling-service/target/ls-build-env/bin/python" \
+            "-Dlabeling.ls-source.python=$PWD/labeling-service/target/ls-build-env/bin/python" \
+            "-Dlabeling.ls-source.adapter-root=$PWD/labeling-service/ls-source-adapter" \
+            verify
       - uses: actions/upload-artifact@v4
         if: always()
         with:

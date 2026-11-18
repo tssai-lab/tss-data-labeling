@@ -87,8 +87,14 @@ public class ReviewService {
         for (var row : rows) {
             UUID sampleId = (UUID) row.get("sample_id");
             String before = (String) row.get("result");
-            // 整份决策不写入新结果：接受沿用冻结答案，退回/待修正只记录结论。
-            upsert(submissionId, sampleId, input.action(), null, null, input.reason(), actor.actorId());
+            String itemAction = db.query(
+                    "SELECT action FROM review_item WHERE submission_id=? AND sample_id=?",
+                    rs -> rs.next() ? rs.getString(1) : null,
+                    submissionId, sampleId);
+            // 整份接受保留逐项修改后的答案；其他决策覆盖逐项状态。
+            if (!("ACCEPT".equals(input.action()) && "MODIFY".equals(itemAction))) {
+                upsert(submissionId, sampleId, input.action(), null, null, input.reason(), actor.actorId());
+            }
             syncSampleReview(submissionId, sampleId, input.action(), input.reason(), actor.actorId());
             audit(s.get("project_id"), submissionId, actor.actorId(), "REVIEW_DECIDE", sampleId,
                     before, "ACCEPT".equals(input.action()) ? before : null, input.reason());
