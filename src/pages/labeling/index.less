@@ -102,6 +102,7 @@
 .sectionAnchor { scroll-margin-top:80px; }
 .navToggle { display:none; }
 .skipLink { position:fixed; top:8px; left:10px; z-index:60; transform:translateY(-160%); padding:8px 12px; background:white; color:var(--label-blue); border-radius:6px; &:focus { transform:none; } }
+.workspacePage.focusPage { grid-template-columns:minmax(0,1fr); .sidebar,.navToggle { display:none; } }
 @media(max-width:1100px) { .workspacePage { grid-template-columns:171px minmax(0,1fr); } .workspacePage .navigation { padding:18px 8px; } .workspacePage .workspaceHeader { padding:0 18px; gap:12px; } .platformTitle { font-size:14px; } }
 @media(max-width:730px) {
   .workspacePage { display:block; min-height:100dvh; }

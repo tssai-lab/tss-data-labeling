@@ -10,16 +10,18 @@ export default function WorkspaceLayout({
   beforeAccountAction,
   project,
   workbench = false,
+  focusMode = false,
 }: PropsWithChildren<{
   beforeAccountAction?: () => boolean | Promise<boolean>;
-  project?: Project;
+  project?: Pick<Project, 'projectId' | 'name'>;
   workbench?: boolean;
+  focusMode?: boolean;
 }>) {
   return (
     <ConfigProvider theme={workspaceTheme}>
       <main
         style={workspaceVariables}
-        className={`${styles.page} ${styles.workspacePage}`}
+        className={`${styles.page} ${styles.workspacePage} ${focusMode ? styles.focusPage : ''}`}
       >
         <a className={styles.skipLink} href="#labeling-main-content">
           跳转到主要内容

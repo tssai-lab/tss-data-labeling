@@ -10,6 +10,32 @@ const text = (node) =>
     .map((child) => (typeof child === 'object' ? text(child) : child))
     .join('');
 const styles = { './workspaceUi.less': { default: {} } };
+
+test('native focus mode accepts the project navigation context and keeps the content landmark', () => {
+  const project = { projectId: 'project', name: '项目' };
+  const r = renderHooks(
+    new URL('./WorkspaceLayout.tsx', import.meta.url),
+    { project, focusMode: true, workbench: true },
+    {
+      antd: { ConfigProvider: 'ConfigProvider' },
+      './Navigation': { default: 'Navigation' },
+      './index.less': {
+        default: {
+          page: 'page',
+          workspacePage: 'workspace',
+          focusPage: 'focus',
+          content: 'content',
+          workbenchContent: 'workbench',
+        },
+      },
+      './workspaceTheme': { workspaceTheme: {}, workspaceVariables: {} },
+    },
+  );
+  r.render();
+  assert.match(r.nodes('main')[0].props.className, /focus/);
+  assert.equal(r.nodes('Navigation')[0].props.project, project);
+  assert.equal(r.nodes('section')[0].props.id, 'labeling-main-content');
+});
 const spec = {
   specVersionId: 'spec',
   versionNo: 1,

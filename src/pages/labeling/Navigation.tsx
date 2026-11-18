@@ -23,7 +23,7 @@ export default function Navigation({
   canLeave = () => true,
   beforeAccountAction,
 }: {
-  project?: Project;
+  project?: Pick<Project, 'projectId' | 'name'>;
   canLeave?: () => boolean;
   beforeAccountAction?: () => boolean | Promise<boolean>;
 }) {

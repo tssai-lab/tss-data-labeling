@@ -134,6 +134,15 @@ export async function labelingJson<T>(
   return body.data as T;
 }
 
+/** Authorized binary resources for the native editor and result downloads. */
+export async function labelingBlob(
+  path: string,
+  signal?: AbortSignal,
+): Promise<Blob> {
+  const res = await response(path, { signal });
+  return res.blob();
+}
+
 export function post<T>(path: string, body: unknown, key: string): Promise<T> {
   return labelingJson<T>(path, {
     method: 'POST',
