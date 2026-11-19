@@ -1,4 +1,5 @@
-import { Alert, App, Button, Input, Modal, Space } from 'antd';
+import { MoreOutlined } from '@ant-design/icons';
+import { Alert, App, Button, Dropdown, Input, Modal } from 'antd';
 import { useState } from 'react';
 import type { Project } from '@/services/labeling';
 import { ownerApi } from '@/services/labelingOwner';
@@ -26,6 +27,20 @@ export default function ProjectManagement({
     archive: '归档项目',
     delete: '删除草稿项目',
   };
+  const actions = [
+    ...(project.status === 'OPEN'
+      ? [{ key: 'pause', label: names.pause }]
+      : []),
+    ...(project.status === 'PAUSED'
+      ? [{ key: 'resume', label: names.resume }]
+      : []),
+    ...(project.status !== 'ARCHIVED'
+      ? [{ key: 'archive', label: names.archive, danger: true }]
+      : []),
+    ...(project.status === 'DRAFT'
+      ? [{ key: 'delete', label: names.delete, danger: true }]
+      : []),
+  ];
   function send() {
     if (!operation || !reason.trim()) return;
     const captured = operation;
@@ -59,36 +74,22 @@ export default function ProjectManagement({
   }
   return (
     <>
-      <Space wrap>
-        {project.status === 'OPEN' && (
-          <Button disabled={action.busy} onClick={() => setOperation('pause')}>
-            暂停
-          </Button>
-        )}
-        {project.status === 'PAUSED' && (
-          <Button disabled={action.busy} onClick={() => setOperation('resume')}>
-            恢复
-          </Button>
-        )}
-        {project.status !== 'ARCHIVED' && (
-          <Button
-            disabled={action.busy}
-            onClick={() => setOperation('archive')}
-          >
-            归档
-          </Button>
-        )}
-        {project.status === 'DRAFT' && (
-          <Button
-            type="link"
-            danger
-            disabled={action.busy}
-            onClick={() => setOperation('delete')}
-          >
-            删除
-          </Button>
-        )}
-      </Space>
+      <Dropdown
+        trigger={['click']}
+        menu={{
+          items: actions,
+          onClick: ({ key }) =>
+            setOperation(key as 'pause' | 'resume' | 'archive' | 'delete'),
+        }}
+        disabled={action.busy || actions.length === 0}
+      >
+        <Button
+          type="text"
+          aria-label={`管理项目 ${project.name}`}
+          icon={<MoreOutlined />}
+          disabled={action.busy || actions.length === 0}
+        />
+      </Dropdown>
       <Modal
         title={operation ? names[operation] : ''}
         open={Boolean(operation)}

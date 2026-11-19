@@ -28,6 +28,36 @@ import { EditorResizer } from "./EditorResizer";
 const wizardClass = cn("wizard");
 const configClass = cn("configure");
 
+const hasEmptyChoices = (xml) => {
+  if (!xml || typeof DOMParser === "undefined") return false;
+
+  const document = new DOMParser().parseFromString(xml, "application/xml");
+  if (document.querySelector("parsererror")) return false;
+
+  return Array.from(document.getElementsByTagName("Choices")).some((choices) =>
+    !Array.from(choices.children).some((choice) => choice.tagName === "Choice"),
+  );
+};
+
+const withPreviewChoices = (xml) => {
+  if (!xml || typeof DOMParser === "undefined") return xml;
+
+  const document = new DOMParser().parseFromString(xml, "application/xml");
+  if (document.querySelector("parsererror")) return xml;
+
+  let changed = false;
+  for (const choices of document.getElementsByTagName("Choices")) {
+    if (![...choices.children].some((choice) => choice.tagName === "Choice")) {
+      const choice = document.createElement("Choice");
+      choice.setAttribute("value", "预览选项");
+      choices.appendChild(choice);
+      changed = true;
+    }
+  }
+
+  return changed ? new XMLSerializer().serializeToString(document) : xml;
+};
+
 /**
  * AdaptivePreview - Shows manual update banner for large configs,
  * normal auto-updating preview for smaller configs.
@@ -121,6 +151,8 @@ const Label = ({ label, template, color }) => {
 
 const ConfigureControl = ({ control, template }) => {
   const refLabels = React.useRef();
+  const [, refreshLabels] = React.useReducer((version) => version + 1, 0);
+  const [addError, setAddError] = React.useState("");
   const tagname = control.tagName;
 
   if (tagname !== "Choices" && !tagname.endsWith("Labels")) return null;
@@ -128,7 +160,17 @@ const ConfigureControl = ({ control, template }) => {
 
   const onAddLabels = () => {
     if (!refLabels.current) return;
-    template.addLabels(control, refLabels.current.value);
+    const input = refLabels.current.value;
+    if (!input.trim()) return;
+    try {
+      template.addLabels(control, input);
+      setAddError("");
+      // 控件节点由 Template 直接修改，主动刷新以同步标签数量和列表。
+      refreshLabels();
+    } catch (error) {
+      setAddError(error instanceof Error ? error.message : "添加标签失败，请重试。");
+      return;
+    }
     refLabels.current.value = "";
   };
   const onKeyPress = (e) => {
@@ -152,14 +194,29 @@ const ConfigureControl = ({ control, template }) => {
           onKeyPress={onKeyPress}
           className="lsf-textarea-ls p-2 px-3"
         />
-        <Button type="button" size="small" look="outlined" onClick={onAddLabels} aria-label="添加标签">
-          添加
+        {addError && <p role="alert">{addError}</p>}
+        <Button
+          type="button"
+          size="medium"
+          variant="primary"
+          look="filled"
+          onClick={onAddLabels}
+          className="labeling-add-labels-button"
+          aria-label="添加标签"
+        >
+          <span className="labeling-add-labels-icon" aria-hidden="true">+</span>
+          添加标签
         </Button>
       </form>
       <div className={configClass.elem("current-labels").toClassName()}>
         <h3>
           {tagname === "Choices" ? "分类选项" : "区域标签"} ({control.children.length})
         </h3>
+        {tagname === "Choices" && control.children.length === 0 && (
+          <p className="text-sm text-amber-700">
+            请至少添加一个分类选项，配置完成后才能预览和标注。
+          </p>
+        )}
         <ul>
           {Array.from(control.children).map((label) => (
             <Label
@@ -271,6 +328,19 @@ const ConfigureSettings = ({ template }) => {
   );
 };
 
+const FIELD_SOURCE_OPTION_STYLE = {
+  width: "100%",
+  boxSizing: "border-box",
+  minHeight: 42,
+  margin: "3px 0",
+  padding: 4,
+  border: "1px solid #e4eaf3",
+  borderRadius: 8,
+  backgroundColor: "#f7f9fc",
+  color: "#29445f",
+  fontWeight: 500,
+};
+
 // configure value source for `obj` object tag
 const ConfigureColumn = ({ template, obj, columns }) => {
   const valueAttr = obj.hasAttribute("valueList") ? "valueList" : "value";
@@ -328,11 +398,23 @@ const ConfigureColumn = ({ template, obj, columns }) => {
       columns?.map((column) => ({
         value: column,
         label: column === DEFAULT_COLUMN ? "导入数据" : `$${column}`,
+        className: "labeling-field-source-option",
+        style: FIELD_SOURCE_OPTION_STYLE,
       })) ?? [];
     if (!columns?.length) {
-      columnOptions.push({ value, label: "导入数据" });
+      columnOptions.push({
+        value,
+        label: "导入数据",
+        className: "labeling-field-source-option",
+        style: FIELD_SOURCE_OPTION_STYLE,
+      });
     }
-    columnOptions.push({ value: "-", label: "手动设置" });
+    columnOptions.push({
+      value: "-",
+      label: "手动设置",
+      className: "labeling-field-source-option",
+      style: FIELD_SOURCE_OPTION_STYLE,
+    });
     return columnOptions;
   }, [columns, value]);
 
@@ -343,7 +425,9 @@ const ConfigureColumn = ({ template, obj, columns }) => {
       {" 读取自 "}
       {columns?.length > 0 && columns[0] !== DEFAULT_COLUMN && "字段 "}
       <Select
-        triggerClassName="border"
+        triggerClassName="labeling-field-source-trigger"
+        contentClassName="labeling-field-source-options"
+        contentStyle={{ width: "var(--radix-popover-trigger-width)", minWidth: "var(--radix-popover-trigger-width)" }}
         onChange={selectValue}
         value={isManual ? "-" : value}
         options={options}
@@ -509,11 +593,16 @@ const Configurator = ({
     const validate = async () => {
       if (!configToCheck) return;
 
+      // 空分类仅在预览副本中补充临时选项，编辑器和待保存配置保持不变。
+      const previewConfig = hasEmptyChoices(configToCheck)
+        ? withPreviewChoices(configToCheck)
+        : configToCheck;
+
       setLoading(true);
 
       const validation = await api.callApi("validateConfig", {
         params: { pk: project.id },
-        body: { label_config: configToCheck },
+        body: { label_config: previewConfig },
         errorFilter: () => true,
       });
       if (!active) return;
@@ -529,7 +618,7 @@ const Configurator = ({
 
       const sample = await api.callApi("createSampleTask", {
         params: { pk: project.id },
-        body: { label_config: configToCheck },
+        body: { label_config: previewConfig },
         errorFilter: () => true,
       });
       if (!active) return;
@@ -537,7 +626,7 @@ const Configurator = ({
       setLoading(false);
       if (sample && !sample.error) {
         setData(sample.sample_task);
-        setConfigToDisplay(configToCheck);
+        setConfigToDisplay(previewConfig);
         // Track that we've completed a successful validation
         lastValidatedConfig.current = configToCheck;
       } else {
@@ -642,8 +731,9 @@ const Configurator = ({
               type="button"
               data-leave={true}
               onClick={onBrowse}
-              size="small"
+              size="medium"
               look="outlined"
+              className="labeling-template-browser"
               aria-label="浏览模板"
             >
               浏览模板
@@ -705,7 +795,7 @@ const Configurator = ({
                   </span>
                 </div>
               )}
-              <Button className="w-[120px]" onClick={onSave} waiting={waiting} aria-label="保存配置">
+              <Button className="w-[120px] labeling-save-config-button" onClick={onSave} waiting={waiting} aria-label="保存配置">
                 {waiting ? "正在保存…" : "保存配置"}
               </Button>
               {isFF(FF_UNSAVED_CHANGES) && <UnsavedChanges hasChanges={hasChanges} onSave={onSave} />}
@@ -754,6 +844,22 @@ export const ConfigPage = ({
   const [selectedRecipe, setSelectedRecipe] = React.useState(null);
   const [template, setCurrentTemplate] = React.useState(null);
   const api = useAPI();
+
+  React.useEffect(() => {
+    window.__labelingTemplateBrowserMode = mode === "list";
+    window.dispatchEvent(
+      new CustomEvent("labeling-template-browser-mode", {
+        detail: { active: mode === "list" },
+      }),
+    );
+  }, [mode]);
+
+  React.useEffect(() => {
+    const handleBack = () => setMode("view");
+    window.addEventListener("labeling-template-browser-back", handleBack);
+    return () =>
+      window.removeEventListener("labeling-template-browser-back", handleBack);
+  }, []);
 
   const setSelectedGroup = React.useCallback(
     (group) => {
@@ -853,6 +959,7 @@ export const ConfigPage = ({
           case="list"
           selectedGroup={selectedGroup}
           selectedRecipe={selectedRecipe}
+          onBack={() => setMode("view")}
           onSelectGroup={setSelectedGroup}
           onSelectRecipe={onSelectRecipe}
           onCustomTemplate={onCustomTemplate}

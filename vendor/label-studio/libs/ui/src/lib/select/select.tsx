@@ -229,6 +229,7 @@ export const Select = forwardRef(
       triggerProps,
       triggerClassName,
       contentClassName,
+      contentStyle,
       size,
       searchFilter,
       onSearch,
@@ -484,6 +485,7 @@ export const Select = forwardRef(
                       label={lab}
                       isOptionSelected={isChildOptionSelected}
                       disabled={item?.disabled}
+                      className={item?.className}
                       style={item?.style}
                       multiple={multiple}
                       onSelect={() => {
@@ -503,6 +505,7 @@ export const Select = forwardRef(
             label={label}
             isOptionSelected={isOptionSelected}
             disabled={option?.disabled}
+            className={option?.className}
             style={option?.style}
             multiple={multiple}
             onSelect={() => {
@@ -543,7 +546,15 @@ export const Select = forwardRef(
             data-value={value ?? ""}
             {...triggerProps}
           >
-            <span className="flex flex-1 text-left gap-2 max-w-full overflow-hidden" data-testid="select-display-value">
+            <span
+              className="flex flex-1 text-left gap-2 max-w-full overflow-hidden"
+              data-testid="select-display-value"
+              style={
+                triggerClassName?.includes("labeling-field-source-trigger")
+                  ? { justifyContent: "center", textAlign: "center" }
+                  : undefined
+              }
+            >
               {renderSelected ? renderSelected?.(selectedOptions, props?.placeholder) : displayValue}
             </span>
             {isOpen ? (
@@ -553,7 +564,12 @@ export const Select = forwardRef(
             )}
           </button>
         </PopoverTrigger>
-        <PopoverContent align="start" data-testid="select-popup" className={cnm("min-w-full", contentClassName)}>
+        <PopoverContent
+          align="start"
+          data-testid="select-popup"
+          className={cnm("min-w-full", contentClassName)}
+          style={contentStyle}
+        >
           {isLoading ? (
             <span className={styles.selectLoading} tabIndex={-1}>
               Loading...
@@ -767,6 +783,11 @@ const Option = ({
           ],
           !multiple && isOptionSelected && ["bg-primary-emphasis"],
         )}
+        style={
+          className?.includes("labeling-field-source-option")
+            ? { justifyContent: "center", textAlign: "center" }
+            : undefined
+        }
         data-disabled={disabled}
       >
         {multiple && (
@@ -778,7 +799,11 @@ const Option = ({
             disabled={disabled}
           />
         )}
-        <div data-testid="select-option-label" className="w-full min-w-0 truncate">
+        <div
+          data-testid="select-option-label"
+          className="w-full min-w-0 truncate"
+          style={className?.includes("labeling-field-source-option") ? { textAlign: "center" } : undefined}
+        >
           {label}
         </div>
       </div>

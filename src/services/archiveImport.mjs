@@ -1,5 +1,16 @@
 import { hashFile, uploadChunks } from './labelingUpload.mjs';
 export const archivePolicy = Object.freeze({ maxArchiveBytes: 2147483648 });
+
+function createIdempotencyKey() {
+  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
+  if (globalThis.crypto?.getRandomValues) {
+    return Array.from(globalThis.crypto.getRandomValues(new Uint8Array(16)), (byte) =>
+      byte.toString(16).padStart(2, '0'),
+    ).join('');
+  }
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+}
+
 export async function validateArchive(file, policy = archivePolicy) {
   if (
     !file ||
@@ -67,7 +78,7 @@ export function imageImportAdapter(projectId, request) {
       post(
         `/imports/${encodeURIComponent(id)}/retry`,
         null,
-        `retry-${id}-${crypto.randomUUID()}`,
+        `retry-${id}-${createIdempotencyKey()}`,
         signal,
       ),
   };
@@ -175,7 +186,7 @@ export class ArchiveImportSession {
         this.receipt = {
           version: 1,
           scope: this.scope,
-          key: crypto.randomUUID(),
+          key: createIdempotencyKey(),
           file: fingerprint,
         };
         this.persist();

@@ -56,7 +56,7 @@ export default function ProjectWorkflow() {
     return () => abort.abort();
   }, [projectId, retry]);
   return (
-    <WorkspaceLayout project={project} workbench>
+    <WorkspaceLayout workbench>
       {error && (
         <div style={{ padding: 24 }}>
           <Alert

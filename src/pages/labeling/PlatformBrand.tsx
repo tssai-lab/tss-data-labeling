@@ -4,16 +4,13 @@ import styles from './index.less';
 
 export default function PlatformBrand({
   onClick,
+  interactive = true,
 }: {
   onClick?: MouseEventHandler<HTMLAnchorElement>;
+  interactive?: boolean;
 } = {}) {
-  return (
-    <Link
-      to="/platforms"
-      className={styles.workspaceBrand}
-      aria-label="TSS AI PLATFORM · 返回平台选择"
-      onClick={onClick}
-    >
+  const brand = (
+    <>
       <span className="tss-brand-mark" aria-hidden="true">
         T
       </span>
@@ -24,6 +21,23 @@ export default function PlatformBrand({
         <small>AI PLATFORM</small>
       </span>
       <span className={styles.platformTitle}>数据标注平台</span>
+    </>
+  );
+
+  if (!interactive) {
+    return (
+      <div className={styles.workspaceBrand}>{brand}</div>
+    );
+  }
+
+  return (
+    <Link
+      to="/platforms"
+      className={styles.workspaceBrand}
+      aria-label="TSS AI PLATFORM · 返回平台选择"
+      onClick={onClick}
+    >
+      {brand}
     </Link>
   );
 }

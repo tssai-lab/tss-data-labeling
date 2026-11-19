@@ -6,18 +6,21 @@ import {
 import { history, useModel } from '@umijs/max';
 import type { MenuProps } from 'antd';
 import { Spin } from 'antd';
+import type { DropDownProps } from 'antd/es/dropdown';
 import { createStyles } from 'antd-style';
 import React from 'react';
 import { flushSync } from 'react-dom';
 import { outLogin } from '@/services/ant-design-pro/api';
 import { redirectToLogin } from '@/utils/loginRedirect';
 import { STORAGE_KEYS, storage } from '@/utils/storage';
-import HeaderDropdown from '../HeaderDropdown';
+import HeaderDropdown, { type HeaderDropdownProps } from '../HeaderDropdown';
 
 export type GlobalHeaderRightProps = {
   menu?: boolean;
   beforeAction?: () => boolean | Promise<boolean>;
   children?: React.ReactNode;
+  trigger?: DropDownProps['trigger'];
+  placement?: HeaderDropdownProps['placement'];
 };
 
 export const AvatarName = () => {
@@ -52,6 +55,8 @@ export const AvatarDropdown: React.FC<GlobalHeaderRightProps> = ({
   menu,
   beforeAction,
   children,
+  trigger,
+  placement,
 }) => {
   /**
    * 退出登录，并且将当前的 url 保存
@@ -153,6 +158,8 @@ export const AvatarDropdown: React.FC<GlobalHeaderRightProps> = ({
         onClick: onMenuClick,
         items: menuItems,
       }}
+      trigger={trigger}
+      placement={placement}
     >
       {children}
     </HeaderDropdown>

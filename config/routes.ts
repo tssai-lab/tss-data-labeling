@@ -1,5 +1,17 @@
 export default [
   {
+    path: '/labeling/templates',
+    component: './labeling/TemplateWorkspace',
+    layout: false,
+    hideInMenu: true,
+  },
+  {
+    path: '/labeling/help',
+    component: './labeling/Help',
+    layout: false,
+    hideInMenu: true,
+  },
+  {
     path: '/labeling/demo/energy',
     component: './labeling/EnergyDemo',
     layout: false,
@@ -7,7 +19,7 @@ export default [
   },
   {
     path: '/labeling/projects/:projectId/workbench',
-    component: './labeling/ProjectWorkflow',
+    component: './labeling/ServerWorkspace',
     layout: false,
     hideInMenu: true,
   },
@@ -37,25 +49,25 @@ export default [
   },
   {
     path: '/labeling/assignments/:assignmentId',
-    component: './labeling/assignment',
+    component: './labeling/NativeAssignment',
     layout: false,
     hideInMenu: true,
   },
   {
     path: '/labeling/submissions/:submissionId',
-    component: './labeling/submission',
+    component: './labeling/NativeSubmission',
     layout: false,
     hideInMenu: true,
   },
   {
     path: '/labeling',
-    component: './labeling',
+    component: './labeling/ServerWorkspace',
     layout: false,
     hideInMenu: true,
   },
   {
     path: '/labeling/projects/:projectId',
-    component: './labeling',
+    component: './labeling/ServerWorkspace',
     layout: false,
     hideInMenu: true,
   },
