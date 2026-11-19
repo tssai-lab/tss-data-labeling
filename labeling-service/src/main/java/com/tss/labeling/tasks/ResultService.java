@@ -129,8 +129,10 @@ SELECT ?,package_id,sample_id,revision,result_format,result FROM annotation_draf
                         """
 SELECT s.id AS "submissionId",s.assignment_id AS "assignmentId",s.package_id AS "packageId",
   s.project_id AS "projectId",s.spec_version_id AS "specVersionId",s.submitted_by AS "submittedBy",
+  COALESCE(a.display_name, a.identity_user_id) AS "submittedByName",
   s.submitted_at::text AS "submittedAt",s.content_hash AS "contentHash"
 FROM submission s JOIN project p ON p.id=s.project_id
+LEFT JOIN actor a ON a.id=s.submitted_by
 WHERE s.id=? AND (s.submitted_by=? OR p.owner_actor_id=?)
 """,id,actor.actorId(),actor.actorId());
         var items=db.queryForList(
