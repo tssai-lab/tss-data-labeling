@@ -155,10 +155,11 @@ WHERE s.id=? AND (s.submitted_by=? OR p.owner_actor_id=?)
         try{after=cursor==null?new UUID(0,0):UUID.fromString(cursor);}
         catch(IllegalArgumentException ex){throw error(400,"INVALID_CURSOR","游标无效");}
         var rows=db.queryForList(
-                        "SELECT id AS \"submissionId\",assignment_id AS \"assignmentId\",package_id"
-                            + " AS \"packageId\",submitted_by AS \"submittedBy\",submitted_at::text"
-                            + " AS \"submittedAt\" FROM submission WHERE project_id=? AND id>?"
-                            + " ORDER BY id LIMIT ?",project,after,limit+1);
+                        "SELECT s.id AS \"submissionId\",s.assignment_id AS \"assignmentId\",s.package_id"
+                            + " AS \"packageId\",s.submitted_by AS \"submittedBy\",COALESCE(a.display_name,a.identity_user_id)"
+                            + " AS \"submittedByName\",s.submitted_at::text AS \"submittedAt\""
+                            + " FROM submission s LEFT JOIN actor a ON a.id=s.submitted_by"
+                            + " WHERE s.project_id=? AND s.id>? ORDER BY s.id LIMIT ?",project,after,limit+1);
         boolean more=rows.size()>limit;
         var items=more?rows.subList(0,limit):rows;
         for(var item:items)item.put("reviewStatus",reviewStatus((UUID)item.get("submissionId")));
