@@ -280,9 +280,10 @@ ORDER BY s.slot_no LIMIT 1
         return page(db.queryForList(
                         """
 SELECT a.id AS "assignmentId", a.package_id AS "packageId", a.round_id AS "roundId", a.status, a.revision,(SELECT sub.id FROM submission sub WHERE sub.assignment_id=a.id) AS "submissionId",
-  s.slot_no AS "slotNo", plan.spec_version_id AS "specVersionId", plan.project_id AS "projectId"
+  s.slot_no AS "slotNo", plan.spec_version_id AS "specVersionId", plan.project_id AS "projectId", p.name AS "projectName"
 FROM assignment a JOIN package_slot s ON s.id=a.slot_id JOIN task_package t ON t.id=a.package_id
-JOIN package_plan plan ON plan.id=t.plan_id WHERE a.actor_id=? AND a.id>? ORDER BY a.id LIMIT ?
+JOIN package_plan plan ON plan.id=t.plan_id JOIN project p ON p.id=plan.project_id
+WHERE a.actor_id=? AND a.id>? ORDER BY a.id LIMIT ?
 """,actor.actorId(),cursor(cursor),limit+1),limit,"assignmentId");
     }
 
