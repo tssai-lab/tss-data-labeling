@@ -90,7 +90,13 @@ public class ProjectService {
         List<ProjectRow> rows = jdbcTemplate.query(
                         """
                         SELECT id, owner_actor_id, name, description, task_type, status,
-                               revision, created_at, updated_at
+                               revision, created_at, updated_at,
+                               (SELECT count(*) FROM sample s WHERE s.project_id=project.id) AS "sampleCount",
+                               (SELECT count(*) FROM input_resource r WHERE r.project_id=project.id) AS "resourceCount",
+                               (SELECT count(*) FROM import_batch b WHERE b.project_id=project.id AND b.status IN ('UPLOADING','PROCESSING')) AS "activeImportCount",
+                               (EXISTS (SELECT 1 FROM import_batch b WHERE b.project_id=project.id AND b.status='READY')
+                                OR EXISTS (SELECT 1 FROM sample s WHERE s.project_id=project.id)
+                                OR EXISTS (SELECT 1 FROM input_resource r WHERE r.project_id=project.id)) AS "datasetImported"
                         FROM project
                         WHERE deleted_at IS NULL AND owner_actor_id = ?
                         """ + cursorClause + " ORDER BY created_at DESC, id DESC LIMIT ?",
@@ -201,7 +207,13 @@ VALUES (?, ?, ?, ?, CAST(? AS jsonb), ?, CAST(? AS jsonb), ?)
         ProjectRow project = jdbcTemplate.query(
                         """
                         SELECT id, owner_actor_id, name, description, task_type, status,
-                               revision, created_at, updated_at
+                               revision, created_at, updated_at,
+                               (SELECT count(*) FROM sample s WHERE s.project_id=project.id) AS "sampleCount",
+                               (SELECT count(*) FROM input_resource r WHERE r.project_id=project.id) AS "resourceCount",
+                               (SELECT count(*) FROM import_batch b WHERE b.project_id=project.id AND b.status IN ('UPLOADING','PROCESSING')) AS "activeImportCount",
+                               (EXISTS (SELECT 1 FROM import_batch b WHERE b.project_id=project.id AND b.status='READY')
+                                OR EXISTS (SELECT 1 FROM sample s WHERE s.project_id=project.id)
+                                OR EXISTS (SELECT 1 FROM input_resource r WHERE r.project_id=project.id)) AS "datasetImported"
                         FROM project WHERE id = ? AND owner_actor_id = ? AND deleted_at IS NULL
                         """,
                 result -> result.next() ? projectRow(result) : null,
@@ -241,7 +253,11 @@ FROM spec_version WHERE project_id = ? ORDER BY version_no DESC
                 result.getString("status"),
                 result.getLong("revision"),
                 result.getTimestamp("created_at").toInstant(),
-                result.getTimestamp("updated_at").toInstant()
+                result.getTimestamp("updated_at").toInstant(),
+                result.getLong("sampleCount"),
+                result.getLong("resourceCount"),
+                result.getLong("activeImportCount"),
+                result.getBoolean("datasetImported")
         );
     }
 
@@ -267,7 +283,8 @@ FROM spec_version WHERE project_id = ? ORDER BY version_no DESC
     private static ProjectSummary summary(ProjectRow row) {
         return new ProjectSummary(
                 row.id().toString(), row.name(), row.description(), row.taskType(),
-                row.status(), row.revision(), row.createdAt(), row.updatedAt()
+                row.status(), row.revision(), row.createdAt(), row.updatedAt(),
+                row.sampleCount(), row.resourceCount(), row.activeImportCount(), row.datasetImported()
         );
     }
 
@@ -421,7 +438,11 @@ ON CONFLICT (actor_id, operation, idempotency_key) DO NOTHING
             String status,
             long revision,
             Instant createdAt,
-            Instant updatedAt
+            Instant updatedAt,
+            long sampleCount,
+            long resourceCount,
+            long activeImportCount,
+            boolean datasetImported
     ) {
     }
 
@@ -466,7 +487,11 @@ ON CONFLICT (actor_id, operation, idempotency_key) DO NOTHING
             String status,
             long revision,
             Instant createdAt,
-            Instant updatedAt
+            Instant updatedAt,
+            long sampleCount,
+            long resourceCount,
+            long activeImportCount,
+            boolean datasetImported
     ) {
     }
 
