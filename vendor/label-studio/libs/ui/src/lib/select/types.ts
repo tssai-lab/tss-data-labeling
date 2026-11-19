@@ -1,10 +1,12 @@
-import type { FC, ReactNode } from "react";
+import type { CSSProperties, FC, ReactNode } from "react";
 
 export type SelectOptionData<T = any> = {
   value: T;
   label?: string;
   hidden?: boolean;
   disabled?: boolean;
+  className?: string;
+  style?: CSSProperties;
   children?: SelectOptionData<T>[];
   /** Custom row height (px) for virtual-list mode; defaults to VARIABLE_LIST_ITEM_HEIGHT (40). */
   height?: number;
@@ -53,6 +55,7 @@ export type SelectProps<T, A extends SelectOption<T>[]> = {
   placeholder?: ReactNode;
   triggerClassName?: string;
   contentClassName?: string;
+  contentStyle?: CSSProperties;
   ghost?: boolean;
   width?: string;
   icon?: any;

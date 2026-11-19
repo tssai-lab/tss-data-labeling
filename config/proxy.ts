@@ -1,9 +1,10 @@
 /**
  * 仅供 Umi 开发服务器使用；生产静态站点的反向代理由部署网关配置。
- * 默认只连接本机，避免甲方调试代码时误写实验室/外网环境。
- * 远端联调必须显式设置目标地址；不按 main、second 等机器名称推断。
+ * 开发默认连接团队共享服务器；个人环境可通过环境变量覆盖目标地址。
+ * 该代理仅由本地 Umi 开发服务器使用，不影响生产静态站点。
  */
-const apiTarget = process.env.DEV_API_TARGET || 'http://127.0.0.1:8080';
+const apiTarget =
+  process.env.DEV_API_TARGET || 'http://47.111.225.144:8001';
 const mlflowTarget = process.env.DEV_MLFLOW_TARGET || 'http://127.0.0.1:5000';
 const proxy = {
   '/label-api/': {
@@ -11,7 +12,8 @@ const proxy = {
     changeOrigin: true,
   },
   '/api/labeling/': {
-    target: process.env.DEV_LABELING_TARGET || 'http://127.0.0.1:8082',
+    target:
+      process.env.DEV_LABELING_TARGET || 'http://47.111.225.144:8001',
     changeOrigin: true,
     // Preserve editor-ui / editor-assets paths and rewrite upstream cookies for same-origin launch.
     cookieDomainRewrite: '',

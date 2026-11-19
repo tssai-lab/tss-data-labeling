@@ -1,9 +1,11 @@
 import { history, Link, useLocation, useParams } from '@umijs/max';
+import { PlusOutlined } from '@ant-design/icons';
 import {
   Alert,
   App,
   Button,
   Card,
+  Empty,
   Input,
   Modal,
   Select,
@@ -36,7 +38,10 @@ import NativeOutcome from './NativeOutcome';
 import NativePublish, { type ReworkScope } from './NativePublish';
 import NativeReview from './NativeReview';
 import NativeSpecSettings from './NativeSpecSettings';
+import StatusBadge from './StatusBadge';
 import WorkspaceLayout from './WorkspaceLayout';
+import ProjectManagement from './ProjectManagement';
+import ProjectBreadcrumbs from './ProjectBreadcrumbs';
 
 const statusName: Record<string, string> = {
   DRAFT: '草稿',
@@ -47,6 +52,7 @@ const statusName: Record<string, string> = {
 };
 const taskName: Record<string, string> = {
   TIME_SERIES: '时序分析',
+  TIMESERIES_ANNOTATION: '时序标注',
   COMPUTER_VISION: '计算机视觉',
   IMAGE_CLASSIFICATION: '图片分类',
 };
@@ -61,6 +67,8 @@ export default function ServerWorkspace() {
     [reviews, setReviews] = useState<any[]>([]),
     [submissions, setSubmissions] = useState<any[]>([]),
     [snapshots, setSnapshots] = useState<any[]>([]);
+  const [projectQuery, setProjectQuery] = useState('');
+  const [projectStatus, setProjectStatus] = useState('ALL');
   const [taskTypes, setTaskTypes] = useState<
     { taskType: string; name: string }[]
   >([]);
@@ -202,6 +210,18 @@ export default function ServerWorkspace() {
   )
     return <LegacyProjects />;
   const current = project?.projectId === projectId ? project : undefined;
+  const filteredProjects = projects.filter((value) => {
+    const query = projectQuery.trim().toLocaleLowerCase();
+    const matchesQuery =
+      !query ||
+      `${value.name} ${value.description || ''}`
+        .toLocaleLowerCase()
+        .includes(query);
+    return (
+      matchesQuery &&
+      (projectStatus === 'ALL' || value.status === projectStatus)
+    );
+  });
   const version =
     current?.specVersions.find((value) => value.specVersionId === specId) ||
     current?.specVersions[0];
@@ -217,54 +237,42 @@ export default function ServerWorkspace() {
         className={styles.managerContent}
         style={{ width: '100%' }}
       >
-        <div className={styles.managerToolbar}>
-          <Space wrap>
-            <Link to="/labeling">我的项目</Link>
-            {current && (
-              <>
-                <span>/</span>
-                <Typography.Title level={4} style={{ margin: 0 }}>
-                  {current.name}
-                </Typography.Title>
-                <Tag>{statusName[current.status]}</Tag>
-              </>
-            )}
-          </Space>
-          <Space wrap>
-            {current && (
-              <>
-                <span>规范版本</span>
-                <Select
-                  aria-label="规范版本"
-                  style={{ minWidth: 160 }}
-                  value={version?.specVersionId}
-                  placeholder="尚未保存规范"
-                  onChange={(id) => {
-                    if (guard.current()) setSpecId(id);
-                  }}
-                  options={current.specVersions.map((value) => ({
-                    value: value.specVersionId,
-                    label: `第 ${value.versionNo} 版`,
-                  }))}
-                />
-              </>
-            )}
+        {!projectId ? (
+          <div className={styles.heading}>
+            <div>
+              <ProjectBreadcrumbs current="我的项目" />
+              <h1>数据标注工作空间</h1>
+              <p className={styles.headingHint}>
+                创建项目，选择任务模板；准备规范与数据后发布任务，完成标注后审核并导出成果。
+              </p>
+            </div>
             <Button
-              onClick={() => {
-                if (guard.current()) refresh();
-              }}
-              loading={loading}
+              type="primary"
+              icon={<PlusOutlined />}
+              disabled={loading || !taskTypes.length}
+              onClick={() => setCreating(true)}
             >
-              刷新
+              创建项目
             </Button>
-            <Link to="/labeling/tasks">
-              <Button>前往任务广场</Button>
-            </Link>
-            <Link to="/labeling/assignments">
-              <Button>我的任务</Button>
-            </Link>
-          </Space>
-        </div>
+          </div>
+        ) : (
+          <div className={styles.managerToolbar}>
+            <Space wrap>
+              <Link to="/labeling">我的项目</Link>
+              {current && (
+                <>
+                  <span>/</span>
+                  <Typography.Title level={4} style={{ margin: 0 }}>
+                    {current.name}
+                  </Typography.Title>
+                  <StatusBadge status={current.status}>
+                    {statusName[current.status]}
+                  </StatusBadge>
+                </>
+              )}
+            </Space>
+          </div>
+        )}
         {error && <Alert type="error" showIcon message={error} />}
         {loading && !current ? (
           <Spin tip="正在读取项目">
@@ -272,28 +280,55 @@ export default function ServerWorkspace() {
           </Spin>
         ) : !projectId ? (
           <>
-            <Typography.Text type="secondary">
-              需求方创建项目；所有角色均可领取标注。
-            </Typography.Text>
             <Card
               title="我创建的项目"
-              extra={
-                <Button
-                  type="primary"
-                  disabled={loading || !taskTypes.length}
-                  onClick={() => setCreating(true)}
-                >
-                  创建项目
-                </Button>
-              }
+              extra={<Button loading={loading} onClick={refresh}>刷新</Button>}
             >
+              <div className={styles.projectListTools}>
+                <Input
+                  allowClear
+                  aria-label="搜索项目名称或说明"
+                  placeholder="搜索项目名称或说明"
+                  value={projectQuery}
+                  onChange={(event) => setProjectQuery(event.target.value)}
+                />
+                <Select
+                  aria-label="按项目状态筛选"
+                  value={projectStatus}
+                  onChange={setProjectStatus}
+                  options={[
+                    { value: 'ALL', label: '全部状态' },
+                    ...['DRAFT', 'OPEN', 'PAUSED', 'ARCHIVED'].map((value) => ({
+                      value,
+                      label: statusName[value],
+                    })),
+                  ]}
+                />
+              </div>
+              <Typography.Text type="secondary" className={styles.projectListCount}>
+                已加载 {projects.length} 个项目 · 当前匹配 {filteredProjects.length} 个
+              </Typography.Text>
               <Table
                 rowKey="projectId"
-                dataSource={projects}
-                scroll={{ x: 700 }}
+                loading={loading}
+                dataSource={filteredProjects}
+                pagination={{ pageSize: 10, showSizeChanger: false }}
+                locale={{
+                  emptyText: (
+                    <Empty
+                      description={
+                        projects.length
+                          ? '没有符合条件的项目'
+                          : '还没有项目，创建一个项目开始标注'
+                      }
+                    />
+                  ),
+                }}
+                scroll={{ x: 1250 }}
                 columns={[
                   {
                     title: '项目名称',
+                    width: '22%',
                     render: (_, value) => (
                       <Link to={`/labeling/projects/${value.projectId}`}>
                         {value.name}
@@ -301,20 +336,103 @@ export default function ServerWorkspace() {
                     ),
                   },
                   {
-                    title: '任务类别',
+                    title: '说明',
+                    dataIndex: 'description',
+                    ellipsis: true,
+                    width: '18%',
+                    render: (value: string) => value || '—',
+                  },
+                  {
+                    title: '任务类型',
+                    width: '16%',
                     render: (_, value) =>
                       taskName[value.taskType] || value.taskType,
                   },
                   {
+                    title: '数据集',
+                    width: 190,
+                    render: (_, value) => {
+                      const sampleCount = value.sampleCount;
+                      const resourceCount = value.resourceCount;
+                      const importing = (value.activeImportCount ?? 0) > 0;
+                      const countsKnown =
+                        typeof sampleCount === 'number' &&
+                        Number.isFinite(sampleCount) &&
+                        sampleCount >= 0 &&
+                        typeof resourceCount === 'number' &&
+                        Number.isFinite(resourceCount) &&
+                        resourceCount >= 0;
+                      const datasetImported = value.datasetImported;
+                      const imported =
+                        datasetImported === true ||
+                        (datasetImported === undefined &&
+                          countsKnown &&
+                          (sampleCount > 0 || resourceCount > 0));
+                      const importStatus = importing
+                        ? '导入处理中'
+                        : datasetImported === false
+                          ? '未导入'
+                          : imported
+                            ? countsKnown
+                              ? '已导入'
+                              : '已导入，数量暂不可统计'
+                            : countsKnown
+                              ? '未导入'
+                              : '导入状态暂不可用';
+                      const importStatusColor = importing
+                        ? 'processing'
+                        : imported
+                          ? 'success'
+                          : 'default';
+                      return (
+                        <Space direction="vertical" size={2}>
+                          <Tag color={importStatusColor}>{importStatus}</Tag>
+                          {imported && countsKnown && (
+                            <Typography.Text type="secondary">
+                              {sampleCount} 个样本 · {resourceCount} 个关联资源
+                            </Typography.Text>
+                          )}
+                        </Space>
+                      );
+                    },
+                  },
+                  {
                     title: '状态',
+                    width: 100,
                     render: (_, value) => (
-                      <Tag>{statusName[value.status] || value.status}</Tag>
+                      <StatusBadge status={value.status}>
+                        {statusName[value.status] || value.status}
+                      </StatusBadge>
                     ),
                   },
                   {
                     title: '创建时间',
                     dataIndex: 'createdAt',
+                    width: 180,
                     render: formatDisplayDateTime,
+                  },
+                  {
+                    title: '项目操作',
+                    width: 220,
+                    render: (_, value) => (
+                      <Space size={12} wrap>
+                        <Link to={`/labeling/projects/${value.projectId}`}>
+                          {value.status === 'DRAFT' ? '准备并发布' : '审核结果'}
+                        </Link>
+                        {value.status !== 'DRAFT' && (
+                          <Link
+                            to={`/labeling/projects/${value.projectId}?panel=publish`}
+                          >
+                            任务发布
+                          </Link>
+                        )}
+                        <ProjectManagement
+                          project={value}
+                          onChanged={refresh}
+                          onDeleted={refresh}
+                        />
+                      </Space>
+                    ),
                   },
                 ]}
               />
@@ -370,17 +488,61 @@ export default function ServerWorkspace() {
               />
             )}
             <Tabs
+              className={styles.projectFlowTabs}
               activeKey={tab}
               onChange={(key) => {
                 if (guard.current())
                   history.push(`/labeling/projects/${projectId}?panel=${key}`);
               }}
               items={[
-                { key: 'data', label: `1 数据管理（${samples.length}）` },
-                { key: 'settings', label: '2 标注设置' },
-                { key: 'publish', label: '3 发布任务' },
-                { key: 'review', label: '4 核查与重标' },
-                { key: 'outcome', label: '5 成果与导出' },
+                {
+                  key: 'data',
+                  label: (
+                    <span className={styles.projectStepLabel}>
+                      <span className={styles.projectStepNumber}>01</span>
+                      <span>数据管理</span>
+                      <span className={styles.projectStepCount}>
+                        {samples.length}
+                      </span>
+                    </span>
+                  ),
+                },
+                {
+                  key: 'settings',
+                  label: (
+                    <span className={styles.projectStepLabel}>
+                      <span className={styles.projectStepNumber}>02</span>
+                      <span>标注设置</span>
+                    </span>
+                  ),
+                },
+                {
+                  key: 'publish',
+                  label: (
+                    <span className={styles.projectStepLabel}>
+                      <span className={styles.projectStepNumber}>03</span>
+                      <span>发布任务</span>
+                    </span>
+                  ),
+                },
+                {
+                  key: 'review',
+                  label: (
+                    <span className={styles.projectStepLabel}>
+                      <span className={styles.projectStepNumber}>04</span>
+                      <span>核查与重标</span>
+                    </span>
+                  ),
+                },
+                {
+                  key: 'outcome',
+                  label: (
+                    <span className={styles.projectStepLabel}>
+                      <span className={styles.projectStepNumber}>05</span>
+                      <span>成果与导出</span>
+                    </span>
+                  ),
+                },
               ]}
             />
             {tab === 'data' && (
@@ -417,6 +579,10 @@ export default function ServerWorkspace() {
                 project={current}
                 samples={samples}
                 version={version}
+                specVersions={current.specVersions}
+                onVersionChange={(id) => {
+                  if (guard.current()) setSpecId(id);
+                }}
                 suggestion={suggestion}
                 run={run}
                 refresh={(id) => {
@@ -436,6 +602,8 @@ export default function ServerWorkspace() {
                 project={current}
                 samples={samples}
                 version={version}
+                specVersions={current.specVersions}
+                onVersionChange={(id) => setSpecId(id)}
                 reviews={reviews}
                 rework={rework}
                 run={run}

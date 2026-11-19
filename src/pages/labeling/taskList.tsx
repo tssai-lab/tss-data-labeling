@@ -229,6 +229,12 @@ export default function TaskList() {
             mine
               ? [
                   {
+                    title: '任务名称',
+                    dataIndex: 'projectName',
+                    ellipsis: true,
+                    render: (value: string | undefined) => value || '未命名任务',
+                  },
+                  {
                     title: '领取编号',
                     dataIndex: 'assignmentId',
                     ellipsis: true,

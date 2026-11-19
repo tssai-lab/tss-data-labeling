@@ -19,6 +19,10 @@ export type Project = {
   revision: number;
   createdAt: string;
   specVersions?: SpecVersion[];
+  sampleCount?: number;
+  resourceCount?: number;
+  activeImportCount?: number;
+  datasetImported?: boolean;
 };
 export type Batch = {
   batchId: string;

@@ -13,4 +13,17 @@
 .sampleButton[aria-current='true'] { background: #edf3ff; border-color: #3765d9; }
 .sampleButton:focus-visible { outline: 2px solid #3765d9; outline-offset: 2px; }
 .instructions { white-space: pre-wrap; overflow-wrap: anywhere; }
+.specSettings { min-width: 0; }
+.specLead { display:flex; flex-direction:column; gap:4px; padding:12px 14px; border:1px solid #d9e5f4; border-radius:8px; background:#f5f8fc; }
+.specMetaGrid { display:grid; grid-template-columns:minmax(0,1fr) minmax(260px,.38fr); gap:16px; align-items:stretch; }
+.specField, .specCompletion { min-width:0; padding:16px; border:1px solid #dce5f0; border-radius:9px; background:#fff; }
+.specFieldHeading { display:flex; flex-direction:column; gap:4px; margin-bottom:10px; color:#173452; font-weight:600; span { color:#71839a; font-size:12px; font-weight:400; } }
+.specField :global(.ant-input), .specEditorSection :global(.ant-input) { border-radius:7px; }
+.specCompletion { display:flex; flex-direction:column; justify-content:center; gap:10px; background:#f8fafc; :global(.ant-checkbox-wrapper) { color:#173452; font-weight:500; } > :global(.ant-typography) { font-size:12px; } }
+.specEditorSection { min-width:0; padding:16px; border:1px solid #dce5f0; border-radius:9px; background:#f8fafc; }
+.specSectionHeader { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; margin-bottom:14px; > div:first-child { display:flex; flex-direction:column; gap:4px; } > div:first-child > :global(.ant-typography:first-child) { color:#173452; font-size:15px; } > div:first-child > :global(.ant-typography:last-child) { font-size:12px; } }
+.templateBrowserBackRow { margin: -4px 0 14px; }
+.specPreviewSelect { display:flex; align-items:center; gap:9px; flex:0 0 min(420px, 48%); label { flex:0 0 auto; color:#526a83; font-size:13px; } :global(.ant-select) { min-width:0; flex:1; } }
+.specEditorSection > :global(.ant-input), .specEditorSection > :global(.ant-alert), .specEditorSection > :global(.ant-spin-nested-loading) { background:#fff; border-radius:7px; }
 @media (max-width: 760px) { .workspace { padding: 0 8px 8px; } .sampleSelect { width: min(340px, calc(100vw - 40px)); } .editorPane { padding: 8px; } .editorFooter { margin: 12px -8px -8px; } }
+@media (max-width: 760px) { .specMetaGrid { grid-template-columns:1fr; } .specSectionHeader { flex-direction:column; } .specPreviewSelect { width:100%; flex-basis:auto; } }

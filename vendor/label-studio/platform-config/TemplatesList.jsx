@@ -48,7 +48,7 @@ const TemplatesInGroup = ({ templates, group, onSelectRecipe, isEdition }) => {
   );
 };
 
-export const TemplatesList = ({ selectedGroup, selectedRecipe, onCustomTemplate, onSelectGroup, onSelectRecipe }) => {
+export const TemplatesList = ({ selectedGroup, selectedRecipe, onBack, onCustomTemplate, onSelectGroup, onSelectRecipe }) => {
   const [groups, setGroups] = React.useState([]);
   const [templates, setTemplates] = React.useState();
   const [failure,setFailure]=React.useState(''),[reload,setReload]=React.useState(0);
@@ -92,18 +92,22 @@ export const TemplatesList = ({ selectedGroup, selectedRecipe, onCustomTemplate,
               <Arrow />
             </li>
           ))}
+          <li
+            role="button"
+            tabIndex={0}
+            onClick={onCustomTemplate}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                onCustomTemplate();
+              }
+            }}
+            className={listClass.elem("group").toClassName()}
+            aria-label="创建自定义配置"
+          >
+            自定义配置
+          </li>
         </ul>
-        <Button
-          type="button"
-          align="left"
-          look="string"
-          size="small"
-          onClick={onCustomTemplate}
-          className="w-full"
-          aria-label="创建自定义配置"
-        >
-          自定义配置
-        </Button>
       </aside>
       <main>
         {failure&&<div role="alert"><p>{failure}</p><Button onClick={()=>setReload(value=>value+1)}>重新加载模板</Button></div>}

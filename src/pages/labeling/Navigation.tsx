@@ -1,11 +1,8 @@
 import {
   AppstoreOutlined,
-  CheckSquareOutlined,
-  DownloadOutlined,
   ExportOutlined,
   FolderOutlined,
   MenuOutlined,
-  SendOutlined,
   TeamOutlined,
   UserOutlined,
 } from '@ant-design/icons';
@@ -13,56 +10,45 @@ import { history, Link, useLocation, useModel } from '@umijs/max';
 import { Button } from 'antd';
 import { type MouseEvent, useEffect, useState } from 'react';
 import { AvatarDropdown, AvatarName } from '@/components';
-import type { Project } from '@/services/labeling';
 import { tasks } from '@/services/labelingTasks';
 import styles from './index.less';
 import PlatformBrand from './PlatformBrand';
 
 export default function Navigation({
-  project,
   canLeave = () => true,
   beforeAccountAction,
 }: {
-  project?: Pick<Project, 'projectId' | 'name'>;
   canLeave?: () => boolean;
   beforeAccountAction?: () => boolean | Promise<boolean>;
 }) {
-  const { pathname, search } = useLocation();
+  const { pathname } = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [admin, setAdmin] = useState(false);
   useEffect(() => {
     const abort = new AbortController();
+    setAdmin(false);
     void tasks
       .me(abort.signal)
       .then((me) => {
-        if (!abort.signal.aborted) setAdmin(me.labelingAdmin);
+        if (!abort.signal.aborted) {
+          setAdmin(me.labelingAdmin);
+        }
       })
-      .catch(() => setAdmin(false));
+      .catch(() => {
+        if (!abort.signal.aborted) setAdmin(false);
+      });
     return () => abort.abort();
-  }, [pathname]);
+  }, []);
   const { initialState } = useModel('@@initialState');
   const user = initialState?.currentUser;
-  const routeProject = pathname.match(/^\/labeling\/projects\/([^/]+)/)?.[1];
-  const projectId = project?.projectId
-    ? encodeURIComponent(project.projectId)
-    : routeProject;
-  const data = projectId ? `/labeling/projects/${projectId}` : '/labeling';
-  const workbench = `${data}/workbench`;
-  const view = new URLSearchParams(search).get('view') || 'review';
-  const inWorkbench = pathname.endsWith('/workbench');
-  const active = inWorkbench
-    ? view === 'export'
-      ? 'export'
-      : 'review'
-    : pathname === '/labeling/admin/users'
+  const active =
+    pathname === '/labeling/admin/users'
       ? 'users'
       : pathname.startsWith('/labeling/assignments')
         ? 'mine'
         : pathname.startsWith('/labeling/tasks')
           ? 'pool'
-          : projectId
-            ? 'publish'
-            : 'projects';
+          : 'projects';
   const links = [
     {
       key: 'projects',
@@ -70,38 +56,12 @@ export default function Navigation({
       name: '我的项目',
       icon: <FolderOutlined />,
     },
-    ...(projectId
-      ? [
-          {
-            key: 'publish',
-            to: projectId ? `${data}?panel=publish` : '/labeling',
-            name: '任务发布',
-            icon: <SendOutlined />,
-          },
-        ]
-      : []),
     {
       key: 'pool',
       to: '/labeling/tasks',
       name: '任务广场',
       icon: <AppstoreOutlined />,
     },
-    ...(projectId
-      ? [
-          {
-            key: 'review',
-            to: workbench,
-            name: '结果工作台',
-            icon: <CheckSquareOutlined />,
-          },
-          {
-            key: 'export',
-            to: `${workbench}?view=export`,
-            name: '成果快照',
-            icon: <DownloadOutlined />,
-          },
-        ]
-      : []),
   ];
   function navigate(event: MouseEvent<HTMLAnchorElement>, to: string) {
     setMobileOpen(false);
@@ -140,12 +100,6 @@ export default function Navigation({
           },
         ]
       : []),
-    {
-      key: 'platforms',
-      to: '/platforms',
-      name: '切换平台',
-      icon: <ExportOutlined />,
-    },
   ];
   return (
     <>
@@ -159,43 +113,19 @@ export default function Navigation({
           aria-controls="labeling-workspace-navigation"
           onClick={() => setMobileOpen((open) => !open)}
         />
-        <PlatformBrand
-          onClick={(event: MouseEvent<HTMLAnchorElement>) =>
-            navigate(event, '/platforms')
-          }
-        />
-        <Link
-          to="/labeling"
-          className={styles.projectSwitcher}
-          onClick={(event: MouseEvent<HTMLAnchorElement>) =>
-            navigate(event, '/labeling')
-          }
-        >
-          项目：{project?.name || '选择项目'} <span aria-hidden="true">⌄</span>
-        </Link>
-        <div className={styles.headerAccount}>
-          {user && (
-            <AvatarDropdown beforeAction={beforeAccountAction}>
-              <button
-                className={styles.account}
-                type="button"
-                aria-label="当前登录用户"
-              >
-                <AvatarName />
-              </button>
-            </AvatarDropdown>
-          )}
-        </div>
+        <PlatformBrand interactive={false} />
       </header>
       <aside
         className={`${styles.sidebar} ${mobileOpen ? styles.sidebarOpen : ''}`}
         id="labeling-workspace-navigation"
       >
         <nav className={styles.navigation} aria-label="标注平台导航">
-          <div className={styles.navCaption}>工作区</div>
+          <div className={styles.sidebarBrand}>
+            <PlatformBrand interactive={false} />
+          </div>
           {[links, secondary].map((group, index) => (
             <div
-              className={styles.navGroup}
+              className={`${styles.navGroup} ${index === 1 ? styles.navGroupSecondary : ''}`}
               key={index === 0 ? 'primary' : 'secondary'}
             >
               {group.map((item) => (
@@ -214,6 +144,38 @@ export default function Navigation({
               ))}
             </div>
           ))}
+          <div className={styles.navFooter}>
+            {user && (
+              <AvatarDropdown
+                beforeAction={beforeAccountAction}
+                trigger={['click']}
+                placement="topRight"
+              >
+                <button
+                  className={styles.footerAccount}
+                  type="button"
+                  aria-label="当前登录用户"
+                >
+                  <span className={styles.footerAvatar} aria-hidden="true">
+                    <UserOutlined />
+                  </span>
+                  <AvatarName />
+                </button>
+              </AvatarDropdown>
+            )}
+            <Link
+              to="/platforms"
+              className={styles.navTab}
+              onClick={(event: MouseEvent<HTMLAnchorElement>) =>
+                navigate(event, '/platforms')
+              }
+            >
+              <span aria-hidden="true">
+                <ExportOutlined />
+              </span>
+              <span>切换平台</span>
+            </Link>
+          </div>
         </nav>
       </aside>
     </>

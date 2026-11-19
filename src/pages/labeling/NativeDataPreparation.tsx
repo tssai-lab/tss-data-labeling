@@ -2,19 +2,23 @@ import {
   Alert,
   Button,
   Card,
+  Checkbox,
   Drawer,
   Form,
+  Image,
   Input,
   Select,
   Space,
+  Spin,
   Table,
   Typography,
 } from 'antd';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { imageImportAdapter } from '@/services/archiveImport.mjs';
-import { labelingJson, operationKey, post } from '@/services/labeling';
+import { describeLabelingError, labelingBlob, labelingJson, operationKey, post } from '@/services/labeling';
 import {
   categoryOf,
+  collectPages,
   type InputResource,
   type NativeProject,
   type NativeSample,
@@ -22,6 +26,125 @@ import {
 } from '@/services/nativeLabeling';
 import ArchiveImportPanel from './ArchiveImportPanel';
 import NativeEditor from './NativeEditor';
+import styles from './index.less';
+
+type RawInputPreview = {
+  task?: { id: string; data: Record<string, unknown> };
+  resources?: {
+    field: string;
+    resourceId: string;
+    url: string;
+    mediaType: string;
+  }[];
+  sourcePath: string;
+  displayName?: string;
+  rawData?: unknown;
+  source?: { sourceTaskId?: string };
+};
+
+function RawSamplePreview({
+  projectId,
+  sampleId,
+  taskType,
+}: {
+  projectId: string;
+  sampleId: string;
+  taskType: string;
+}) {
+  const [preview, setPreview] = useState<RawInputPreview>();
+  const [images, setImages] = useState<{ field: string; url: string }[]>([]);
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const objectUrls: string[] = [];
+    setLoading(true);
+    setError('');
+    setPreview(undefined);
+    setImages([]);
+    const isTimeSeries = taskType === 'TIMESERIES_ANNOTATION';
+    const inputPath = isTimeSeries
+      ? `/projects/${projectId}/samples/${sampleId}/data`
+      : `/projects/${projectId}/samples/${sampleId}/native-input`;
+    void labelingJson<RawInputPreview>(
+      inputPath,
+      { signal: controller.signal },
+    )
+      .then(async (data) => {
+        if (isTimeSeries) {
+          setPreview({
+            sourcePath: data.source?.sourceTaskId || sampleId,
+            rawData: data,
+          });
+          return;
+        }
+        const imageResources = (data.resources || []).filter((resource) =>
+          resource.mediaType.startsWith('image/'),
+        );
+        const loadedImages = await Promise.all(
+          imageResources.map(async (resource) => {
+            const blob = await labelingBlob(
+              resource.url.replace('/api/labeling/v1', ''),
+              controller.signal,
+            );
+            const url = URL.createObjectURL(blob);
+            objectUrls.push(url);
+            return { field: resource.field, url };
+          }),
+        );
+        if (controller.signal.aborted) return;
+        setPreview({ ...data, rawData: data.task?.data || {} });
+        setImages(loadedImages);
+      })
+      .catch((reason: unknown) => {
+        if (!controller.signal.aborted)
+          setError(describeLabelingError(reason));
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
+      });
+
+    return () => {
+      controller.abort();
+      objectUrls.forEach(URL.revokeObjectURL);
+    };
+  }, [projectId, sampleId, taskType]);
+
+  if (error) return <Alert type="error" showIcon message={error} />;
+  if (loading || !preview)
+    return <Spin tip="正在读取原始样本"><div style={{ minHeight: 120 }} /></Spin>;
+
+  return (
+    <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+      <Alert
+        type="info"
+        showIcon
+        message="这是原始数据预览。保存标注规范后，才能选择样本并发布标注任务。"
+      />
+      <Typography.Text type="secondary">
+        {preview.displayName || preview.sourcePath}
+      </Typography.Text>
+      {images.map((image) => (
+        <div key={`${image.field}:${image.url}`}>
+          <Typography.Text strong>{image.field}</Typography.Text>
+          <div style={{ marginTop: 8 }}>
+            <Image src={image.url} alt={image.field} style={{ maxHeight: 520 }} />
+          </div>
+        </div>
+      ))}
+      <Typography.Title level={5}>原始样本数据</Typography.Title>
+      <pre style={{ maxHeight: 520, overflow: 'auto', whiteSpace: 'pre-wrap' }}>
+        {JSON.stringify(preview.rawData ?? preview.task?.data ?? {}, null, 2)}
+      </pre>
+      {(preview.resources || []).some((resource) => !resource.mediaType.startsWith('image/')) && (
+        <Typography.Text type="secondary">
+          此样本还引用了 {(preview.resources || []).filter((resource) => !resource.mediaType.startsWith('image/')).length} 个数据文件；字段和文件信息已包含在上方原始数据中。
+        </Typography.Text>
+      )}
+    </Space>
+  );
+}
 
 export default function NativeDataPreparation({
   project,
@@ -76,10 +199,41 @@ export default function NativeDataPreparation({
       ),
     [reviews, activeVersion?.specVersionId],
   );
-  const reviewState = (id: string) =>
-    ['ACCEPTED', 'NEEDS_REVISION'].includes(reviewHeads.get(id) || '')
-      ? reviewHeads.get(id)!
-      : 'UNREVIEWED';
+  const [resultSampleIds, setResultSampleIds] = useState<Set<string> | null>(null);
+  const [resultStatusError, setResultStatusError] = useState(false);
+  useEffect(() => {
+    const controller = new AbortController();
+    setResultStatusError(false);
+    if (!activeVersion) {
+      setResultSampleIds(new Set());
+      return () => controller.abort();
+    }
+    setResultSampleIds(null);
+    void collectPages<{ sampleId: string; hasResult: boolean }>(
+      `/projects/${project.projectId}/results?specVersionId=${encodeURIComponent(activeVersion.specVersionId)}`,
+      controller.signal,
+    )
+      .then((rows) => {
+        if (!controller.signal.aborted)
+          setResultSampleIds(
+            new Set(rows.filter((row) => row.hasResult).map((row) => row.sampleId)),
+          );
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) setResultStatusError(true);
+      });
+    return () => controller.abort();
+  }, [project.projectId, activeVersion?.specVersionId]);
+  const reviewState = (
+    id: string,
+  ): 'ACCEPTED' | 'NEEDS_REVISION' | 'UNREVIEWED' | 'NOT_ANNOTATED' | 'LOADING' | 'ERROR' => {
+    const reviewed = reviewHeads.get(id);
+    if (reviewed === 'ACCEPTED' || reviewed === 'NEEDS_REVISION')
+      return reviewed;
+    if (resultStatusError) return 'ERROR';
+    if (resultSampleIds === null) return 'LOADING';
+    return resultSampleIds.has(id) ? 'UNREVIEWED' : 'NOT_ANNOTATED';
+  };
   const visibleSamples = samples.filter(
     (row) =>
       `${row.metadata.displayName || ''} ${row.sourcePath}`
@@ -100,6 +254,39 @@ export default function NativeDataPreparation({
     previousCount.current = samples.length;
   }, [samples.length]);
   const [selectedImages, setSelectedImages] = useState<React.Key[]>([]);
+  const resourceSnapshot = useMemo(
+    () =>
+      JSON.stringify(
+        resources
+          .map((row) => ({
+            resourceId: row.resourceId,
+            contentSha256: row.contentSha256,
+            columns: row.metadata.columns || row.metadata.inputFields || [],
+            rowCount: row.metadata.rowCount || 0,
+            previewRows: row.metadata.previewRows || [],
+          }))
+          .sort((a, b) => a.resourceId.localeCompare(b.resourceId)),
+      ),
+    [resources],
+  );
+  const [confirmedResourceSnapshot, setConfirmedResourceSnapshot] =
+    useState('');
+  const parseConfirmed =
+    Boolean(resourceSnapshot) && confirmedResourceSnapshot === resourceSnapshot;
+  const totalParsedRows = resources.reduce(
+    (total, row) => total + (row.metadata.rowCount || 0),
+    0,
+  );
+  const parsedFields = Array.from(
+    new Set(
+      resources.flatMap(
+        (row) => row.metadata.columns || row.metadata.inputFields || [],
+      ),
+    ),
+  );
+  const imageResourceCount = resources.filter((row) =>
+    row.mediaType.startsWith('image/'),
+  ).length;
   const [mode, setMode] = useState(
     categoryOf(project) === 'Computer Vision' ? 'rows' : 'timeseries',
   );
@@ -161,7 +348,8 @@ export default function NativeDataPreparation({
             onChange={setStatus}
             style={{ width: 150 }}
             options={[
-              { value: 'ALL', label: '全部审核状态' },
+              { value: 'ALL', label: '全部状态' },
+              { value: 'NOT_ANNOTATED', label: '未标注' },
               { value: 'UNREVIEWED', label: '待核查' },
               { value: 'ACCEPTED', label: '已确认' },
               { value: 'NEEDS_REVISION', label: '需重标' },
@@ -228,7 +416,6 @@ export default function NativeDataPreparation({
                     whiteSpace: 'normal',
                     textAlign: 'left',
                   }}
-                  disabled={!activeVersion}
                   onClick={() => setPreviewId(row.sampleId)}
                 >
                   {row.metadata.displayName || row.sourcePath}
@@ -243,6 +430,9 @@ export default function NativeDataPreparation({
                   ACCEPTED: '已确认',
                   NEEDS_REVISION: '需重标',
                   UNREVIEWED: '待核查',
+                  NOT_ANNOTATED: '未标注',
+                  LOADING: '状态读取中',
+                  ERROR: '状态读取失败',
                 })[reviewState(row.sampleId)],
             },
             {
@@ -262,7 +452,6 @@ export default function NativeDataPreparation({
               render: (_, row) => (
                 <Button
                   type="link"
-                  disabled={!activeVersion}
                   onClick={() => setPreviewId(row.sampleId)}
                 >
                   预览
@@ -313,18 +502,26 @@ export default function NativeDataPreparation({
         onClose={() => setPreviewId('')}
         destroyOnClose
       >
-        {!!previewId && !!activeVersion && (
-          <NativeEditor
-            path={`/projects/${project.projectId}/samples/${previewId}/task?specVersionId=${activeVersion.specVersionId}`}
-            sampleId={previewId}
-            category={categoryOf(project)}
-          />
-        )}
+        {!!previewId &&
+          (activeVersion ? (
+            <NativeEditor
+              path={`/projects/${project.projectId}/samples/${previewId}/task?specVersionId=${activeVersion.specVersionId}`}
+              sampleId={previewId}
+              category={categoryOf(project)}
+            />
+          ) : (
+            <RawSamplePreview
+              projectId={project.projectId}
+              sampleId={previewId}
+              taskType={project.taskType}
+            />
+          ))}
       </Drawer>
       <Drawer
         title="导入与样本生成"
+        rootClassName={styles.importDrawer}
         open={importOpen}
-        width="min(960px, calc(100vw - 32px))"
+        width="min(1080px, calc(100vw - 24px))"
         onClose={() => {
           if (
             !busy &&
@@ -335,8 +532,8 @@ export default function NativeDataPreparation({
           }
         }}
       >
-        <Space direction="vertical" size="middle" style={{ width: '100%' }}>
-          <Card>
+        <div className={styles.importDrawerContent}>
+          <section className={styles.importUploadSection}>
             <ArchiveImportPanel
               scope={`native:${project.projectId}`}
               category={categoryOf(project)}
@@ -345,17 +542,40 @@ export default function NativeDataPreparation({
               locked={locked}
               onReady={refresh}
             />
-          </Card>
-          <Card title="已上传文件">
-            <Typography.Paragraph>
-              任务 JSON 直接导入。CSV
-              可作为一份曲线样本，或按行生成样本；只有需要分组或调整字段时才使用“高级整理”。
-            </Typography.Paragraph>
+          </section>
+          <Card
+            className={styles.importFilesCard}
+            title="文件解析预览"
+            extra={<Typography.Text type="secondary">{resources.length} 个文件</Typography.Text>}
+          >
+            <div className={styles.importSummary} aria-label="解析统计">
+              <div><strong>{imageResourceCount}</strong><span>图片文件</span></div>
+              <div><strong>{totalParsedRows}</strong><span>CSV 数据行</span></div>
+              <div><strong>{samples.length}</strong><span>标注样本</span></div>
+              <div className={styles.importFieldsSummary}>
+                <span>识别字段</span>
+                <strong>{parsedFields.length ? parsedFields.join(' · ') : '等待文件解析'}</strong>
+              </div>
+            </div>
+            <Typography.Text className={styles.importHint} type="secondary">
+              JSON 任务可直接导入；CSV 可按文件或按行生成样本，需要调整字段时再使用“高级整理”。
+            </Typography.Text>
             <Table
+              className={styles.importResourceTable}
               rowKey="resourceId"
               size="small"
               dataSource={resources}
               scroll={{ x: 700 }}
+              pagination={false}
+              locale={{
+                emptyText: (
+                  <div className={styles.importEmpty}>
+                    <span className={styles.importEmptyIcon} aria-hidden="true">ZIP</span>
+                    <strong>还没有解析文件</strong>
+                    <span>上传 ZIP 后，文件和样例会显示在这里。</span>
+                  </div>
+                ),
+              }}
               rowSelection={{
                 selectedRowKeys: selectedImages,
                 onChange: setSelectedImages,
@@ -377,7 +597,7 @@ export default function NativeDataPreparation({
                       <Space wrap>
                         {categoryOf(project) === 'Time Series Analysis' && (
                           <Button
-                            disabled={locked || busy}
+                            disabled={locked || !parseConfirmed || busy}
                             onClick={() =>
                               void run(async () => {
                                 const xml = new DOMParser().parseFromString(
@@ -416,7 +636,7 @@ export default function NativeDataPreparation({
                           </Button>
                         )}
                         <Button
-                          disabled={locked || busy}
+                          disabled={locked || !parseConfirmed || busy}
                           onClick={() =>
                             void run(async () => {
                               const columns = r.metadata.columns || [];
@@ -442,7 +662,7 @@ export default function NativeDataPreparation({
                         </Button>
                         <Button
                           aria-label="配置字段映射"
-                          disabled={locked || busy}
+                          disabled={locked || !parseConfirmed || busy}
                           onClick={() => {
                             setResourceId(r.resourceId);
                             setTime('');
@@ -467,10 +687,81 @@ export default function NativeDataPreparation({
                     ) : null,
                 },
               ]}
+              expandable={{
+                expandedRowRender: (resource) => {
+                  const fields =
+                    resource.metadata.columns ||
+                    resource.metadata.inputFields ||
+                    [];
+                  const rows = resource.metadata.previewRows || [];
+                  return (
+                    <Space direction="vertical" style={{ width: '100%' }}>
+                      <Typography.Text>
+                        识别字段：
+                        {fields.length ? fields.join('、') : '无字段信息'}
+                      </Typography.Text>
+                      {resource.mediaType.startsWith('image/') && (
+                        <ResourceImagePreview
+                          projectId={project.projectId}
+                          resource={resource}
+                        />
+                      )}
+                      {rows.length > 0 ? (
+                        <div style={{ overflowX: 'auto' }}>
+                          <Table
+                            size="small"
+                            pagination={false}
+                            dataSource={rows.map((values, index) => ({
+                              key: index,
+                              values,
+                            }))}
+                            columns={fields.map((name, index) => ({
+                              title: name,
+                              render: (_, row) => row.values[index] ?? '',
+                            }))}
+                          />
+                        </div>
+                      ) : !resource.mediaType.startsWith('image/') ? (
+                        <Typography.Text type="secondary">
+                          当前文件没有可展示的行样例。
+                        </Typography.Text>
+                      ) : null}
+                    </Space>
+                  );
+                },
+                rowExpandable: (resource) =>
+                  Boolean(
+                    resource.metadata.columns?.length ||
+                      resource.metadata.inputFields?.length ||
+                      resource.metadata.previewRows?.length ||
+                      resource.mediaType.startsWith('image/'),
+                  ),
+              }}
             />
+          </Card>
+          <div className={styles.importConfirmBar}>
+            <div>
+              <Checkbox
+                checked={parseConfirmed}
+                disabled={!resources.length || locked || busy}
+                onChange={(event) =>
+                  setConfirmedResourceSnapshot(
+                    event.target.checked ? resourceSnapshot : '',
+                  )
+                }
+              >
+                已核对文件、字段和样例
+              </Checkbox>
+              {!parseConfirmed && resources.length > 0 && (
+                <Typography.Text type="secondary">
+                  新增或替换文件后，请重新确认解析结果。
+                </Typography.Text>
+              )}
+            </div>
             {categoryOf(project) === 'Computer Vision' && (
               <Button
-                disabled={locked || !selectedImages.length || busy}
+                type="primary"
+                disabled={locked || !parseConfirmed || !selectedImages.length || busy}
                 onClick={() =>
                   void run(async () => {
                     const batches = new Map<string, InputResource[]>();
@@ -501,10 +792,12 @@ export default function NativeDataPreparation({
                   })
                 }
               >
-                将所选图片生成任务
+                生成所选图片样本{selectedImages.length ? `（${selectedImages.length}）` : ''}
               </Button>
             )}
-            {current && (
+          </div>
+          {current && (
+            <Card className={styles.importMappingCard} title="整理 CSV 字段">
               <Form
                 disabled={busy || locked}
                 layout="vertical"
@@ -610,7 +903,7 @@ export default function NativeDataPreparation({
                     <Button
                       type="primary"
                       loading={busy}
-                      disabled={locked || !Object.keys(columns).length}
+                      disabled={locked || !parseConfirmed || !Object.keys(columns).length}
                       onClick={() =>
                         void run(async () => {
                           if (
@@ -727,7 +1020,7 @@ export default function NativeDataPreparation({
                     <Button
                       type="primary"
                       loading={busy}
-                      disabled={locked || !time || !channels.length || !field}
+                      disabled={locked || !parseConfirmed || !time || !channels.length || !field}
                       style={{ marginTop: 14 }}
                       onClick={() =>
                         void run(async () => {
@@ -764,10 +1057,52 @@ export default function NativeDataPreparation({
                   </>
                 )}
               </Form>
-            )}
-          </Card>
-        </Space>
+            </Card>
+          )}
+        </div>
       </Drawer>
     </Space>
+  );
+}
+
+function ResourceImagePreview({
+  projectId,
+  resource,
+}: {
+  projectId: string;
+  resource: InputResource;
+}) {
+  const [url, setUrl] = useState('');
+  const [error, setError] = useState('');
+  useEffect(() => {
+    const abort = new AbortController();
+    let objectUrl = '';
+    setUrl('');
+    setError('');
+    void labelingBlob(
+      `/projects/${projectId}/input-resources/${resource.resourceId}/file`,
+      abort.signal,
+    )
+      .then((blob) => {
+        if (abort.signal.aborted) return;
+        objectUrl = URL.createObjectURL(blob);
+        setUrl(objectUrl);
+      })
+      .catch(() => {
+        if (!abort.signal.aborted) setError('图片预览加载失败');
+      });
+    return () => {
+      abort.abort();
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [projectId, resource.resourceId]);
+  if (error) return <Typography.Text type="danger">{error}</Typography.Text>;
+  if (!url) return <Typography.Text type="secondary">图片加载中…</Typography.Text>;
+  return (
+    <Image
+      src={url}
+      alt={resource.metadata.displayName || resource.sourcePath}
+      style={{ maxWidth: 320, maxHeight: 220, objectFit: 'contain' }}
+    />
   );
 }

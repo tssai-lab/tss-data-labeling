@@ -42,6 +42,7 @@ type Props = {
   completion?: CompletionRules;
   emptyReason?: string;
   onConfig?: (xml: string, templateId: string) => Promise<void>;
+  onTemplateBrowserMode?: (active: boolean) => void;
   templateId?: string;
   onGuard?: (guard: () => boolean) => void;
 };
@@ -60,6 +61,17 @@ export default function LocalEditor(props: Props) {
     editor = useRef<LsEditorInstance | null>(null),
     latest = useRef(props);
   latest.current = props;
+  useEffect(() => {
+    if (!props.onConfig || !props.onTemplateBrowserMode) return;
+    const handleMode = (event: Event) => {
+      const active = (event as CustomEvent<{ active?: boolean }>).detail?.active;
+      props.onTemplateBrowserMode?.(!!active);
+    };
+    window.addEventListener('labeling-template-browser-mode', handleMode);
+    return () => {
+      window.removeEventListener('labeling-template-browser-mode', handleMode);
+    };
+  }, [props.onConfig, props.onTemplateBrowserMode]);
   const snapshot = useRef('[]');
   const savingAction = useRef(false);
   const [error, setError] = useState(''),

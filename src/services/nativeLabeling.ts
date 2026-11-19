@@ -70,6 +70,7 @@ export type NativeSample = {
   metadata: {
     displayName?: string;
     columns?: string[];
+    inputFields?: string[];
     rowCount?: number;
     sizeBytes?: number;
     previewRows?: string[][];
@@ -82,7 +83,7 @@ export type InputResource = Omit<NativeSample, 'sampleId'> & {
 export const categoryOf = (project: {
   taskType: string;
 }): 'Time Series Analysis' | 'Computer Vision' =>
-  project.taskType === 'TIME_SERIES'
+  ['TIME_SERIES', 'TIMESERIES_ANNOTATION'].includes(project.taskType)
     ? 'Time Series Analysis'
     : 'Computer Vision';
 export async function collectPages<T>(
@@ -107,7 +108,7 @@ export async function collectPages<T>(
 }
 export const nativeDefaults = {
   TIME_SERIES:
-    '<View><TimeSeries name="series_view" value="$series" valueType="json" timeColumn="time"><Channel column="value"/></TimeSeries><Choices name="classification" toName="series_view" required="true"><Choice value="标签一"/><Choice value="标签二"/></Choices><TimeSeriesLabels name="events" toName="series_view"><Label value="事件"/></TimeSeriesLabels></View>',
+    '<View><TimeSeries name="series_view" value="$series" valueType="json" timeColumn="time"><Channel column="value"/></TimeSeries><Choices name="classification" toName="series_view" required="true"></Choices><TimeSeriesLabels name="events" toName="series_view"></TimeSeriesLabels></View>',
   COMPUTER_VISION:
-    '<View><Image name="image" value="$image"/><Choices name="classification" toName="image" required="true"><Choice value="标签一"/><Choice value="标签二"/></Choices></View>',
+    '<View><Image name="image" value="$image"/><Choices name="classification" toName="image" required="true"></Choices></View>',
 };

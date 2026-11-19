@@ -109,7 +109,7 @@ export class Template {
       const $label = this.$root.createElement(isChoices ? "Choice" : "Label");
       $label.setAttribute("value", label);
       // Display names are editable; serialized identities must stay stable.
-      $label.setAttribute("alias", `label_${crypto.randomUUID().replaceAll("-", "")}`);
+      $label.setAttribute("alias", createLabelAlias());
       if (!isChoices) $label.setAttribute("background", this.palette.next().value);
       control.appendChild($label);
     });
@@ -132,3 +132,19 @@ export class Template {
     this.render();
   }
 }
+const createLabelAlias = () => {
+  const cryptoApi = globalThis.crypto;
+  if (typeof cryptoApi?.randomUUID === 'function') {
+    return `label_${cryptoApi.randomUUID().replace(/-/g, '')}`;
+  }
+
+  if (typeof cryptoApi?.getRandomValues === 'function') {
+    const bytes = new Uint8Array(16);
+    cryptoApi.getRandomValues(bytes);
+    const suffix = Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+    return `label_${suffix}`;
+  }
+
+  return `label_${Date.now().toString(16)}${Math.random().toString(16).slice(2)}`;
+};
+

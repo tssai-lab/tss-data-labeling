@@ -6,11 +6,12 @@ import {
   Input,
   InputNumber,
   Radio,
+  Select,
   Space,
   Table,
   Typography,
 } from 'antd';
-import { useEffect, useId, useState } from 'react';
+import { useEffect, useId, useMemo, useState } from 'react';
 import { operationKey, post } from '@/services/labeling';
 import type {
   NativeProject,
@@ -27,6 +28,8 @@ export default function NativePublish({
   project,
   samples,
   version,
+  specVersions,
+  onVersionChange,
   reviews,
   rework,
   run,
@@ -38,6 +41,8 @@ export default function NativePublish({
   project: NativeProject;
   samples: NativeSample[];
   version?: NativeSpec;
+  specVersions: NativeSpec[];
+  onVersionChange: (specVersionId: string) => void;
   reviews: any[];
   rework?: ReworkScope;
   run: (action: () => Promise<void>) => Promise<void>;
@@ -65,6 +70,24 @@ export default function NativePublish({
       )
       .map((r) => r.sampleId),
   );
+  const selectedSamples = useMemo(
+    () =>
+      selected.map((id) => {
+        const sampleId = String(id);
+        return (
+          samples.find((sample) => sample.sampleId === sampleId) || {
+            sampleId,
+            batchId: '',
+            sourcePath: '样本详情暂未加载',
+            mediaType: '',
+            contentSha256: '',
+            metadata: { displayName: undefined },
+          }
+        );
+      }),
+    [selected, samples],
+  );
+  const specLabels = version?.labels.map((label) => label.name) || [];
   useEffect(() => {
     setSelected(rework?.ids || initialSelection || []);
     setPlan(undefined);
@@ -77,9 +100,21 @@ export default function NativePublish({
         {rework && (
           <Alert message="重新标注：上一轮结果作为参考，仍需明确完成并提交。" />
         )}
-        <Typography.Text>
-          当前规范：{version ? `第 ${version.versionNo} 版` : '尚未保存'}
-        </Typography.Text>
+        <Space wrap>
+          <Typography.Text>本轮使用规范</Typography.Text>
+          <Select
+            aria-label="选择本轮使用的规范版本"
+            style={{ minWidth: 160 }}
+            value={version?.specVersionId}
+            placeholder="尚未保存规范"
+            disabled={!specVersions.length || !!rework}
+            onChange={onVersionChange}
+            options={specVersions.map((item) => ({
+              value: item.specVersionId,
+              label: `第 ${item.versionNo} 版`,
+            }))}
+          />
+        </Space>
         <Radio.Group value="HUMAN">
           <Radio value="HUMAN">人工标注</Radio>
           <Radio value="AI" disabled>
@@ -224,10 +259,73 @@ export default function NativePublish({
         </Button>
         {plan && (
           <Card size="small" title="确认发布范围">
-            <p>
-              {plan.sampleCount} 个样本，{plan.packageSampleCounts.length}{' '}
-              个任务包，共 {plan.totalWorkload} 份标注工作。
-            </p>
+            <Alert
+              type="warning"
+              showIcon
+              message="请在发布前核对本轮内容"
+              description={`${plan.sampleCount} 个样本，${plan.packageSampleCounts.length} 个任务包，共 ${plan.totalWorkload} 份标注工作。确认后将按当前样本清单和规范版本发布。`}
+              style={{ marginBottom: 16 }}
+            />
+            <Typography.Title level={5}>本轮样本范围</Typography.Title>
+            <Table
+              size="small"
+              rowKey="sampleId"
+              dataSource={selectedSamples}
+              pagination={{ pageSize: 5, showTotal: (total) => `共 ${total} 个样本` }}
+              columns={[
+                {
+                  title: '样本名称',
+                  render: (_, sample) =>
+                    sample.metadata.displayName || sample.sourcePath,
+                },
+                {
+                  title: '样本 ID',
+                  render: (_, sample) => (
+                    <Typography.Text
+                      copyable={{ text: sample.sampleId }}
+                      title={sample.sampleId}
+                    >
+                      {sample.sampleId.slice(0, 12)}
+                    </Typography.Text>
+                  ),
+                },
+              ]}
+            />
+            <Typography.Title level={5} style={{ marginTop: 20 }}>
+              本轮标注规范
+            </Typography.Title>
+            <Space direction="vertical" style={{ width: '100%' }}>
+              <Typography.Text>
+                第 {version?.versionNo} 版 · 模板 {version?.editorConfig.templateId}（
+                {version?.editorConfig.templateVersion}）
+              </Typography.Text>
+              {version?.instructions && (
+                <Typography.Paragraph style={{ whiteSpace: 'pre-wrap' }}>
+                  {version.instructions}
+                </Typography.Paragraph>
+              )}
+              {specLabels.length > 0 && (
+                <Typography.Text>
+                  标签：{specLabels.join('、')}
+                </Typography.Text>
+              )}
+              <details>
+                <summary>查看完整标注配置</summary>
+                <pre
+                  style={{
+                    maxHeight: 260,
+                    overflow: 'auto',
+                    whiteSpace: 'pre-wrap',
+                    overflowWrap: 'anywhere',
+                    padding: 12,
+                    background: '#f5f7fa',
+                    borderRadius: 6,
+                  }}
+                >
+                  {version?.editorConfig.labelConfig || '暂无配置'}
+                </pre>
+              </details>
+            </Space>
             <Space>
               <Button
                 type="primary"

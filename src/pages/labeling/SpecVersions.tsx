@@ -167,6 +167,9 @@ export default function SpecVersions({
           onFinish={() => void save()}
           disabled={busy || !writable}
         >
+          <Typography.Paragraph type="secondary">
+            标签顺序只影响显示，不影响标注结果或优先级。
+          </Typography.Paragraph>
           {labels.map((label, i) => (
             <div key={label.id} style={{ marginBottom: 16 }}>
               <Input

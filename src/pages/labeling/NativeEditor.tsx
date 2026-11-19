@@ -23,6 +23,7 @@ export default function NativeEditor({
   onSave,
   config,
   onConfig,
+  onTemplateBrowserMode,
   templateId,
   emptyReason,
   onGuard,
@@ -49,6 +50,7 @@ export default function NativeEditor({
   ) => Promise<void>;
   config?: string;
   onConfig?: (xml: string, template: string) => Promise<void>;
+  onTemplateBrowserMode?: (active: boolean) => void;
   templateId?: string;
   emptyReason?: string;
   onGuard?: (guard: () => boolean) => void;
@@ -140,6 +142,7 @@ export default function NativeEditor({
           emptyReason={emptyReason}
           onSave={onSave}
           onConfig={onConfig}
+          onTemplateBrowserMode={onTemplateBrowserMode}
           templateId={templateId}
           onGuard={onGuard}
           reviewMode={reviewMode}

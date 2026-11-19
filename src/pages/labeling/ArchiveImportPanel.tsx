@@ -1,4 +1,5 @@
-import { Alert, Button, Progress, Space, Table, Tag } from 'antd';
+import { CloudUploadOutlined, FileZipOutlined } from '@ant-design/icons';
+import { Alert, Button, Progress, Space, Table, Tag, Typography } from 'antd';
 import { useEffect, useRef, useState } from 'react';
 import {
   ArchiveImportSession,
@@ -8,6 +9,7 @@ import {
   validateArchive,
 } from '@/services/archiveImport.mjs';
 import type { Batch } from '@/services/labeling';
+import styles from './index.less';
 
 const labels: Record<string, string> = {
   IDLE: '待选择文件',
@@ -83,18 +85,23 @@ export default function ArchiveImportPanel({
     return () => window.removeEventListener('beforeunload', block);
   }, [working]);
   return (
-    <section aria-label="ZIP 数据集导入">
-      <h3>上传 ZIP 数据集</h3>
-      <p>
-        {nativeTasks
-          ? '将任务 JSON 和它引用的 CSV、图片整理为 ZIP；原始数据也可先上传，再生成任务。'
-          : category === 'Computer Vision'
-            ? '将图片整理为 ZIP，支持单卷 ZIP64。'
-            : '时序数据集使用 ZIP 导入；当前能耗 ZIP 解析流程尚未接入。'}{' '}
-        {adapter
-          ? '文件分片上传，支持暂停后续传。'
-          : '当前可在本地检查 ZIP 文件头和大小。'}
-      </p>
+    <section className={styles.archiveImport} aria-label="ZIP 数据集导入">
+      <div className={styles.archiveIntro}>
+        <div className={styles.archiveIcon} aria-hidden="true">
+          <FileZipOutlined />
+        </div>
+        <div>
+          <Typography.Title level={5}>上传数据集</Typography.Title>
+          <Typography.Text type="secondary">
+            {nativeTasks
+              ? '选择包含任务 JSON、CSV 或图片的 ZIP 文件。'
+              : category === 'Computer Vision'
+                ? '选择包含图片的 ZIP 文件。'
+                : '选择时序数据 ZIP 文件。'}
+            {adapter ? ' 支持暂停后继续上传。' : ' 当前仅检查 ZIP 文件格式。'}
+          </Typography.Text>
+        </div>
+      </div>
       {!adapter && (
         <Alert
           type="info"
@@ -106,9 +113,9 @@ export default function ArchiveImportPanel({
       {(selectionError || state.error) && (
         <Alert type="error" message={selectionError || state.error} />
       )}
-      <label>
-        选择 ZIP
+      <label className={styles.archiveDropzone}>
         <input
+          className={styles.archiveFileInput}
           aria-label="选择 ZIP 数据集"
           type="file"
           accept=".zip,application/zip"
@@ -132,22 +139,34 @@ export default function ArchiveImportPanel({
             }
           }}
         />
+        <CloudUploadOutlined className={styles.archiveUploadIcon} />
+        <span className={styles.archiveDropTitle}>
+          {file ? file.name : '点击选择 ZIP 文件'}
+        </span>
+        <span className={styles.archiveDropHint}>
+          {file
+            ? `${(file.size / 1024 / 1024).toFixed(2)} MiB · 已选择，尚未上传`
+            : `ZIP 格式，最大 ${archivePolicy.maxArchiveBytes / 1024 / 1024 / 1024} GiB`}
+        </span>
+        <span className={styles.archiveChooseButton}>选择文件</span>
       </label>
-      <p>
-        {file
-          ? `${file.name} · ${(file.size / 1024 / 1024).toFixed(2)} MiB（已选择，不代表已上传）`
-          : engine.current?.receipt
-            ? '存在续传记录，请重新选择原 ZIP 文件。'
-            : `当前文件大小上限：${archivePolicy.maxArchiveBytes / 1024 / 1024 / 1024} GiB；实际上传以数据服务限制为准。`}
-      </p>
-      <Space wrap>
-        <Tag>
-          {state.stage === 'IDLE' && file
-            ? '已选择文件，尚未上传'
-            : labels[state.stage] || state.stage}
-        </Tag>
+      {engine.current?.receipt && !file && (
+        <Typography.Text className={styles.archiveResumeHint} type="secondary">
+          检测到未完成的上传记录。选择原 ZIP 文件后可继续。
+        </Typography.Text>
+      )}
+      <div className={styles.archiveControls}>
+        <div className={styles.archiveStatus}>
+          <span className={styles.archiveStatusDot} data-stage={state.stage} />
+          <span>
+            {state.stage === 'IDLE' && file
+              ? '已选择文件，尚未上传'
+              : labels[state.stage] || state.stage}
+          </span>
+        </div>
         <Button
           type="primary"
+          icon={<CloudUploadOutlined />}
           disabled={
             !adapter ||
             !file ||
@@ -199,7 +218,7 @@ export default function ArchiveImportPanel({
         >
           清除续传记录
         </Button>
-      </Space>
+      </div>
       {state.stage === 'HASHING' && (
         <Progress percent={state.hashProgress} aria-label="文件校验进度" />
       )}
@@ -208,11 +227,11 @@ export default function ArchiveImportPanel({
       )}
       {batch && (
         <>
-          <p>
+          <div className={styles.archiveBatchInfo}>
             已接收 {(batch.receivedBytes / 1024 / 1024).toFixed(2)} /{' '}
             {(batch.sizeBytes / 1024 / 1024).toFixed(2)} MiB · 已解析有效样本{' '}
             {batch.validSampleCount || 0} · 已记录错误 {batch.errorCount || 0}
-          </p>
+          </div>
           {batch.status === 'PROCESSING' && (
             <Alert message="文件已上传，正在解析。解析完成前不能用于发布。" />
           )}
@@ -227,18 +246,20 @@ export default function ArchiveImportPanel({
           {batch.status === 'FAILED' && !batch.originalComplete && (
             <Alert message="此批次已失败且原包未完整接收，不能重新解析。请清除续传记录后重新上传。" />
           )}
-          <Table
-            size="small"
-            rowKey={(_, i) => String(i)}
-            dataSource={batch.errors || []}
-            pagination={{ pageSize: 5 }}
-            locale={{ emptyText: '暂无解析错误' }}
-            columns={[
-              { title: '文件', dataIndex: 'sourcePath' },
-              { title: '错误原因', dataIndex: 'message' },
-              { title: '错误代码', dataIndex: 'code' },
-            ]}
-          />
+          {!!batch.errors?.length && (
+            <Table
+              size="small"
+              rowKey={(_, i) => String(i)}
+              dataSource={batch.errors || []}
+              pagination={{ pageSize: 5 }}
+              locale={{ emptyText: '暂无解析错误' }}
+              columns={[
+                { title: '文件', dataIndex: 'sourcePath' },
+                { title: '错误原因', dataIndex: 'message' },
+                { title: '错误代码', dataIndex: 'code' },
+              ]}
+            />
+          )}
         </>
       )}
     </section>
