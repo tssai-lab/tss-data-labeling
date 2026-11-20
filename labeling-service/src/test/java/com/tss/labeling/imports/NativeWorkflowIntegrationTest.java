@@ -25,6 +25,7 @@ class NativeWorkflowIntegrationTest {
     @DynamicPropertySource static void properties(DynamicPropertyRegistry properties){
         ImportIntegrationTest.properties(properties);
         properties.add("labeling.exports.worker-enabled",()->false);
+        properties.add("labeling.ls-source.python",()->System.getProperty("ls.test.python","python"));
     }
     @Autowired MockMvc mvc;@Autowired ObjectMapper json;@Autowired ImportWorker imports;@Autowired SourceExportWorker exports;
     static final String API="/api/labeling/v1";
@@ -34,8 +35,10 @@ class NativeWorkflowIntegrationTest {
             <TimeSeriesLabels name="events" toName="curve"><Label value="异常"/></TimeSeriesLabels></View>
             """;
     JsonNode postApi(String user,String path,Object body,int status) throws Exception {
-        String content=mvc.perform(post(API+path).header("Authorization","Bearer "+user).header("Idempotency-Key",UUID.randomUUID().toString())
-                .contentType("application/json").content(json.writeValueAsString(body))).andExpect(status().is(status)).andReturn().getResponse().getContentAsString();
+        var response=mvc.perform(post(API+path).header("Authorization","Bearer "+user).header("Idempotency-Key",UUID.randomUUID().toString())
+                .contentType("application/json").content(json.writeValueAsString(body))).andReturn().getResponse();
+        assertEquals(status,response.getStatus(),response.getContentAsString());
+        String content=response.getContentAsString();
         return json.readTree(content).path("data");
     }
     JsonNode getApi(String user,String path) throws Exception {

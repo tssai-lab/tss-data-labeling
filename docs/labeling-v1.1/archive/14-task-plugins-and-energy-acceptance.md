@@ -2,6 +2,8 @@
 
 日期：2026-11-11。性质：通用任务插件设计、工业能耗样例需求和本地实现记录。本文件补充01—05、10、13。平台目标是通过稳定的公共流程和受控插件支持多类数据与标注任务；图片分类是现有图像样例，工业能耗时序是首个时序插件及本次验收样例。能耗数据用于验证扩展能力，不意味着平台专为能耗数据建设；不能以一个样例通过代表所有格式均已支持。本文不代表已迁移共享数据库或部署服务器。
 
+实现状态更新：2026-11-20。可信插件注册机制、图片分类和站点日能耗插件已在本地工作区接通，实际接口、接入步骤、版本约束及测试证据以 [24-task-plugins.md](../08-task-plugins.md) 和 [04-api.md](04-api.md) 为准。本文继续保留业务需求与后续验收设计，不能将其中的全量数据、历史上下文、金标准和质量指标视为本轮已完成能力。
+
 标签、阈值、质检指标和行业交换格式的待确认项汇总在[工业能耗标注需求待确认问题](15-energy-requirements-questions.md)。未形成决议前，本文中的建议值不构成冻结规范。
 
 ## 1. 本次依据与核对结果
@@ -48,7 +50,7 @@
 
 新任务要接入六件事：输入如何解释、编辑界面、答案结构、服务端校验、完成规则、结果导出。在原语及导入器已经支持的情况下，新增任务主要是配置和页面；遇到新文件结构、坐标体系或业务判定，则补充对应适配器。不能承诺任何任务都只换一个页面就能接入。
 
-当前实现仍处于“用两个具体模板验证设计”的阶段：模板目录是代码内固定列表，导入器和结果校验部分按任务类型分支。下述插件声明是目标开发契约，不要误读为已经完成通用插件框架或支持任意数据格式。
+当前通过后端 `TaskPlugin` Bean 集合建立精确版本注册表，图片和站点日插件提供导入、输入读取、结果及完成校验和导出；前端登记同版本的可信编辑器。公共服务按注册表分派，项目、导入批次和规范固定版本。它是随代码发布的插件机制，不支持上传即执行或任意数据格式自动适配。
 
 ```mermaid
 flowchart TB
@@ -82,30 +84,35 @@ flowchart TB
 
 ## 4. 最小插件声明与开发契约
 
-以下是目标声明示例；ID为逻辑注册键，不是服务器路径或外部URL。
+以下是当前模板查询接口中一项的示例（省略 `schemaDigest`）；ID 为逻辑注册键，不是服务器路径或外部 URL。能力状态来自已注册实现，不由创建项目的用户填写。
 
 ```json
 {
-  "id": "energy-station-day",
-  "version": "1.0.0",
+  "templateId": "energy-station-day",
+  "templateVersion": "1.0.0",
+  "name": "站点日能耗标注",
   "taskType": "TIMESERIES_ANNOTATION",
   "inputFormat": "energy-station-day-input-v1",
   "inputSchemaId": "energy-station-day-input@1.0.0",
   "resultFormat": "annotation-record-v1",
   "resultSchemaId": "energy-station-day-result@1.0.0",
   "editorKey": "energy-station-day-editor",
-  "importerKeys": ["energy-wide-csv", "energy-hourly-daily-bundle"],
-  "resultTypes": ["choices", "timeseries_point", "timeseries_interval", "text"],
-  "validatorKey": "energy-station-day-validator",
-  "exporterKeys": ["annotation-jsonl-v1", "energy-station-day-csv-v1"],
-  "capabilities": {"references": true, "human": true},
-  "enabled": false
+  "defaultVersion": true,
+  "exportFormats": ["energy-jsonl-zip"],
+  "capabilities": {
+    "importer": true,
+    "inputReader": true,
+    "resultValidator": true,
+    "completion": true,
+    "exporter": true
+  },
+  "enabled": true
 }
 ```
 
-`enabled=false`表示尚未上线。输入校验、编辑器、结果校验、完成检查和导出全部就绪后才允许新建该类型项目；AI和投票另查各自能力，不因human=true而默认支持。API返回可用模板及能力，前端未知editorKey时阻止进入可写状态并提示版本不匹配。
+`enabled=false` 表示插件未启用或必要能力未就绪；前端还会检查本地版本和编辑器是否匹配。AI 和投票另查各自能力，不因模板可创建而默认支持。首次接入时应如实声明能力；不能把空实现标记为就绪。
 
-最小服务接口职责：
+下列名称表示职责划分，实际后端统一由 `TaskPlugin` 方法承载，并非需要再创建四套注册接口：
 
 - `ImportAdapter`：受控输入文件＋固定导入配置 → 样本描述及源定位。B负责，不能自己发布任务。
 - `TaskValidator`：固定规范＋样本输入＋结果 → 结构/语义错误；另检查是否满足正式提交条件。A统一调用，D提供领域校验逻辑。
@@ -240,15 +247,11 @@ flowchart TB
 
 ## 8. 质检、金标准与多人统计
 
-### 当前代码状态（2026-11-11）
+### 当前实现与未完成项（2026-11-20）
 
-以下代码是图片和能耗两个首批任务的具体实现/试验，不等于通用插件系统已完成；现有模板列表固定在代码中，解析和校验仍有任务类型分支。
+本地已实现能耗 ZIP 导入、结构化输入授权读取、曲线编辑器接入、`annotation-record-v1` 草稿与完成校验，以及需求方核查和 JSONL 成果导出。真实 2,000 条样例导入并发布成 200 个包、首包保存到导出的接口流程已测试通过。AI 执行队列、租约和结果接口存在，但真实模型接入和质量验收仍需单独完成。
 
-当前后端工作区状态：以下内容仅为需求和设计，刚才描述过的试验实现已从工作区代码中恢复；目前没有能耗导入器、模板查询控制器、结构化时序样本读取、`energy-annotation-v1` 结果校验或 V7 迁移文件。当前图片分类主流程仍保留。后续实现时，先在通用输入/结果格式与插件接口下实现能耗模板，不把这些字段加成所有任务的公共业务规则。
-
-计划中的能耗样例路径仍是：读取 `sample/station_day_tasks_2k.csv`，校验任务ID、日期和小时数据，为任务建立稳定样本ID；零值保留为0、空值保留为null；不导入外部已有标注。上述要求尚未落实为可调用接口或数据库迁移。
-
-本轮还没有实现能耗曲线前端插件、AI Agent 执行与队列、置信度分档审核、复核/结果集成、批次部分失败恢复、成果版本及标准格式导出。这些不能因导入和存草稿可用而标记完成。业务标签定义仍应根据第15号待确认问题确定，并由规范版本保存。
+当前能耗导入读取 `sample/station_day_tasks_2k.csv`，保留 0 与 null 的区别，不导入非空的外部标注列。完整小时/日资产、历史基线、金标准计划和一致性统计不因插件机制完成而自动具备。业务标签定义仍根据第15号待确认问题确定，并由规范版本保存。
 
 建议在2,000条样例上先试标2—3轮，再确定标签规范。原包没有已标注真值，500条金标准需要业务专家实际建立和确认，不能由规则输出自动生成。
 
@@ -277,11 +280,11 @@ Cohen's kappa首期计算同一样本、同一规范、两位独立标注员的�
 
 CSV包含多条授权范围时，旧`fileUrl`不能直接指向整份hourly.csv。新增按sample返回结构化数据的接口；后端按照冻结选择器取24点及允许的上下文。客户端不能自传station_key/日期读取任意别人的范围。owner下载完整原始资产另走owner授权接口。
 
-目标API扩展（均待实现）：
+当前接口与后续边界：
 
 - `GET /task-templates`：启用用户，返回已注册版本、输入/结果格式、编辑器键、实际可用能力；不包含代码、密钥、磁盘路径。
 - 创建项目新增明确模板选择；旧IMAGE_CLASSIFICATION请求继续映射图片模板。创建规范时固定模板及schema摘要；不允许客户端随意指定校验器。
-- 导入请求新增注册importerKey与验证过的导入配置；继续复用上传、幂等与进度，项目类型与导入器不匹配返回422。
+- 导入继续复用上传、幂等与进度，按项目/批次绑定的插件选择导入器；不接受客户端任意指定 importerKey。全量小时/日资产等新导入模式另行实现与验收。
 - `GET /assignments/{id}/samples/{sampleId}/data`：本人有效授权范围的输入；owner对应`GET /projects/{id}/samples/{sampleId}/data`；字段含inputFormat、schemaId、inputHash、payload及受限上下文。AI内部同样提供`GET /internal/labeling/v1/executions/{id}/samples/{sampleId}/data`，保留generation/租约验证。
 - items返回templateId/version、inputFormat、dataUrl，图片继续fileUrl；保存、提交、审核路径沿用04，按规范选择校验器；未知模板/格式422，历史版本不可用时明确报错。
 - 质检计划、金标准和统计API需A/B另补请求/响应及权限契约后实现；本次不捏造已存在的路由。
@@ -299,7 +302,7 @@ CSV包含多条授权范围时，旧`fileUrl`不能直接指向整份hourly.csv�
 
 上述为工作顺序，未擅自追加承诺日期。14的能耗需求覆盖旧“其他格式全部以后再做”的范围口径；已有人工按包、AI按范围、owner决策和不运行LS整套服务的规则不变。A把业务标签和质检阈值的待确认项带给老师/业务专家，不要求B/C/D猜测业务正确答案。
 
-当前源码具体起点：`ImportService`限制IMAGE_CLASSIFICATION，`ResultService.validate`和空草稿默认固定分类格式，V5约束只允许分类结果；`ProjectService`已有labels/editorConfig/schemaVersion，但还不是完整插件注册和服务端语义校验。A/B/D先从这些位置拆出最小适配边界，C改成按模板选择编辑器，不再全局写死图片。
+当前扩展入口为 `plugins/TaskPlugin.java` 和 `TaskPluginRegistry.java`；`ImportService`、`TaskInputService`、`TaskResultValidator` 和 `ExportService` 已按绑定插件分派。V24 增加项目/导入批次绑定，并移除草稿表写死的结果格式枚举。后续新增插件应注册实现并交付格式与流程测试；前端登记相同版本和编辑器，不再从上述旧起点重复改造。
 
 ## 11. 验收证据与格式标准化路线
 

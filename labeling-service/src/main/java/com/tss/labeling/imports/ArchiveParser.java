@@ -26,9 +26,9 @@ public class ArchiveParser {
         this.nativeInputs = nativeInputs;
     }
 
-    ParsedArchive parse(UUID batch) throws IOException { return parse(batch, "IMAGE_CLASSIFICATION"); }
+    public ParsedArchive parse(UUID batch) throws IOException { return parse(batch, "IMAGE_CLASSIFICATION"); }
 
-    ParsedArchive parse(UUID batch,String taskType) throws IOException {
+    public ParsedArchive parse(UUID batch,String taskType) throws IOException {
         ZipSafety.check(storage.archive(batch), settings);
         List<ParsedSample> samples = new ArrayList<>();
         List<ParsedSample> resources = new ArrayList<>();
@@ -169,7 +169,7 @@ public class ArchiveParser {
         final String code;
         InvalidImage(String code, String message) { super(message); this.code = code; }
     }
-    record FileError(String sourcePath, String code, String message) { }
-    record ParsedSample(UUID id, String sourcePath, String storageKey, String sha256, String mediaType, Map<String, Object> metadata) { }
-    record ParsedArchive(List<ParsedSample> samples, List<ParsedSample> resources, List<FileError> errors, int errorCount) { }
+    public record FileError(String sourcePath, String code, String message) { }
+    public record ParsedSample(UUID id, String sourcePath, String storageKey, String sha256, String mediaType, Map<String, Object> metadata) { }
+    public record ParsedArchive(List<ParsedSample> samples, List<ParsedSample> resources, List<FileError> errors, int errorCount) { }
 }

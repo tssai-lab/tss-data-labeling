@@ -8,9 +8,9 @@
 
 | 核对材料 | 当时发现 | 对当前设计的影响 |
 |---|---|---|
-| [统一用户实体](../../backend/src/main/java/com/tss/platform/module1/entity/User.java) | 统一用户使用单个roleId | 不把需求方/标注员作为互斥的统一账号角色；需求方由项目owner关系确定，标注管理权限单独保存 |
-| [用户接口](../../backend/src/main/java/com/tss/platform/module1/controller/UserController.java) 的current-user | 可取得用户ID、用户信息及现有角色 | 复用身份校验，不自动继承训练管理员权限，也不要求管理员批准创建标注项目 |
-| [手动演示服务](../../manual-label/app.py) | SQLite projects/assets，按owner隔离，每样本一份marks/revision | 不能直接把单人结果结构作为多人任务与提交结构；新平台独立保存领取和个人结果 |
+| [统一用户实体](../../../backend/src/main/java/com/tss/platform/module1/entity/User.java) | 统一用户使用单个roleId | 不把需求方/标注员作为互斥的统一账号角色；需求方由项目owner关系确定，标注管理权限单独保存 |
+| [用户接口](../../../backend/src/main/java/com/tss/platform/module1/controller/UserController.java) 的current-user | 可取得用户ID、用户信息及现有角色 | 复用身份校验，不自动继承训练管理员权限，也不要求管理员批准创建标注项目 |
+| [手动演示服务](../../../manual-label/app.py) | SQLite projects/assets，按owner隔离，每样本一份marks/revision | 不能直接把单人结果结构作为多人任务与提交结构；新平台独立保存领取和个人结果 |
 | `/home/leriger/tss-local-alignment-20261102/核对与恢复结果.md` | 已定位训练与手动演示服务、代码及运行产物 | 内部实施需隔离服务、存储和路由；此记录不作为甲方功能承诺 |
 
 2026-11-02核对记录的具体证据：GitHub demo提交为 `474c6ce4fc5622748df00b870bf044dd87b04d50`；从服务器当前生效前端构建提取的215个业务源码条目与该分支一致。本地训练后端运行JAR与当时服务器JAR同哈希，手动演示app.py与该分支同哈希。该结论仅适用于当时核对的文件和环境，不能推断此后版本一直一致，也不能替代训练/推理实际运行验收。

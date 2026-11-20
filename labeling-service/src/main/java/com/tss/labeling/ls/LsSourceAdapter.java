@@ -193,7 +193,8 @@ public class LsSourceAdapter {
             throw failure(HttpStatus.SERVICE_UNAVAILABLE, "LS_SOURCE_UNAVAILABLE", "LS 源码适配模块尚未配置");
         }
         json.writeValue(job.resolve("request.json").toFile(), request);
-        if(workerEnabled)return invokeWorker(job,"export".equals(request.path("action").asText()));
+        String action = request.path("action").asText();
+        if(workerEnabled)return invokeWorker(job,"export".equals(action),action);
         Path response = job.resolve("response.json");
         Process process = new ProcessBuilder(python, "-E", "-s", "-X", "utf8",
                 adapterRoot.resolve("adapter.py").toString(), job.toString())
@@ -213,7 +214,14 @@ public class LsSourceAdapter {
                 throw failure(HttpStatus.SERVICE_UNAVAILABLE, "LS_SOURCE_PROTOCOL", "LS 源码适配模块响应无效");
             }
             if (!payload.path("ok").asBoolean() || process.exitValue() != 0) {
-                throw failure(HttpStatus.UNPROCESSABLE_ENTITY, "LS_CONVERSION_REJECTED", "标注配置、结果或导出资源无效");
+                String message = payload.path("error").path("message").asText();
+                if (isConfigAction(action)) {
+                    throw failure(HttpStatus.UNPROCESSABLE_ENTITY, "INVALID_LABEL_CONFIG", configFriendly(message));
+                }
+                if ("validateResult".equals(action) || "validateTimes".equals(action)) {
+                    throw failure(HttpStatus.UNPROCESSABLE_ENTITY, "INVALID_LS_RESULT", friendly(message));
+                }
+                throw failure(HttpStatus.UNPROCESSABLE_ENTITY, "LS_CONVERSION_REJECTED", "标注结果或导出资源无效");
             }
             if (!payload.path("data").isObject()) {
                 throw failure(HttpStatus.SERVICE_UNAVAILABLE, "LS_SOURCE_PROTOCOL", "LS 源码适配模块响应无效");
@@ -272,7 +280,7 @@ public class LsSourceAdapter {
         }
     }
 
-    private JsonNode invokeWorker(Path job,boolean export) throws IOException,InterruptedException {
+    private JsonNode invokeWorker(Path job,boolean export,String action) throws IOException,InterruptedException {
         BlockingQueue<Worker> pool=export?exportWorkers:shortWorkers;Worker worker=pool.poll();
         if(worker==null||!worker.process.isAlive()){if(worker!=null)worker.close();worker=new Worker(export);}
         boolean healthy=false;
@@ -285,9 +293,27 @@ public class LsSourceAdapter {
             if(line==null||line.length()>2*1024*1024)throw new IOException("源码响应无效");
             JsonNode payload=json.readTree(line);if(payload.path("protocolVersion").asInt()!=1)throw new IOException("源码协议无效");
             healthy=true;
-            if(!payload.path("ok").asBoolean())throw failure(HttpStatus.UNPROCESSABLE_ENTITY,"INVALID_LS_RESULT",friendly(payload.path("error").path("message").asText()));
+            if(!payload.path("ok").asBoolean()) {
+                String message = payload.path("error").path("message").asText();
+                if (isConfigAction(action)) {
+                    throw failure(HttpStatus.UNPROCESSABLE_ENTITY, "INVALID_LABEL_CONFIG", configFriendly(message));
+                }
+                if ("validateResult".equals(action) || "validateTimes".equals(action)) {
+                    throw failure(HttpStatus.UNPROCESSABLE_ENTITY, "INVALID_LS_RESULT", friendly(message));
+                }
+                throw failure(HttpStatus.UNPROCESSABLE_ENTITY, "LS_CONVERSION_REJECTED", "标注结果或导出资源无效");
+            }
             return payload.path("data");
         }finally{if(healthy&&worker.process.isAlive())pool.offer(worker);else worker.close();}
+    }
+    private static boolean isConfigAction(String action) {
+        return "inspect".equals(action) || "validate".equals(action) || "sample".equals(action);
+    }
+    private String configFriendly(String message) {
+        if (message.contains("Choice") && message.contains("required property")) {
+            return "分类控件还没有标签选项，请先添加至少一个分类标签，再保存或预览。";
+        }
+        return "标注配置未通过校验：" + (message.length() > 200 ? message.substring(0, 200) : message);
     }
     private String friendly(String message){
         if(message.startsWith("REQUIRED_"))return "存在尚未完成的必填标注："+message.substring(message.indexOf(':')+1);

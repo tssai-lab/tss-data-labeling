@@ -34,16 +34,18 @@ public class AiService {
     private final OutcomeService outcomes;
     private final com.tss.labeling.review.ReferenceService references;
     private final com.tss.labeling.review.ResultScopeService scopes;
+    private final com.tss.labeling.plugins.TaskPluginRegistry plugins;
     private final int maxSamples;
 
     public AiService(JdbcTemplate db, ObjectMapper json, ImportStorage storage, OutcomeService outcomes,
             com.tss.labeling.tasks.TaskResultValidator validator,
             com.tss.labeling.review.ResultScopeService scopes,
             com.tss.labeling.review.ReferenceService references,
+            com.tss.labeling.plugins.TaskPluginRegistry plugins,
             @Value("${labeling.tasks.max-samples:10000}") int maxSamples) {
         this.db = db;
         this.json = json;
-        this.validator = validator;
+        this.validator = validator; this.plugins = plugins;
         this.storage = storage;
         this.outcomes = outcomes;
         this.scopes = scopes;
@@ -452,14 +454,9 @@ JOIN round_item ri ON ri.sample_id=s.id WHERE ri.round_id=? AND s.id=?
                 "SELECT sample_id FROM round_item WHERE round_id=? AND sample_id=?",
                 execution.get("round_id"),
                 sampleId);
-        return db.query(
-                "SELECT input_payload::text FROM sample_input WHERE sample_id=? AND project_id=?",
-                rs -> {
-                    if (!rs.next()) throw error(404, "RESOURCE_NOT_FOUND", "结构化输入不存在");
-                    return read(rs.getString(1));
-                },
-                sampleId,
-                execution.get("project_id"));
+        var spec=one("SELECT * FROM spec_version WHERE id=?",execution.get("spec_version_id"));
+        return plugins.frozen(spec).readInput((UUID)execution.get("project_id"),sampleId,
+                "/internal/labeling/v1/executions/"+id+"/samples/"+sampleId+"?generation="+generation);
     }
 
     @Transactional

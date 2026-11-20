@@ -2,7 +2,7 @@
 
 # 平台全流程、数据导入与 LS 源码差异
 
-最新布局、坐标、CSV 两种原版导入方式、XML 来源绑定、任务能力登记与本次清理，见 [源码行为与技术核查](../../../frontend/docs/ls-upstream-timeseries-behavior.md)。TaskRegistry 的版本化能力快照已实现，但不能等同于独立完备的输入/结果 schema 和跨版本迁移框架。编辑器与配置页帮助链接现指向平台同源帮助页。
+最新布局、坐标、CSV 两种原版导入方式、XML 来源绑定、任务能力登记与本次清理，见 [源码行为与技术核查](../../../../../tssaiplatformfrontend/Trunk/docs/ls-upstream-timeseries-behavior.md)。TaskRegistry 的版本化能力快照已实现，但不能等同于独立完备的输入/结果 schema 和跨版本迁移框架。编辑器与配置页帮助链接现指向平台同源帮助页。
 
 更新：2026-11-15。以当前本地代码和测试为准。
 

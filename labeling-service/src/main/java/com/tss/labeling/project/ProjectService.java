@@ -35,11 +35,12 @@ public class ProjectService {
     private final JdbcTemplate jdbcTemplate;
     private final ObjectMapper objectMapper;
     private final TaskRegistry registry;
+    private final com.tss.labeling.plugins.TaskPluginRegistry plugins;
 
-    public ProjectService(JdbcTemplate jdbcTemplate, ObjectMapper objectMapper, TaskRegistry registry) {
+    public ProjectService(JdbcTemplate jdbcTemplate, ObjectMapper objectMapper, TaskRegistry registry, com.tss.labeling.plugins.TaskPluginRegistry plugins) {
         this.jdbcTemplate = jdbcTemplate;
         this.objectMapper = objectMapper;
-        this.registry = registry;
+        this.registry = registry; this.plugins = plugins;
     }
 
     @Transactional
@@ -49,8 +50,7 @@ public class ProjectService {
             String idempotencyKey
     ) {
         String taskType = normalizeTaskType(request.taskType());
-        com.tss.labeling.tasks.TaskTemplates.validate(
-                taskType, request.templateId(), request.templateVersion());
+        var plugin = plugins.forCreation(taskType, request.templateId(), request.templateVersion());
         UUID projectId = UUID.randomUUID();
         String requestHash = hash(toJson(objectMapper.valueToTree(request)));
         boolean created = beginIdempotency(
@@ -61,10 +61,10 @@ public class ProjectService {
                     actor.actorId(), "POST:/projects", idempotencyKey), actor.actorId());
         }
         jdbcTemplate.update("""
-                INSERT INTO project (id, owner_actor_id, name, description, task_type)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO project (id, owner_actor_id, name, description, task_type, template_id, template_version)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """, projectId, actor.actorId(), request.name().trim(),
-                blankToNull(request.description()), taskType);
+                blankToNull(request.description()), taskType, plugin.descriptor().id(), plugin.descriptor().version());
         return findProject(projectId, actor.actorId());
     }
 
@@ -89,7 +89,7 @@ public class ProjectService {
 
         List<ProjectRow> rows = jdbcTemplate.query(
                         """
-                        SELECT id, owner_actor_id, name, description, task_type, status,
+                        SELECT id, owner_actor_id, name, description, task_type, status, template_id, template_version,
                                revision, created_at, updated_at,
                                (SELECT count(*) FROM sample s WHERE s.project_id=project.id) AS "sampleCount",
                                (SELECT count(*) FROM input_resource r WHERE r.project_id=project.id) AS "resourceCount",
@@ -130,8 +130,18 @@ public class ProjectService {
     ) {
         UUID projectId = parseId(projectIdValue);
         String taskType = normalizeTaskType(request.taskType());
-        com.tss.labeling.tasks.TaskTemplates.validate(
-                taskType, request.templateId(), request.templateVersion());
+        var currentBindings = jdbcTemplate.queryForList("SELECT template_id,template_version FROM project WHERE id=? AND owner_actor_id=? AND deleted_at IS NULL",projectId,actor.actorId());
+        if (currentBindings.isEmpty()) throw new ResponseStatusException(HttpStatus.NOT_FOUND);
+        var currentPlugin = currentBindings.get(0);
+        var plugin = plugins.forCreation(taskType,
+                request.templateId() == null && request.templateVersion() == null ? (String)currentPlugin.get("template_id") : request.templateId(),
+                request.templateId() == null && request.templateVersion() == null ? (String)currentPlugin.get("template_version") : request.templateVersion());
+        var previousPlugin = plugins.resolve(taskType,(String)currentPlugin.get("template_id"),(String)currentPlugin.get("template_version"));
+        if ((!previousPlugin.descriptor().inputSchemaId().equals(plugin.descriptor().inputSchemaId()) || !previousPlugin.descriptor().inputFormat().equals(plugin.descriptor().inputFormat())) &&
+                Boolean.TRUE.equals(jdbcTemplate.queryForObject("SELECT EXISTS(SELECT 1 FROM sample WHERE project_id=?) OR EXISTS(SELECT 1 FROM import_batch WHERE project_id=?)",Boolean.class,projectId,projectId)))
+            throw com.tss.labeling.common.WorkflowStore.error(422,"PLUGIN_INPUT_MIGRATION_REQUIRED","插件输入格式不兼容，请新建项目或先迁移数据");
+        if (TaskRegistry.FORMAT.equals(plugin.descriptor().resultFormat()) && !TaskRegistry.FORMAT.equals(request.schemaVersion()))
+            throw com.tss.labeling.common.WorkflowStore.error(422,"TEMPLATE_MISMATCH","通用标注插件需要原生 LS 规范");
         if (!TaskRegistry.FORMAT.equals(request.schemaVersion())) validateLabels(request.labels());
         else if (request.labels() == null || !request.labels().isArray())
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST);
@@ -173,7 +183,7 @@ FROM spec_version WHERE id = ? AND project_id = ?
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST);
         }
 
-        editorConfig = registry.freeze(taskType, request.schemaVersion(), editorConfig);
+        if (TaskRegistry.FORMAT.equals(request.schemaVersion())) editorConfig = registry.freeze(taskType, request.schemaVersion(), editorConfig);
         Integer versionNo = jdbcTemplate.queryForObject(
                         "SELECT COALESCE(MAX(version_no), 0) + 1 FROM spec_version WHERE project_id"
                             + " = ?",
@@ -188,7 +198,7 @@ VALUES (?, ?, ?, ?, CAST(? AS jsonb), ?, CAST(? AS jsonb), ?)
 """, specVersionId, projectId, versionNo, taskType,
                 toJson(request.labels()), blankToEmpty(request.instructions()),
                 toJson(editorConfig), request.schemaVersion().trim());
-        var template = com.tss.labeling.tasks.TaskTemplates.forType(taskType);
+        var template = plugin.descriptor().binding();
         jdbcTemplate.update(
                 "UPDATE spec_version SET"
                     + " template_id=?,template_version=?,input_schema_id=?,result_schema_id=?,schema_digest=?"
@@ -197,8 +207,9 @@ VALUES (?, ?, ?, ?, CAST(? AS jsonb), ?, CAST(? AS jsonb), ?)
                 template.get("templateVersion"),
                 template.get("inputSchemaId"),
                 template.get("resultSchemaId"),
-                com.tss.labeling.tasks.TaskTemplates.digest(taskType),
+                plugin.descriptor().digest(),
                 specVersionId);
+        jdbcTemplate.update("UPDATE project SET template_id=?,template_version=? WHERE id=?",plugin.descriptor().id(),plugin.descriptor().version(),projectId);
         return jdbcTemplate.queryForObject(
                 "SELECT * FROM spec_version WHERE id=? AND project_id=?", (result, rowNumber) -> specVersion(result), specVersionId, projectId);
     }
@@ -206,7 +217,7 @@ VALUES (?, ?, ?, ?, CAST(? AS jsonb), ?, CAST(? AS jsonb), ?)
     private ProjectView findProject(UUID projectId, UUID ownerActorId) {
         ProjectRow project = jdbcTemplate.query(
                         """
-                        SELECT id, owner_actor_id, name, description, task_type, status,
+                        SELECT id, owner_actor_id, name, description, task_type, status, template_id, template_version,
                                revision, created_at, updated_at,
                                (SELECT count(*) FROM sample s WHERE s.project_id=project.id) AS "sampleCount",
                                (SELECT count(*) FROM input_resource r WHERE r.project_id=project.id) AS "resourceCount",
@@ -239,7 +250,7 @@ FROM spec_version WHERE project_id = ? ORDER BY version_no DESC
                 project.revision(),
                 project.createdAt(),
                 project.updatedAt(),
-                specs
+                specs, project.templateId(), project.templateVersion()
         );
     }
 
@@ -257,7 +268,7 @@ FROM spec_version WHERE project_id = ? ORDER BY version_no DESC
                 result.getLong("sampleCount"),
                 result.getLong("resourceCount"),
                 result.getLong("activeImportCount"),
-                result.getBoolean("datasetImported")
+                result.getBoolean("datasetImported"), result.getString("template_id"), result.getString("template_version")
         );
     }
 
@@ -293,7 +304,6 @@ FROM spec_version WHERE project_id = ? ORDER BY version_no DESC
         if (!TASK_TYPE_PATTERN.matcher(normalized).matches()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST);
         }
-        TaskRegistry.requireType(normalized);
         return normalized;
     }
 
@@ -456,7 +466,7 @@ ON CONFLICT (actor_id, operation, idempotency_key) DO NOTHING
             long revision,
             Instant createdAt,
             Instant updatedAt,
-            List<SpecVersionView> specVersions
+            List<SpecVersionView> specVersions, String templateId, String templateVersion
     ) {
     }
 
@@ -491,7 +501,7 @@ ON CONFLICT (actor_id, operation, idempotency_key) DO NOTHING
             long sampleCount,
             long resourceCount,
             long activeImportCount,
-            boolean datasetImported
+            boolean datasetImported, String templateId, String templateVersion
     ) {
     }
 
