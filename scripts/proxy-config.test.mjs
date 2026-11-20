@@ -14,11 +14,11 @@ function loadDevProxy(env = {}) {
   return exports.default;
 }
 
-test('所有开发环境默认连接本机，不使用环境名选择真实服务器', () => {
+test('所有开发环境使用已配置的共享网关，环境名称不改变目标', () => {
   const config = loadDevProxy({ DEV_SERVER: 'master' });
   for (const mode of ['dev', 'test', 'pre', 'prod']) {
-    assert.equal(config[mode]['/api/'].target, 'http://127.0.0.1:8080');
-    assert.equal(config[mode]['/v3/api-docs'].target, 'http://127.0.0.1:8080');
+    assert.equal(config[mode]['/api/'].target, 'http://47.111.225.144:8001');
+    assert.equal(config[mode]['/v3/api-docs'].target, 'http://47.111.225.144:8001');
     assert.equal(config[mode]['/mlflow-api/'].target, 'http://127.0.0.1:5000');
     assert.equal(config[mode]['/mlflow-api/'].pathRewrite['^/mlflow-api'], '/ajax-api');
   }

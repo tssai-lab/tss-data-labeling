@@ -9,10 +9,12 @@ export default function WorkspaceLayout({
   beforeAccountAction,
   workbench = false,
   focusMode = false,
+  project,
 }: PropsWithChildren<{
   beforeAccountAction?: () => boolean | Promise<boolean>;
   workbench?: boolean;
   focusMode?: boolean;
+  project?: { projectId: string; name?: string };
 }>) {
   return (
     <ConfigProvider theme={workspaceTheme}>
@@ -23,7 +25,7 @@ export default function WorkspaceLayout({
         <a className={styles.skipLink} href="#labeling-main-content">
           跳转到主要内容
         </a>
-        <Navigation beforeAccountAction={beforeAccountAction} />
+        <Navigation beforeAccountAction={beforeAccountAction} project={project} />
         <section
           id="labeling-main-content"
           tabIndex={-1}

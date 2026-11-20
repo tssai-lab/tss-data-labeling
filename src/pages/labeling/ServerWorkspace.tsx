@@ -6,6 +6,7 @@ import {
   Button,
   Card,
   Empty,
+  Form,
   Input,
   Modal,
   Select,
@@ -31,12 +32,13 @@ import {
   type NativeSample,
 } from '@/services/nativeLabeling';
 import { formatDisplayDateTime } from '@/utils/formatDateTime';
-import LegacyProjects from './index';
+import { normalizeWorkspaceProject, projectPanel } from '@/services/projectCompatibility.mjs';
 import styles from './index.less';
 import NativeDataPreparation from './NativeDataPreparation';
 import NativeOutcome from './NativeOutcome';
 import NativePublish, { type ReworkScope } from './NativePublish';
 import NativeReview from './NativeReview';
+import NativeAi, { type DemoResult } from './NativeAi';
 import NativeSpecSettings from './NativeSpecSettings';
 import StatusBadge from './StatusBadge';
 import WorkspaceLayout from './WorkspaceLayout';
@@ -67,6 +69,7 @@ export default function ServerWorkspace() {
     [reviews, setReviews] = useState<any[]>([]),
     [submissions, setSubmissions] = useState<any[]>([]),
     [snapshots, setSnapshots] = useState<any[]>([]);
+  const [aiSession, setAiSession] = useState<{ projectId: string; samples: NativeSample[]; version: NativeProject['specVersions'][number]; config: { modelId: string; instructions: string }; results: DemoResult[] }>();
   const [projectQuery, setProjectQuery] = useState('');
   const [projectStatus, setProjectStatus] = useState('ALL');
   const [taskTypes, setTaskTypes] = useState<
@@ -78,12 +81,14 @@ export default function ServerWorkspace() {
     [error, setError] = useState(''),
     [creating, setCreating] = useState(false),
     [name, setName] = useState(''),
-    [type, setType] = useState('TIME_SERIES'),
+    [description, setDescription] = useState(''),
+    [type, setType] = useState(''),
     [tab, setTab] = useState('data'),
     [specId, setSpecId] = useState(''),
     [suggestion, setSuggestion] = useState(''),
     [rework, setRework] = useState<ReworkScope>();
   const [publishSelection, setPublishSelection] = useState<string[]>([]);
+  const [publishMode, setPublishMode] = useState<'HUMAN' | 'AI'>('HUMAN');
   const guard = useRef<() => boolean>(() => true),
     saving = useRef(false),
     internalNavigation = useRef(false);
@@ -95,18 +100,9 @@ export default function ServerWorkspace() {
   const refresh = useCallback(() => setReload((value) => value + 1), []);
   useEffect(() => {
     const query = new URLSearchParams(location.search);
-    setTab(
-      location.pathname.endsWith('/workbench')
-        ? query.get('view') === 'export'
-          ? 'outcome'
-          : 'review'
-        : query.get('panel') === 'publish'
-          ? 'publish'
-          : query.get('panel') || 'data',
-    );
+    setTab(projectPanel(location.pathname, query));
   }, [location.pathname, location.search]);
   useEffect(() => {
-    if (project?.taskType === 'IMAGE_CLASSIFICATION') return;
     const unblock = history.block((transition) => {
       if (internalNavigation.current || (!saving.current && guard.current())) {
         unblock();
@@ -116,6 +112,8 @@ export default function ServerWorkspace() {
     return unblock;
   }, [projectId, project?.taskType, location.pathname, location.search]);
   useEffect(() => {
+    setAiSession(undefined);
+    setPublishMode('HUMAN');
     setSpecId('');
     setSuggestion('');
     setRework(undefined);
@@ -149,10 +147,6 @@ export default function ServerWorkspace() {
         `/projects/${projectId}`,
         { signal: abort.signal },
       );
-      if (detail.taskType === 'IMAGE_CLASSIFICATION') {
-        if (!abort.signal.aborted) setProject(detail);
-        return;
-      }
       const values = await Promise.all([
         collectPages<NativeSample>(
           `/projects/${projectId}/input-samples`,
@@ -173,7 +167,7 @@ export default function ServerWorkspace() {
         ),
       ]);
       if (!abort.signal.aborted) {
-        setProject(detail);
+        setProject(normalizeWorkspaceProject(detail));
         setSamples(values[0]);
         setResources(values[1]);
         setReviews(values[2]);
@@ -203,12 +197,6 @@ export default function ServerWorkspace() {
       setBusy(false);
     }
   };
-  if (
-    projectId &&
-    project?.projectId === projectId &&
-    project.taskType === 'IMAGE_CLASSIFICATION'
-  )
-    return <LegacyProjects />;
   const current = project?.projectId === projectId ? project : undefined;
   const filteredProjects = projects.filter((value) => {
     const query = projectQuery.trim().toLocaleLowerCase();
@@ -250,7 +238,12 @@ export default function ServerWorkspace() {
               type="primary"
               icon={<PlusOutlined />}
               disabled={loading || !taskTypes.length}
-              onClick={() => setCreating(true)}
+              onClick={() => {
+                setName('');
+                setDescription('');
+                setType('');
+                setCreating(true);
+              }}
             >
               创建项目
             </Button>
@@ -379,14 +372,14 @@ export default function ServerWorkspace() {
                             : countsKnown
                               ? '未导入'
                               : '导入状态暂不可用';
-                      const importStatusColor = importing
-                        ? 'processing'
-                        : imported
-                          ? 'success'
-                          : 'default';
                       return (
                         <Space direction="vertical" size={2}>
-                          <Tag color={importStatusColor}>{importStatus}</Tag>
+                          <Tag
+                            color={importing ? 'processing' : undefined}
+                            className={imported ? styles.datasetImportedTag : undefined}
+                          >
+                            {importStatus}
+                          </Tag>
                           {imported && countsKnown && (
                             <Typography.Text type="secondary">
                               {sampleCount} 个样本 · {resourceCount} 个关联资源
@@ -443,40 +436,63 @@ export default function ServerWorkspace() {
               onCancel={() => setCreating(false)}
               okText="创建"
               confirmLoading={busy}
+              okButtonProps={{ disabled: !name.trim() || !type }}
               onOk={() =>
                 void run(async () => {
                   if (!name.trim()) throw Error('请输入项目名称');
+                  if (!type) throw Error('请选择任务类型');
                   const created = await post<NativeProject>(
                     '/projects',
-                    { name: name.trim(), taskType: type },
+                    {
+                      name: name.trim(),
+                      description: description.trim(),
+                      taskType: type,
+                    },
                     operationKey(),
                   );
                   setCreating(false);
                   setName('');
+                  setDescription('');
                   navigate(`/labeling/projects/${created.projectId}`);
                 })
               }
             >
-              <Space direction="vertical" style={{ width: '100%' }}>
+              <Form layout="vertical" requiredMark style={{ width: '100%' }}>
                 {error && <Alert type="error" message={error} />}
-                <Input
-                  aria-label="项目名称"
-                  placeholder="项目名称"
-                  value={name}
-                  maxLength={120}
-                  onChange={(e) => setName(e.target.value)}
-                />
-                <Select
-                  aria-label="任务类别"
-                  style={{ width: '100%' }}
-                  value={type}
-                  onChange={setType}
-                  options={taskTypes.map((value) => ({
-                    value: value.taskType,
-                    label: value.name,
-                  }))}
-                />
-              </Space>
+                <Form.Item label="项目名称" required>
+                  <Input
+                    aria-label="项目名称"
+                    placeholder="请输入项目名称"
+                    value={name}
+                    maxLength={120}
+                    onChange={(e) => setName(e.target.value)}
+                  />
+                </Form.Item>
+                <Form.Item label="项目说明">
+                  <Input.TextArea
+                    aria-label="项目说明"
+                    placeholder="填写项目目标、数据内容或标注要求（可选）"
+                    value={description}
+                    maxLength={4000}
+                    showCount
+                    autoSize={{ minRows: 3, maxRows: 6 }}
+                    onChange={(e) => setDescription(e.target.value)}
+                  />
+                </Form.Item>
+                <Form.Item label="任务类型" required>
+                  <Select
+                    aria-label="任务类别"
+                    style={{ width: '100%' }}
+                    value={type || undefined}
+                    placeholder="请选择任务类型"
+                    onChange={setType}
+                    options={taskTypes.map((value) => ({
+                      value: value.taskType,
+                      label: value.name,
+                    }))}
+                  />
+                </Form.Item>
+              </Form>
             </Modal>
           </>
         ) : current ? (
@@ -525,6 +541,7 @@ export default function ServerWorkspace() {
                     </span>
                   ),
                 },
+                ...(publishMode === 'AI' ? [{ key: 'ai', label: 'AI 执行' }] : []),
                 {
                   key: 'review',
                   label: (
@@ -596,8 +613,33 @@ export default function ServerWorkspace() {
                 }}
               />
             )}
+            {aiSession?.projectId === projectId && (
+              <div hidden={tab !== 'ai'}>
+                <NativeAi
+                  key={aiSession.config.modelId + aiSession.samples.map((sample) => sample.sampleId).join('|')}
+                  project={current}
+                  selectedSamples={aiSession.samples}
+                  version={aiSession.version}
+                  execution={aiSession.config}
+                  onComplete={(results) => setAiSession((session) => session ? { ...session, results } : session)}
+                  onReview={() => navigate(`/labeling/projects/${projectId}?panel=review`)}
+                />
+              </div>
+            )}
+            {tab === 'ai' && !aiSession && (
+              <Alert type="info" message="暂无 AI 执行任务，请从发布任务选择 AI 标注并完成配置。" action={<Button onClick={() => navigate(`/labeling/projects/${projectId}?panel=publish`)}>前往发布任务</Button>} />
+            )}
             {tab === 'publish' && (
               <NativePublish
+                mode={publishMode}
+                onModeChange={(mode) => {
+                  setPublishMode(mode);
+                  if (mode === 'HUMAN') setAiSession(undefined);
+                }}
+                onPublishAi={(selectedSamples, selectedVersion, config) => {
+                  setAiSession({ projectId: current.projectId, samples: selectedSamples, version: selectedVersion, config, results: [] });
+                  navigate(`/labeling/projects/${projectId}?panel=ai`);
+                }}
                 initialSelection={publishSelection}
                 project={current}
                 samples={samples}
@@ -613,6 +655,8 @@ export default function ServerWorkspace() {
             )}
             {tab === 'review' && (
               <NativeReview
+                aiResults={aiSession?.projectId === projectId ? aiSession.results : undefined}
+                onAiResultsChange={(results) => setAiSession((session) => session ? { ...session, results } : session)}
                 project={current}
                 submissions={submissions}
                 run={run}

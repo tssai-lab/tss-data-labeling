@@ -80,7 +80,7 @@ export default function Platforms() {
           >
             <div className={styles.cardTop}>
               <AppstoreOutlined />
-              <span className={styles.badge}>图片单标签分类</span>
+              <span className={styles.developmentBadge}>开发中</span>
             </div>
             <div className={styles.visual} aria-hidden="true">
               <AppstoreOutlined className={styles.shield} />
@@ -90,8 +90,7 @@ export default function Platforms() {
               <h2 id="label-platform-title">数据标注平台</h2>
             </div>
             <div className={styles.cardBottom}>
-              <span>进入数据标注平台</span>
-              <ArrowRightOutlined />
+              <span>敬请期待</span>
             </div>
           </Link>
           <Link

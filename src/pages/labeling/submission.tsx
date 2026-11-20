@@ -1,4 +1,4 @@
-import { useParams } from '@umijs/max';
+import { history, useParams } from '@umijs/max';
 import {
   Alert,
   Button,
@@ -32,6 +32,7 @@ export default function SubmissionView() {
   const [samples, setSamples] = useState<Sample[]>([]);
   const [structuredSample, setStructuredSample] = useState(''),
     [ownAssignment, setOwnAssignment] = useState(false);
+  const [expandedSample, setExpandedSample] = useState('');
   const [mappingNote, setMappingNote] = useState('');
   const imageAbort = useRef<AbortController | undefined>(undefined);
   const [preview, setPreview] = useState('');
@@ -141,6 +142,7 @@ export default function SubmissionView() {
   async function showImage(sampleId: string) {
     if (!value) return;
     setImageError('');
+    setPreview('');
     imageAbort.current?.abort();
     const abort = new AbortController();
     imageAbort.current = abort;
@@ -153,6 +155,9 @@ export default function SubmissionView() {
   }
   return (
     <WorkspaceLayout>
+      <Button onClick={() => history.push('/labeling/assignments?view=submissions')}>
+        返回提交记录
+      </Button>
       <h1>已交回的人工包结果</h1>
       {error && (
         <Alert
@@ -173,35 +178,6 @@ export default function SubmissionView() {
             style={{ marginBottom: 24 }}
           />
           {mappingNote && <Alert type="info" message={mappingNote} />}
-          {imageError && <Alert type="error" message={imageError} />}
-          {preview && (
-            <img
-              src={preview}
-              alt="授权原图预览"
-              style={{
-                maxWidth: '100%',
-                maxHeight: 400,
-                objectFit: 'contain',
-              }}
-            />
-          )}
-          {structuredSample && spec && (
-            <StructuredPreview
-              projectId={value.projectId}
-              assignmentId={ownAssignment ? value.assignmentId : undefined}
-              spec={spec}
-              row={{
-                sampleId: structuredSample,
-                resultId:
-                  value.items.find((i) => i.sampleId === structuredSample)
-                    ?.resultId || null,
-                reviewRevision: 0,
-                result:
-                  value.items.find((i) => i.sampleId === structuredSample)
-                    ?.result || null,
-              }}
-            />
-          )}
           <Descriptions
             column={1}
             items={[
@@ -233,6 +209,40 @@ export default function SubmissionView() {
           />
           <Table
             rowKey="sampleId"
+            expandable={{
+              showExpandColumn: false,
+              expandedRowKeys: expandedSample ? [expandedSample] : [],
+              expandedRowRender: (item) => (
+                <div>
+                  {imageError && <Alert type="error" message={imageError} />}
+                  {item.sampleId === structuredSample && spec ? (
+                    <StructuredPreview
+                      projectId={value.projectId}
+                      assignmentId={ownAssignment ? value.assignmentId : undefined}
+                      spec={spec}
+                      row={{
+                        sampleId: item.sampleId,
+                        resultId:
+                          value.items.find((i) => i.sampleId === item.sampleId)
+                            ?.resultId || null,
+                        reviewRevision: 0,
+                        result:
+                          value.items.find((i) => i.sampleId === item.sampleId)
+                            ?.result || null,
+                      }}
+                    />
+                  ) : preview ? (
+                    <img
+                      src={preview}
+                      alt="样本预览"
+                      style={{ maxWidth: '100%', maxHeight: 400, objectFit: 'contain' }}
+                    />
+                  ) : (
+                    !imageError && <Spin />
+                  )}
+                </div>
+              ),
+            }}
             pagination={{ pageSize: 20 }}
             dataSource={value.items}
             scroll={{ x: 550 }}
@@ -253,16 +263,28 @@ export default function SubmissionView() {
               },
               { title: '已提交草稿版本', dataIndex: 'revision' },
               {
-                title: '样本数据',
+                title: '操作',
                 render: (_, item) => (
                   <Button
                     onClick={() =>
-                      item.resultFormat === 'annotation-record-v1'
-                        ? setStructuredSample(item.sampleId)
-                        : void showImage(item.sampleId)
+                      {
+                        setExpandedSample(item.sampleId);
+                        setStructuredSample(
+                          item.resultFormat === 'annotation-record-v1'
+                            ? item.sampleId
+                            : '',
+                        );
+                        if (item.resultFormat === 'annotation-record-v1') {
+                          imageAbort.current?.abort();
+                          setImageError('');
+                          setPreview('');
+                        } else {
+                          void showImage(item.sampleId);
+                        }
+                      }
                     }
                   >
-                    授权读取
+                    查看样本
                   </Button>
                 ),
               },

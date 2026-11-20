@@ -1,15 +1,9 @@
-import { Alert, Button, Image, Radio, Space, Tag, Typography } from 'antd';
-import {
-  forwardRef,
-  useEffect,
-  useImperativeHandle,
-  useRef,
-  useState,
-} from 'react';
-import { initialClassification } from '@/services/classificationEditor.mjs';
+import { Alert } from 'antd';
+import { type ReactNode, forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
+import { classificationFromChoices, classificationLabelConfig, classificationSaveInput, classificationToChoices, initialClassification } from '@/services/classificationEditor.mjs';
 import { describeLabelingError } from '@/services/labeling';
 import type { Draft } from '@/services/labelingTasks';
-import styles from './index.less';
+import LocalEditor, { type LocalEditorHandle, type LocalEditorState } from './LocalEditor';
 
 export type EditorIdentity = {
   assignmentId: string;
@@ -36,6 +30,7 @@ export type EditorState = EditorIdentity & {
   revision: number;
 };
 export type ClassificationEditorProps = EditorIdentity & {
+  footerActions?: ReactNode;
   imageUrl: string;
   labels: ReadonlyArray<{ id: string; name: string }>;
   instructions: string;
@@ -55,212 +50,79 @@ export type ClassificationEditorProps = EditorIdentity & {
 };
 export type ClassificationEditorHandle = { getState: () => EditorState };
 
-/** Native platform controls implement the public C/D contract. D's cropped LS renderer remains pending. */
-export default forwardRef<
-  ClassificationEditorHandle,
-  ClassificationEditorProps
->(function ClassificationEditorAdapter(props, ref) {
-  const initial = initialClassification(
-    props.draft,
-    props.reference,
-    props.labels,
-  );
-  const [labelId, setLabelId] = useState(initial.labelId);
-  const [touched, setTouched] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [uncertain, setUncertain] = useState(false);
-  const [error, setError] = useState('');
-  const generation = useRef(0);
+// 分类任务复用原生标注编辑器，读写时转换为历史任务的稳定标签编号。
+export default forwardRef<ClassificationEditorHandle, ClassificationEditorProps>(function ClassificationEditorAdapter(props, ref) {
+  const local = useRef<LocalEditorHandle>(null);
   const lock = useRef(false);
-  const notify = useRef(props.onStateChange);
-  notify.current = props.onStateChange;
-  const valid = Boolean(labelId && props.labels.some((l) => l.id === labelId));
-  const state: EditorState = {
-    assignmentId: props.assignmentId,
-    sampleId: props.sampleId,
-    specVersionId: props.specVersionId,
-    dirty:
-      touched &&
-      (labelId !== (props.draft.result.labelId || '') ||
-        Boolean(labelId) !== props.draft.explicitDone),
-    saving,
-    valid,
-    explicitDone: touched ? valid : props.draft.explicitDone,
-    revision: props.draft.revision,
-  };
-  const live = useRef(state);
-  live.current = state;
-  useImperativeHandle(ref, () => ({
-    getState: () => ({
-      ...live.current,
-      saving: lock.current || live.current.saving,
-    }),
-  }));
-  useEffect(() => {
-    notify.current(state);
-  }, [
-    state.assignmentId,
-    state.sampleId,
-    state.specVersionId,
-    state.dirty,
-    state.saving,
-    state.valid,
-    state.explicitDone,
-    state.revision,
-  ]);
-  useEffect(() => {
-    ++generation.current;
-    const next = initialClassification(
-      props.draft,
-      props.reference,
-      props.labels,
-    );
-    setLabelId(next.labelId);
-    setTouched(false);
-    setUncertain(false);
-    setError('');
-    setSaving(false);
-    lock.current = false;
-    return () => {
-      ++generation.current;
-    };
-  }, [props.assignmentId, props.sampleId, props.specVersionId, props.draft]);
-  async function save() {
-    if (
-      props.readOnly ||
-      props.disabled ||
-      lock.current ||
-      uncertain ||
-      (labelId && !valid)
-    )
-      return;
-    const current = generation.current;
-    lock.current = true;
-    setSaving(true);
-    setError('');
+  const [uncertain, setUncertain] = useState(false);
+  const [editorStatus, setEditorStatus] = useState<LocalEditorState>();
+  const initial = initialClassification(props.draft, props.reference, props.labels);
+  const prepared = useMemo(() => {
     try {
-      const input: SaveInput = {
-        baseRevision: props.draft.revision,
-        explicitDone: valid,
-        resultFormat: 'image-classification-v1',
-        result: valid ? { labelId } : {},
-      };
-      const result = await props.onSave(input);
-      if (current !== generation.current) return;
-      if (
-        result.assignmentId !== props.assignmentId ||
-        result.sampleId !== props.sampleId ||
-        !Number.isSafeInteger(result.revision) ||
-        result.revision <= input.baseRevision ||
-        result.resultFormat !== 'image-classification-v1' ||
-        result.result.labelId !== input.result.labelId ||
-        result.explicitDone !== input.explicitDone
-      )
-        throw new Error('草稿回执不匹配，请重新读取');
-      setTouched(false);
-    } catch (e) {
-      if (current === generation.current) {
-        setUncertain(true);
-        setError(describeLabelingError(e));
-        props.onError({
-          code: 'DRAFT_SAVE_UNCONFIRMED',
-          message: describeLabelingError(e),
-        });
-      }
-    } finally {
-      if (current === generation.current) {
-        lock.current = false;
-        setSaving(false);
-      }
+      const first = initialClassification(props.draft, props.reference, props.labels);
+      return { config: classificationLabelConfig(props.labels), result: classificationToChoices(first.labelId, props.labels), error: '' };
+    } catch (error) {
+      return { config: '', result: [], error: describeLabelingError(error) };
     }
+  }, [props.labels, props.draft, props.reference]);
+  const task = useMemo(() => ({ id: props.sampleId, data: { image: props.imageUrl } }), [props.sampleId, props.imageUrl]);
+  function getState(): EditorState {
+    const current = local.current?.getState();
+    let valid = Boolean(initial.labelId);
+    if (current?.ready) {
+      try { classificationFromChoices(current.result, props.labels); valid = true; }
+      catch { valid = false; }
+    }
+    return {
+      assignmentId: props.assignmentId,
+      sampleId: props.sampleId,
+      specVersionId: props.specVersionId,
+      dirty: current?.dirty || false,
+      saving: lock.current || !!current?.saving,
+      valid,
+      explicitDone: current?.dirty ? false : props.draft.explicitDone,
+      revision: props.draft.revision,
+    };
   }
+  useImperativeHandle(ref, () => ({ getState }));
+  useEffect(() => { props.onStateChange(getState()); }, [editorStatus, props.draft, uncertain]);
+  useEffect(() => { setUncertain(false); }, [props.draft]);
+
+  async function save(raw: unknown[], done: boolean): Promise<void> {
+    if (props.readOnly || props.disabled || lock.current || uncertain) throw new Error('当前任务不能保存，请先核对草稿状态');
+    const input = classificationSaveInput(raw, props.labels, props.draft.revision, done);
+    lock.current = true;
+    try {
+      const result = await props.onSave(input);
+      if (result.assignmentId !== props.assignmentId || result.sampleId !== props.sampleId ||
+          !Number.isSafeInteger(result.revision) || result.revision <= input.baseRevision ||
+          result.resultFormat !== input.resultFormat || result.result.labelId !== input.result.labelId ||
+          result.explicitDone !== input.explicitDone) throw new Error('草稿回执不匹配，请重新读取');
+    } catch (error) {
+      setUncertain(true);
+      props.onError({ code: 'DRAFT_SAVE_UNCONFIRMED', message: describeLabelingError(error) });
+      throw error;
+    } finally { lock.current = false; }
+  }
+  if (prepared.error) return <Alert type="error" message={prepared.error} />;
   return (
-    <div>
-      <div className={styles.preview}>
-        {props.imageUrl && (
-          <Image
-            src={props.imageUrl}
-            alt="当前领取图片"
-            style={{ maxWidth: '100%', maxHeight: 520, objectFit: 'contain' }}
-          />
-        )}
-      </div>
-      {props.instructions && (
-        <Typography.Paragraph
-          ellipsis={{ rows: 4, expandable: true, symbol: '展开说明' }}
-          style={{ whiteSpace: 'pre-wrap', marginTop: 16 }}
-        >
-          {props.instructions}
-        </Typography.Paragraph>
-      )}
-      {initial.referenceShown && !touched && (
-        <Alert
-          type="info"
-          showIcon
-          message={`${props.reference?.sourceKind || ''}参考结果 · 待人工确认`}
-          description={`模型 ${props.reference?.modelVersion || '不适用'} · 置信度 ${props.reference?.confidence ?? '未知'}。仅作参考，不自动计为本轮完成。`}
-        />
-      )}
-      {error && (
-        <Alert
-          type="error"
-          message={error}
-          description="保留当前选择，请通过宿主重新读取平台草稿核对。"
-        />
-      )}
-      <div className={styles.classification}>
-        <Space wrap>
-          <Typography.Text strong>当前分类</Typography.Text>
-          <Tag
-            color={props.readOnly ? 'default' : state.dirty ? 'orange' : 'blue'}
-          >
-            {props.readOnly
-              ? '只读 · 已交回不等于已审核'
-              : saving
-                ? '保存并回读中'
-                : state.dirty
-                  ? '未保存'
-                  : `平台 revision ${props.draft.revision}`}
-          </Tag>
-        </Space>
-        <Radio.Group
-          aria-label="图片分类"
-          value={labelId}
-          disabled={props.readOnly || props.disabled || saving || uncertain}
-          onChange={(e) => {
-            setLabelId(e.target.value);
-            setTouched(true);
-          }}
-          options={props.labels.map((l) => ({ value: l.id, label: l.name }))}
-          optionType="button"
-        />
-        {!props.readOnly && (
-          <Space wrap>
-            <Button
-              type="primary"
-              loading={saving}
-              disabled={props.disabled || uncertain}
-              onClick={() => void save()}
-            >
-              {initial.referenceShown && !touched
-                ? '确认参考并保存草稿'
-                : '保存当前草稿'}
-            </Button>
-            <Button
-              disabled={props.disabled || saving || uncertain || !labelId}
-              onClick={() => {
-                setLabelId('');
-                setTouched(true);
-              }}
-            >
-              清空选择
-            </Button>
-          </Space>
-        )}
-        <Typography.Text type="secondary">
-          空选择可保存为未完成草稿；本包全部图片保存有效分类后才可交回。交回后仍需需求方核查。
-        </Typography.Text>
-      </div>
-    </div>
+    <>
+      {initial.referenceShown && !props.draft.explicitDone && <Alert type="info" showIcon message="上一轮参考结果 · 仍需明确完成并保存" />}
+      <LocalEditor
+        ref={local}
+        compact
+        nativeTask={task}
+        sample={{ id: props.sampleId, name: props.sampleId, input: undefined }}
+        category="Computer Vision"
+        config={prepared.config}
+        instructions={props.instructions}
+        result={prepared.result}
+        refreshKey={`${props.draft.revision}:${props.draft.result.labelId || ''}:${props.draft.explicitDone}`}
+        disabled={props.disabled || uncertain}
+        onSave={props.readOnly ? undefined : save}
+        onStateChange={setEditorStatus}
+        footerActions={props.footerActions}
+      />
+    </>
   );
 });

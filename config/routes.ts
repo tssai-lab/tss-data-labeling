@@ -30,6 +30,18 @@ export default [
     hideInMenu: true,
   },
   {
+    path: '/labeling/admin/operations',
+    component: './labeling/AdminOperationHistory',
+    layout: false,
+    hideInMenu: true,
+  },
+  {
+    path: '/labeling/my-operations',
+    component: './labeling/MyOperationHistory',
+    layout: false,
+    hideInMenu: true,
+  },
+  {
     path: '/labeling/demo',
     component: './labeling/gapDemo',
     layout: false,

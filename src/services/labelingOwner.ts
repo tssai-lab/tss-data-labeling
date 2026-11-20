@@ -236,6 +236,9 @@ export type HistoryRow = {
   pendingCount?: number;
 };
 export type OperationReceipt = {
+  actorId?: string;
+  actorName?: string;
+  identityUserId?: string;
   resourceId: string;
   operation: string;
   idempotencyKey: string;
@@ -269,6 +272,11 @@ export const ownerApi = {
   receipts: (cursor?: string | null, signal?: AbortSignal) =>
     labelingJson<Page<OperationReceipt>>(
       `/me/operation-receipts?${pageQuery(cursor)}`,
+      { signal },
+    ),
+  adminReceipts: (cursor?: string | null, signal?: AbortSignal) =>
+    labelingJson<Page<OperationReceipt>>(
+      `/admin/operation-receipts?${pageQuery(cursor)}`,
       { signal },
     ),
   state: (

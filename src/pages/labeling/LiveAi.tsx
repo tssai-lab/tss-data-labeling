@@ -283,8 +283,121 @@ export default function LiveAi({
     );
     if (value) setPolicies((old) => [...old, value]);
   }
+  const compatibleAgents = agents.filter(
+    (item) =>
+      item.enabled &&
+      item.taskType === (spec.taskType || 'IMAGE_CLASSIFICATION'),
+  );
+  const progressPercent = execution?.sampleCount
+    ? Math.min(
+        100,
+        Math.round(
+          ((execution.sampleCount - execution.pendingCount) /
+            execution.sampleCount) *
+            100,
+        ),
+      )
+    : 0;
+  const taskTypeName: Record<string, string> = {
+    IMAGE_CLASSIFICATION: '图片分类',
+    COMPUTER_VISION: '计算机视觉',
+    TIME_SERIES: '时序分析',
+    TIMESERIES_ANNOTATION: '时序标注',
+  };
+  const executionStatusName: Record<string, string> = {
+    QUEUED: '排队中',
+    RUNNING: '处理中',
+    SUCCEEDED: '已完成',
+    PARTIAL: '部分完成',
+    FAILED: '执行失败',
+    CANCELLING: '取消中',
+    CANCELLED: '已取消',
+  };
   return (
-    <>
+    <div className={ui.aiConsole}>
+      <section className={ui.aiHero}>
+        <div className={ui.aiHeroMain}>
+          <span className={ui.aiEyebrow}>AI LABELING · HUMAN IN THE LOOP</span>
+          <h2>
+            让 AI 承担规模化标注
+            <br />
+            让专家把关关键结果
+          </h2>
+          <p>
+            批量生成候选答案，按置信度组织审核范围；每次执行与结果快照可追溯，最终由需求方确认。
+          </p>
+          <div className={ui.aiFlow} aria-label="AI 标注处理流程">
+            <span>选择样本</span>
+            <i />
+            <span>AI 处理</span>
+            <i />
+            <span>人工核查</span>
+            <i />
+            <span>成果导出</span>
+          </div>
+        </div>
+        <div className={ui.aiHeroSide}>
+          <div>
+            <span>当前执行状态</span>
+            <strong>
+              {execution
+                ? executionStatusName[execution.status] || execution.status
+                : selected.length
+                  ? '等待启动'
+                  : '等待选择样本'}
+            </strong>
+          </div>
+          <Progress
+            type="circle"
+            size={88}
+            percent={progressPercent}
+            strokeColor="#72d7c0"
+            trailColor="#ffffff2e"
+            format={(percent) => `${percent}%`}
+          />
+          <small>
+            {execution
+              ? `${execution.successCount} / ${execution.sampleCount} 个样本已完成`
+              : '选择待处理样本后即可创建 AI 执行'}
+          </small>
+        </div>
+      </section>
+      <div className={ui.aiMetrics}>
+        <div className={ui.aiMetric}>
+          <span>本次选择样本</span>
+          <strong>{selected.length}</strong>
+          <small>执行前固定处理范围</small>
+        </div>
+        <div className={ui.aiMetric}>
+          <span>可用 AI Agent</span>
+          <strong>{compatibleAgents.length}</strong>
+          <small>
+            {taskTypeName[spec.taskType || ''] || spec.taskType || '图片分类'} 任务类型
+          </small>
+        </div>
+        <div className={ui.aiMetric}>
+          <span>AI 成功处理</span>
+          <strong>{execution?.successCount ?? '—'}</strong>
+          <small>{execution ? '当前执行结果' : '启动后显示真实结果'}</small>
+        </div>
+        <div className={ui.aiMetric}>
+          <span>等待处理</span>
+          <strong>{execution?.pendingCount ?? '—'}</strong>
+          <small>{execution ? '尚未完成的样本' : '由执行状态实时更新'}</small>
+        </div>
+      </div>
+      {(error || action.error) && (
+        <Alert type="error" showIcon message={error || action.error} />
+      )}
+      {!selected.length && (
+        <Alert
+          className={ui.aiSelectionPrompt}
+          type="info"
+          showIcon
+          message="先选择 AI 处理范围"
+          description="返回“结果与审核”勾选样本后，可在这里选择 Agent、设置参考答案并启动执行。运行结果不会自动通过审核。"
+        />
+      )}
       <div className={ui.twoColumns} hidden={!selected.length}>
         <ScopeSummary
           projectId={projectId}
@@ -292,15 +405,12 @@ export default function LiveAi({
           selected={selected}
           disabled={action.busy || loading}
         />
-        <Card title="创建 AI 标注任务">
+        <Card className={ui.aiSetupCard} title="配置 AI 执行">
           <Alert
             type="info"
             message={`当前明确勾选 ${selected.length} 个样本`}
             description="Agent 由服务器驱动。运行中的答案只用于查看进度，终态成功结果才可审核；置信度分档不会自动接受答案。"
           />
-          {(error || action.error) && (
-            <Alert type="error" message={error || action.error} />
-          )}
           <Space direction="vertical" style={{ marginTop: 14, width: '100%' }}>
             <Select
               aria-label="选择 AI Agent"
@@ -314,16 +424,10 @@ export default function LiveAi({
                 setAgentId(value);
                 setReference(false);
               }}
-              options={agents
-                .filter(
-                  (item) =>
-                    item.enabled &&
-                    item.taskType === (spec.taskType || 'IMAGE_CLASSIFICATION'),
-                )
-                .map((item) => ({
-                  value: item.agentId,
-                  label: `${item.displayName} · ${item.modelVersion}`,
-                }))}
+              options={compatibleAgents.map((item) => ({
+                value: item.agentId,
+                label: `${item.displayName} · ${item.modelVersion}`,
+              }))}
             />
             <Button
               disabled={action.busy}
@@ -352,7 +456,7 @@ export default function LiveAi({
               disabled={!agent || !selected.length || loading || action.busy}
               onClick={create}
             >
-              创建 AI 执行
+              启动 AI 标注
             </Button>
           </Space>
           {agent && (
@@ -362,7 +466,7 @@ export default function LiveAi({
           )}
         </Card>
       </div>
-      <Card title="查看 AI 任务进度" style={{ marginTop: 16 }}>
+      <Card className={ui.aiExecutionCard} title="执行监控与结果">
         <details>
           <summary>服务器 AI 执行历史</summary>
           <ProjectHistory
@@ -406,9 +510,6 @@ export default function LiveAi({
         </details>
         {execution && (
           <>
-            <Typography.Paragraph style={{ marginTop: 12 }} copyable>
-              {execution.executionId}
-            </Typography.Paragraph>
             <p>
               <StatusBadge status={execution.status} />
               总计 {execution.sampleCount} · 成功 {execution.successCount} ·
@@ -416,22 +517,24 @@ export default function LiveAi({
               已取消 {execution.cancelledCount}
             </p>
             <Progress
-              percent={
-                execution.sampleCount
-                  ? Math.round(
-                      ((execution.sampleCount - execution.pendingCount) /
-                        execution.sampleCount) *
-                        100,
-                    )
-                  : 0
-              }
+              percent={progressPercent}
               status={executionTerminal(execution.status) ? 'normal' : 'active'}
             />
-            <p>
-              模型 {execution.modelVersion} · 轮次 {execution.roundId} ·{' '}
-              {provisional ? '运行中暂存结果，暂不可审核' : '终态结果快照'}{' '}
-              {execution.resultSnapshotId || ''}
-            </p>
+            <p>模型版本 {execution.modelVersion} · {provisional ? '运行中结果仅供查看，完成后进入人工审核' : '本次结果已形成快照，可进入人工审核'}</p>
+            <details className={ui.aiTechnicalDetails}>
+              <summary>执行与快照编号</summary>
+              <Typography.Paragraph copyable>
+                执行编号：{execution.executionId}
+              </Typography.Paragraph>
+              <Typography.Paragraph copyable>
+                轮次编号：{execution.roundId}
+              </Typography.Paragraph>
+              {execution.resultSnapshotId && (
+                <Typography.Paragraph copyable>
+                  结果快照：{execution.resultSnapshotId}
+                </Typography.Paragraph>
+              )}
+            </details>
             {execution.errorSummary?.byCode.map((item) => (
               <Tag key={item.errorCode} color="red">
                 {item.errorCode}: {item.count}
@@ -621,6 +724,6 @@ export default function LiveAi({
           </>
         )}
       </Card>
-    </>
+    </div>
   );
 }
