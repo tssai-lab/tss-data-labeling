@@ -1650,6 +1650,156 @@ class ImportIntegrationTest {
     }
 
     @Test
+    void actualEnergyDatasetFirstPackageRoundTripsThroughReviewAndExport() throws Exception {
+        String datasetDirectory = System.getProperty("labeling.energy.dataset");
+        org.junit.jupiter.api.Assumptions.assumeTrue(
+                datasetDirectory != null && !datasetDirectory.isBlank(),
+                "通过 -Dlabeling.energy.dataset 指定本地能耗数据集目录后运行");
+
+        Path dataset = Path.of(datasetDirectory);
+        var manifest = json.readTree(Files.readAllBytes(dataset.resolve("manifest.json")));
+        String version = manifest.path("version").asText();
+        assertFalse(version.isBlank(), "数据集 manifest.json 应包含 version");
+        var csvLines = Files.readAllLines(
+                dataset.resolve("sample/station_day_tasks_2k.csv"), StandardCharsets.UTF_8);
+        assertTrue(csvLines.size() >= 11, "样例 CSV 至少应有 10 条任务数据");
+        String csv = String.join("\r\n", csvLines.subList(0, 11)) + "\r\n";
+        byte[] archive = zip(Map.of(
+                "manifest.json",
+                json.writeValueAsBytes(Map.of("datasetVersion", version)),
+                "sample/station_day_tasks_2k.csv",
+                csv.getBytes(StandardCharsets.UTF_8)));
+
+        String project = energyProject();
+        String batch = uploaded(project, archive);
+        command(batch, "complete", UUID.randomUUID().toString())
+                .andExpect(status().isAccepted());
+        processQueue();
+        assertEquals("READY", statusOf(batch).path("status").asText());
+        assertEquals(10, statusOf(batch).path("validSampleCount").asInt());
+
+        JsonNode samples = resultGet("/imports/" + batch + "/samples", "owner", 200)
+                .path("items");
+        assertEquals(10, samples.size());
+        JsonNode specification = taskPost(
+                "/projects/" + project + "/spec-versions",
+                "owner",
+                UUID.randomUUID().toString(),
+                Map.of(
+                        "taskType", "TIMESERIES_ANNOTATION",
+                        "schemaVersion", "1.0.0",
+                        "labels", java.util.List.of(Map.of("id", "normal", "name", "正常"))),
+                201);
+        JsonNode plan = taskPost(
+                "/projects/" + project + "/package-plans",
+                "owner",
+                UUID.randomUUID().toString(),
+                Map.of(
+                        "batchId", batch,
+                        "specVersionId", specification.path("specVersionId").asText(),
+                        "packageSize", 10),
+                201);
+        JsonNode published = publishTask(plan);
+        String annotator = "real-energy-" + UUID.randomUUID();
+        String assignment = taskPost(
+                "/packages/" + published.path("packages").get(0).path("packageId").asText()
+                        + "/claims",
+                annotator,
+                UUID.randomUUID().toString(),
+                Map.of(),
+                201).path("assignmentId").asText();
+
+        var submissionItems = new java.util.ArrayList<Map<String, Object>>();
+        for (JsonNode sample : samples) {
+            String sampleId = sample.path("sampleId").asText();
+            JsonNode input = resultGet(
+                    "/assignments/" + assignment + "/samples/" + sampleId + "/data",
+                    annotator,
+                    200);
+            String date = input.path("payload").path("dateLocal").asText();
+            assertEquals(24, input.path("payload").path("series").path("values").size());
+            Map<String, Object> result = Map.of(
+                    "schemaVersion", "1.0.0",
+                    "annotations", java.util.List.of(Map.of(
+                            "id", "primary",
+                            "from_name", "primary_label",
+                            "to_name", "load_curve",
+                            "type", "choices",
+                            "value", Map.of("labelIds", java.util.List.of("normal")))));
+            mvc.perform(put(API + "/assignments/" + assignment + "/drafts/" + sampleId)
+                            .header("Authorization", "Bearer " + annotator)
+                            .contentType("application/json")
+                            .content(json.writeValueAsString(Map.of(
+                                    "baseRevision", 0,
+                                    "explicitDone", true,
+                                    "resultFormat", "annotation-record-v1",
+                                    "inputHash", input.path("inputHash").asText(),
+                                    "result", result))))
+                    .andExpect(status().isOk());
+            submissionItems.add(Map.of("sampleId", sampleId, "revision", 1));
+            assertFalse(date.isBlank(), "每条站点日样本应包含日期");
+        }
+
+        JsonNode receipt = taskPost(
+                "/assignments/" + assignment + "/submissions",
+                annotator,
+                UUID.randomUUID().toString(),
+                Map.of("items", submissionItems),
+                201);
+        JsonNode submitted = resultGet(
+                "/submissions/" + receipt.path("submissionId").asText(), annotator, 200);
+        assertEquals(10, submitted.path("items").size());
+        taskPost(
+                "/projects/" + project + "/reviews",
+                "owner",
+                UUID.randomUUID().toString(),
+                Map.of(
+                        "specVersionId", specification.path("specVersionId").asText(),
+                        "action", "ACCEPT",
+                        "items", exact(submitted, 0)),
+                200);
+        JsonNode snapshot = taskPost(
+                "/projects/" + project + "/final-snapshots",
+                "owner",
+                UUID.randomUUID().toString(),
+                Map.of(
+                        "name", "真实能耗数据首包验收",
+                        "specVersionId", specification.path("specVersionId").asText(),
+                        "sampleIds", submissionItems.stream().map(item -> item.get("sampleId")).toList()),
+                201);
+        JsonNode export = taskPost(
+                "/projects/" + project + "/exports",
+                "owner",
+                UUID.randomUUID().toString(),
+                Map.of(
+                        "format", "energy-jsonl-zip",
+                        "finalSnapshotIds", java.util.List.of(snapshot.path("finalSnapshotId").asText())),
+                202);
+        context.getBean(com.tss.labeling.review.ExportWorker.class).runOnce();
+        String exportId = export.path("exportId").asText();
+        JsonNode completedExport = resultGet("/exports/" + exportId, "owner", 200);
+        assertEquals("SUCCEEDED", completedExport.path("status").asText());
+        byte[] exportedArchive = mvc.perform(
+                        get(API + "/exports/" + exportId + "/download")
+                                .header("Authorization", "Bearer owner"))
+                .andExpect(status().isOk())
+                .andExpect(content().contentType("application/zip"))
+                .andReturn().getResponse().getContentAsByteArray();
+        assertEquals(sha(exportedArchive), completedExport.path("sha256").asText());
+        Map<String, byte[]> exportedFiles = new LinkedHashMap<>();
+        try (var zip = new java.util.zip.ZipInputStream(
+                new java.io.ByteArrayInputStream(exportedArchive))) {
+            java.util.zip.ZipEntry entry;
+            while ((entry = zip.getNextEntry()) != null)
+                exportedFiles.put(entry.getName(), zip.readAllBytes());
+        }
+        String exportedResults = new String(exportedFiles.get("results.jsonl"), StandardCharsets.UTF_8);
+        assertEquals(10, exportedResults.lines().count());
+        assertTrue(exportedResults.contains("\"labelIds\":[\"normal\"]"));
+        assertEquals(10, json.readTree(exportedFiles.get("manifest.json")).path("sampleCount").asInt());
+    }
+
+    @Test
     void energyInvalidOrAnnotatedRowsLeaveNoPartialSamples() throws Exception {
         for (String type : java.util.List.of("negative", "annotated", "duplicate")) {
             String p = energyProject();
@@ -2242,6 +2392,38 @@ class ImportIntegrationTest {
                         .path("items")
                         .toString()
                         .contains(sub.path("submissionId").asText()));
+    }
+
+    @Test
+    void globalOperationReceiptsAreAdminOnlyAndIncludeOperatorIdentity() throws Exception {
+        complete(fixture(1), "operation-log-author", "normal");
+        resultGet("/me", "admin-log-viewer", 200);
+        UUID admin =
+                db.queryForObject(
+                        "SELECT id FROM actor WHERE identity_user_id='admin-log-viewer'",
+                        UUID.class);
+        db.update(
+                "INSERT INTO actor_role_grant(actor_id,role_code) VALUES (?,'LABELING_ADMIN') ON"
+                    + " CONFLICT DO NOTHING",
+                admin);
+
+        resultGet("/admin/operation-receipts?limit=1", "ordinary-user", 403);
+        var page = resultGet("/admin/operation-receipts?limit=1", "admin-log-viewer", 200);
+        assertEquals(1, page.path("items").size());
+        var item = page.path("items").get(0);
+        assertFalse(item.path("actorId").asText().isBlank());
+        assertFalse(item.path("actorName").asText().isBlank());
+        assertFalse(item.path("identityUserId").asText().isBlank());
+        assertFalse(page.path("nextCursor").isNull());
+        var next =
+                resultGet(
+                        "/admin/operation-receipts?limit=1&cursor="
+                                + page.path("nextCursor").asText(),
+                        "admin-log-viewer",
+                        200);
+        assertNotEquals(
+                item.path("idempotencyKey").asText(),
+                next.path("items").get(0).path("idempotencyKey").asText());
     }
 
     @Test void archivedResultsAreReadOnlyButOldReceiptsRemainReplayable()throws Exception{
