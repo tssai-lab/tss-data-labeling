@@ -88,6 +88,15 @@ public class WorkspaceController {
         return out(workspace.receipts(actor(auth), limit, cursor), req);
     }
 
+    @GetMapping("/admin/operation-receipts")
+    public ApiResponse<JsonNode> allReceipts(
+            @RequestHeader(value = "Authorization", required = false) String auth,
+            @RequestParam(defaultValue = "20") int limit,
+            @RequestParam(required = false) String cursor,
+            HttpServletRequest req) {
+        return out(workspace.adminReceipts(actor(auth), limit, cursor), req);
+    }
+
     @PostMapping("/projects/{projectId}/reviews")
     public ApiResponse<JsonNode> reviews(
             @RequestHeader(value = "Authorization", required = false) String auth,

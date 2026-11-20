@@ -188,9 +188,20 @@ SELECT EXISTS(SELECT 1 FROM publication_round WHERE project_id=? AND status='OPE
 
     @Transactional
     public JsonNode receipts(ActorContext actor, int limit, String cursor) {
+        return receipts(actor, limit, cursor, false);
+    }
+
+    @Transactional
+    public JsonNode adminReceipts(ActorContext actor, int limit, String cursor) {
+        if (!actor.labelingAdmin()) throw error(403, "FORBIDDEN", "仅标注管理员可查看全平台操作记录");
+        return receipts(actor, limit, cursor, true);
+    }
+
+    private JsonNode receipts(ActorContext actor, int limit, String cursor, boolean global) {
         s.enabled(actor);
         s.cursor(limit, null);
         java.sql.Timestamp after = new java.sql.Timestamp(0);
+        UUID afterActor = new UUID(0, 0);
         String operation = "", key = "";
         if (cursor != null) {
             try {
@@ -200,22 +211,45 @@ SELECT EXISTS(SELECT 1 FROM publication_round WHERE project_id=? AND status='OPE
                                 new String(
                                         Base64.getUrlDecoder().decode(cursor),
                                         java.nio.charset.StandardCharsets.UTF_8));
-                if (!decoded.isArray() || decoded.size() != 3) throw new IllegalArgumentException();
+                if (!decoded.isArray() || decoded.size() != (global ? 4 : 3))
+                    throw new IllegalArgumentException();
                 after = java.sql.Timestamp.from(java.time.Instant.parse(decoded.get(0).asText()));
-                operation = decoded.get(1).asText();
-                key = decoded.get(2).asText();
+                if (global) {
+                    afterActor = UUID.fromString(decoded.get(1).asText());
+                    operation = decoded.get(2).asText();
+                    key = decoded.get(3).asText();
+                } else {
+                    operation = decoded.get(1).asText();
+                    key = decoded.get(2).asText();
+                }
             } catch (RuntimeException ex) {
                 throw error(400, "INVALID_CURSOR", "操作回执游标无效");
             }
         }
-        var rows =
-                s.db.queryForList(
-                        "SELECT resource_id AS \"resourceId\",operation,idempotency_key AS"
-                            + " \"idempotencyKey\",response_body::text AS response,created_at AS"
-                            + " \"createdAt\" FROM idempotency_record WHERE actor_id=? AND"
-                            + " response_body IS NOT NULL AND"
-                            + " (created_at,operation,idempotency_key)>(?,?,?) ORDER BY"
-                            + " created_at,operation,idempotency_key LIMIT ?",
+        var rows = global
+                ? s.db.queryForList(
+                        "SELECT r.actor_id AS \"actorId\",a.display_name AS \"actorName\","
+                            + "a.identity_user_id AS \"identityUserId\",r.resource_id AS"
+                            + " \"resourceId\",r.operation,r.idempotency_key AS"
+                            + " \"idempotencyKey\",r.response_body::text AS response,r.created_at"
+                            + " AS \"createdAt\" FROM idempotency_record r JOIN actor a ON"
+                            + " a.id=r.actor_id WHERE r.response_body IS NOT NULL AND"
+                            + " (r.created_at,r.actor_id,r.operation,r.idempotency_key)>(?,?,?,?)"
+                            + " ORDER BY r.created_at,r.actor_id,r.operation,r.idempotency_key LIMIT ?",
+                        after,
+                        afterActor,
+                        operation,
+                        key,
+                        limit + 1)
+                : s.db.queryForList(
+                        "SELECT r.actor_id AS \"actorId\",a.display_name AS \"actorName\","
+                            + "a.identity_user_id AS \"identityUserId\",r.resource_id AS"
+                            + " \"resourceId\",r.operation,r.idempotency_key AS"
+                            + " \"idempotencyKey\",r.response_body::text AS response,r.created_at"
+                            + " AS \"createdAt\" FROM idempotency_record r JOIN actor a ON"
+                            + " a.id=r.actor_id WHERE r.actor_id=? AND r.response_body IS NOT NULL AND"
+                            + " (r.created_at,r.operation,r.idempotency_key)>(?,?,?) ORDER BY"
+                            + " r.created_at,r.operation,r.idempotency_key LIMIT ?",
                         actor.actorId(),
                         after,
                         operation,
@@ -230,14 +264,19 @@ SELECT EXISTS(SELECT 1 FROM publication_round WHERE project_id=? AND status='OPE
                     Base64.getUrlEncoder()
                             .withoutPadding()
                             .encodeToString(
-                                    s.write(
-                                                    List.of(
-                                                            ((java.sql.Timestamp)
-                                                                            last.get("createdAt"))
-                                                                    .toInstant()
-                                                                    .toString(),
-                                                            last.get("operation"),
-                                                            last.get("idempotencyKey")))
+                    s.write(
+                                    global
+                                            ? List.of(
+                                                    ((java.sql.Timestamp) last.get("createdAt"))
+                                                            .toInstant().toString(),
+                                                    last.get("actorId").toString(),
+                                                    last.get("operation"),
+                                                    last.get("idempotencyKey"))
+                                            : List.of(
+                                                    ((java.sql.Timestamp) last.get("createdAt"))
+                                                            .toInstant().toString(),
+                                                    last.get("operation"),
+                                                    last.get("idempotencyKey")))
                                             .getBytes(java.nio.charset.StandardCharsets.UTF_8));
         }
         items.forEach(r -> r.put("response", s.read((String) r.get("response"))));
