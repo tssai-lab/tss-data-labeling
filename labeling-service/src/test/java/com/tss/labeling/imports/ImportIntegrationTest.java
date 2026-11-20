@@ -2426,6 +2426,29 @@ class ImportIntegrationTest {
                 next.path("items").get(0).path("idempotencyKey").asText());
     }
 
+    @Test
+    void assignmentListReturnsClaimedAtForTheAnnotator() throws Exception {
+        var f = fixture(1);
+        String annotator = "claim-time-" + UUID.randomUUID();
+        String assignment =
+                taskPost(
+                                "/packages/"
+                                        + f.plan.path("packages").get(0).path("packageId").asText()
+                                        + "/claims",
+                                annotator,
+                                UUID.randomUUID().toString(),
+                                Map.of(),
+                                201)
+                        .path("assignmentId")
+                        .asText();
+
+        JsonNode page = resultGet("/assignments?scope=mine", annotator, 200);
+        JsonNode item = page.path("items").get(0);
+        assertEquals(assignment, item.path("assignmentId").asText());
+        assertTrue(item.path("claimedAt").isTextual());
+        assertDoesNotThrow(() -> java.time.Instant.parse(item.path("claimedAt").asText()));
+    }
+
     @Test void archivedResultsAreReadOnlyButOldReceiptsRemainReplayable()throws Exception{
         var f=fixture(1);var sub=complete(f,"archive-"+UUID.randomUUID(),"normal");String key=UUID.randomUUID().toString();var body=Map.of("specVersionId",f.spec,"action","ACCEPT","items",exact(sub,0));
         var original=taskPost("/projects/"+f.project+"/reviews","owner",key,body,200);
