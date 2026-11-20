@@ -1,6 +1,6 @@
 # 接口契约｜实际后端接口与边界
 
-更新：2026-11-16。统一前缀 `/api/labeling/v1`。本次新增代码及 V15/V16 迁移，补齐固定范围消费、逐结果审核与修订、AI 重试、集成建议、导出、项目状态/草稿删除、历史恢复及能耗首轮链路。以下“已实现”指仓库代码和独立 PostgreSQL 测试，不代表服务器已部署或真实模型、业务专家验收已通过。
+更新：2026-11-18。统一前缀 `/api/labeling/v1`。当前本地 `labeling-backend` 源码已包含 V1—V23 迁移，以及固定范围消费、逐结果审核与修订、AI 重试、集成建议、异步导出、项目状态/历史恢复、图片和能耗输入、原生任务/资源及编辑器适配。以下“已实现”指当前源码中可见实现；CI、本地全量测试、服务器部署/迁移、真实模型质量和业务专家验收须分别核对，本文件不据此声称通过。
 
 ## 本轮实现入口速查
 
@@ -44,7 +44,7 @@
 
 #### 固定结果和完成规则
 
-`annotations` 中 ID 在当前结果内唯一；`to_name` 固定为 `load_curve`。`primary_label` 使用 `choices` 且 `value.labelIds` 恰有一个规范内标签；`secondary_labels` 使用 `choices` 且不含重复或主标签；`point_labels` 使用 `timeseries_point`，其 `value` 带 `timestamp`、`channel=value_kwh` 和含一个标签的 `labelIds` 数组；`interval_labels` 使用 `timeseries_interval`，其 `value` 带 `start`、`end`、`channel=value_kwh` 和含一个标签的 `labelIds` 数组，区间为样本日内的 `[start,end)` 且起点小于终点。`notes` 和 `whole_day_reason` 为 `text`；人工自评 `self_reported_certainty` 为 `choices`，值为 `HIGH`、`MEDIUM`、`LOW` 或 `UNKNOWN`，与 AI confidence 分开。点、区间和标签的完整结构与 [14 的结果示例](14-task-plugins-and-energy-acceptance.md) 一致。
+`annotations` 中 ID 在当前结果内唯一；`to_name` 固定为 `load_curve`。`primary_label` 使用 `choices` 且 `value.labelIds` 恰有一个规范内标签；`secondary_labels` 使用 `choices` 且不含重复或主标签；`point_labels` 使用 `timeseries_point`，其 `value` 带 `timestamp`、`channel=value_kwh` 和含一个标签的 `labelIds` 数组；`interval_labels` 使用 `timeseries_interval`，其 `value` 带 `start`、`end`、`channel=value_kwh` 和含一个标签的 `labelIds` 数组，区间为样本日内的 `[start,end)` 且起点小于终点。`notes` 和 `whole_day_reason` 为 `text`；人工自评 `self_reported_certainty` 为 `choices`，值为 `HIGH`、`MEDIUM`、`LOW` 或 `UNKNOWN`，与 AI confidence 分开。点、区间和标签的完整结构与 [14 的结果示例](07-energy-requirements.md) 一致。
 
 草稿允许没有主标签、`explicitDone=false`，但已有字段必须类型正确且不越界；正式完成必须 `explicitDone=true`，有且仅有一个规范内主标签，所有标注均合法。人工提交检查当前包的每条样本，其他包不阻塞；AI 每条成功结果执行相同完成检查，失败项不生成假标签。空小时和未知置信度本身不判为完成或未完成。正式业务标签含义、异常是否必须定位、备注/自评是否必填和 Agent 规则阈值由业务专家确认；本基线只固定最小技术完成条件，不将建议规则当作正式判定标准。
 
@@ -52,9 +52,9 @@
 
 旧来源审核 `sample-reviews` 保留兼容；新接口使用9.2的明确结果 ID 和审核版本，修订产生不可变 OWNER 候选后须另行确认。阈值只生成策略；人工修订不会继承 AI 分数。
 
-A 负责模板、规范、权限、结果校验分派、迁移与审核；B 负责导入、授权样本读取、统计及导出；D 负责编辑器结果转换和真实 Agent，C 负责界面与接入。B/D 依本节和第15节直接开发，样例数据以 [14 的输入和结果示例](14-task-plugins-and-energy-acceptance.md) 为基础；A 汇总实际联调产生的不兼容并维护契约版本。业务标签需确认时先用显式标注的试标规范联调，不冒称正式验收规范。
+A 负责模板、规范、权限、结果校验分派、迁移与审核；B 负责导入、授权样本读取、统计及导出；D 负责编辑器结果转换和真实 Agent，C 负责界面与接入。B/D 依本节和第15节直接开发，样例数据以 [14 的输入和结果示例](07-energy-requirements.md) 为基础；A 汇总实际联调产生的不兼容并维护契约版本。业务标签需确认时先用显式标注的试标规范联调，不冒称正式验收规范。
 
-迁移：本轮新增 V15（工作流、确切结果指针、集成、导出、逻辑删除与审计）和 V16（模板及能耗结构化输入）。V1—V14 未修改；空库和含 V6 编辑器映射、旧人工提交的升级均用独立 PostgreSQL 验证，不使用 repair/clean/CASCADE。上线仍由既有部署流程应用迁移；此前服务器历史 checksum 若已不一致，必须先核对原始部署与备份，不自动修复历史。
+迁移：当前源码包含 V1—V23。V15—V16 增加 owner 工作流及模板/能耗输入；V17—V23 继续增加原生任务输入和完成状态、持久化导出、任务资源分离、版本化原生结果、输入字段索引、多规范成果快照及能耗结果格式约束。V1—V14 的历史脚本未因后续演进而改写。应用这些迁移前，必须核对目标环境 Flyway 历史、checksum 和数据状态，并按发布说明备份；本地迁移文件存在不代表服务器已经应用。不得使用 `repair`、`clean` 或 `CASCADE` 绕过不一致。
 
 ## 1. 通用协议、权限与字段
 
@@ -74,7 +74,7 @@ A 负责模板、规范、权限、结果校验分派、迁移与审核；B 负�
 |---|---|---|
 | GET /me | 启用的统一登录用户 | actorId、labelingAdmin、canCreateProject、canAnnotate |
 | POST /projects | 任意启用人工；name、description、taskType，幂等键 | 201，创建者为 owner，无需求方审批 |
-| GET /projects?scope=owned | 本人；cursor/limit | 本人项目列表 |
+| GET /projects?scope=owned | 本人；cursor/limit | 本人项目列表；每项额外返回 `datasetImported`（是否有成功导入记录或已登记样本/源文件）、`sampleCount`（已生成样本数）、`resourceCount`（已登记源文件数）、`activeImportCount`（上传或解析中的批次数），用于区分未导入、已导入及导入处理中状态 |
 | GET /projects/{id} | owner | 项目与规范版本，跨用户404 |
 | POST /projects/{id}/spec-versions | owner；taskType、labels、instructions、editorConfig、schemaVersion，幂等键 | 201，新规范；支持 IMAGE_CLASSIFICATION / TIMESERIES_ANNOTATION；可传 templateId/templateVersion，必须匹配内置注册表 |
 | GET /admin/users?limit=20&offset=0 | 标注管理员 | data 为已建立 HUMAN 映射的用户数组，不是全部统一登录账号 |
@@ -246,7 +246,27 @@ node examples/image-import.mjs $projectId $imageZip $downloadDir
 
 脚本执行上传、轮询、全部分页、原图下载及 SHA-256 校验，并保存包含项目、批次、样本 ID 的 manifest.json。批次查询和 samples 接口用于导入数据浏览，分类草稿与人工提交使用第 5 节已有接口。
 
-部署可调容量、ZIP 安全检查及恢复细节见 [图片导入接口细则](08-image-import-api.md)，交接记录见 [交接说明](07-image-import-handoff.md)，验证记录见 [图片导入本地验证记录](09-image-import-verification.md)。
+部署可调容量、ZIP 安全检查及恢复细节见 [图片导入接口细则](04-api.md)，交接记录见 [交接说明](05-team-and-acceptance.md)，验证记录见 [图片导入本地验证记录](archive/09-image-import-verification.md)。
+
+### 3.8 图片导入格式和容量配置
+
+| 环境变量 | 默认值 | 含义 |
+|---|---|---|
+| LABELING_STORAGE_ROOT | ./data/labeling | 独立持久化目录，相对路径以服务工作目录为基准 |
+| LABELING_CHUNK_SIZE_BYTES | 4194304 | 单片4 MiB，新批次冻结 |
+| LABELING_MAX_ARCHIVE_BYTES | 2147483648 | 压缩包2 GiB |
+| LABELING_MAX_EXPANDED_BYTES | 8589934592 | 全部展开内容8 GiB，含非图片 |
+| LABELING_MAX_FILE_BYTES | 67108864 | 单个展开文件64 MiB |
+| LABELING_MAX_ENTRIES | 100000 | 总条目数量，含目录和非图片 |
+| LABELING_MAX_PIXELS | 40000000 | 单张图片最大像素数，解码前检查 |
+| LABELING_MAX_ERRORS | 1000 | 状态接口最多展示的错误数 |
+| LABELING_ZIP_ENCODING | UTF-8 | 无 UTF-8 标记的文件名回退编码，可按真实样本改为 GBK |
+| LABELING_IMPORT_WORKER_ENABLED | true | 是否在本实例处理持久化导入队列 |
+| LABELING_IMPORT_POLL_DELAY_MS | 1000 | 两次队列扫描间隔 |
+
+支持单卷 ZIP/ZIP64；不支持加密、分卷、RAR、7z、SVG、TIFF 等格式。JPEG 扩展名允许 jpg/jpeg，PNG 为 png；扩展名须与真实解码格式一致。其他扩展名、损坏图片与超像素图片返回文件级错误。
+
+这些是可调的部署初始值，并非已验证的容量或性能承诺。大数据量应根据真实样本、内存和磁盘重新配置和测试。本轮 worker 有界串行处理；长批次解析会保持数据库事务和项目共享锁，应测量实际耗时后再安排生产部署。
 
 ## 4. 人工打包与领取
 
@@ -558,7 +578,7 @@ GET `/exports/{id}/download` 每次重新检查 owner，返回真正 `applicatio
 
 新版编辑器直接由统一前端加载裁剪组件，通过第4—5节的本人样本/规范/草稿接口读写。转换后只发送平台 resultFormat/labelId；后端独立验证。保存是草稿，提交必须另行整包操作。不得把旧editor-sync与直接保存同时启用争写同一个草稿。
 
-切换时停止创建外部会话并拒绝旧会话写入，保留历史；新客户端不请求editor-sessions/editor-sync。不要求浏览器持有LS Token。详见 [编辑器接入](10-editor-integration.md)。
+切换时停止创建外部会话并拒绝旧会话写入，保留历史；新客户端不请求editor-sessions/editor-sync。不要求浏览器持有LS Token。详见 [编辑器接入](06-editor-integration.md)。
 
 ## 13. 错误处理与联调顺序
 
@@ -583,16 +603,9 @@ AI链路：上传READY→选择样本（不用包）→agents→ai-executions→
 
 混合链路：AI结束→owner选择待修正结果→打人工包并携带参考→领取且整包提交→owner审核；反向为人工提交后选样创建AI批次。最终验收必须有真实模型和真实接口，不能用Mock或旧编辑器服务代替。
 
-## 14. 2026-11-10 契约审查结论
+## 14. 历史审查记录
 
-本次为静态代码与设计文档审查，没有执行迁移、调用共享数据库、部署或真实模型验收。这是2026-11-10历史审查记录；其当时的待实现结论已由本文件2026-11-16实际契约替代，不用于判断当前接口可用性。真实模型和业务验收仍需运行证据。
-
-- A：统一迁移编号与事务；实现发布轮次、执行租约/终结、审核revision和最终快照。先交可调用的接口和错误响应，不能要求D直接改业务表。
-- B：按第8节实现候选展示、统计、固定选择及受限原图读取；多数投票单独保存多结果输入；导出只消费最终快照。
-- D：按第7.3节调用执行控制，提供真实模型、权重版本、标签映射、分数含义及一组实际成功/失败输出；不另建一套业务结果库。
-- C：按固定选择预览操作，区分执行成功、结果交回和需求方确认；人工逐包提交，AI显示批次成功/失败范围。
-
-联调必须覆盖：领取10包先提交5个完整包；原10张包只返工4张形成新包；多候选不自动选最新；无答案可标待修正但不能确认；选择后审核版本变化整体拒绝；AI部分成功可审成功项；重复回调不重复保存；租约过期/取消后旧回调拒绝；阈值变更不改变既有确认。模型实际可用性、资源需求和分数语义由D提交运行证据，不能仅凭本契约宣称验证通过。
+2026-11-10 的审查结论已归档，不用于判断当前接口状态；见 [合并前接口记录](archive/04-api.md)。
 
 ## 15. 注册模板与结构化输入（首轮已实现）
 
@@ -617,3 +630,13 @@ GET `/task-templates`：启用身份，data 为内置模板数组；字段 templ
 样本及 assignment/Worker items 对能耗给 dataUrl、inputFormat，fileUrl=null；图片 fileUrl 不变。assignment specification 含模板/schema 标识；Worker claim 也返回绑定模板和结果格式。未保存能耗草稿返回合法空 record（schemaVersion=1.0.0、annotations=[]），只有 explicitDone=true 且一个合法主标签才可完整提交。人工自评分开保存 labelIds=[HIGH|MEDIUM|LOW|UNKNOWN]，不能当 AI confidence。
 
 未实现/未宣称验收：完整小时/日资产和历史上下文（当前 NOT_PROVIDED）、专家最终标签语义及额外必填规则、金标准/质检计划/统计快照接口、原图打包、第三方编辑器服务兼容、真实模型质量。质检 API 尚无确认的业务契约，本次不创建返回假统计的占位接口。
+
+## 16. 可信任务插件目录与版本绑定
+
+`GET /task-templates` 现在由后端 `TaskPluginRegistry` 产生，包含已登记插件的 `name`、五项 `capabilities`、有效 `enabled`、`defaultVersion`、`schemaDigest` 与 `exportFormats`，并保留已有模板标识和格式字段。前端创建项目必须同时检查后端能力及本地组件版本；未知版本不能回退。
+
+项目详情新增 `templateId`、`templateVersion`；创建项目传入这两个字段后，由 V24 持久绑定。导入批次也在创建时固定版本。历史规范和成果继续按其冻结版本读取与校验，修改规范不覆盖旧版本。不兼容输入 schema 的升级返回 `PLUGIN_INPUT_MIGRATION_REQUIRED`。
+
+开发说明、接口边界与新增插件步骤见 [24-task-plugins.md](08-task-plugins.md)。此机制只运行随平台发布的可信代码，不提供上传后执行任意代码的接口。
+
+插件成果格式查询：`GET /final-snapshots/{snapshotId}/plugin-export-formats`；作业列表：`GET /projects/{projectId}/exports?snapshotId=...&limit=20&cursor=...`。图片分类和站点日能耗的前端导出使用这些接口及既有 `POST /projects/{projectId}/exports`、`GET /exports/{exportId}/download`，编码器由成果的冻结插件版本决定。

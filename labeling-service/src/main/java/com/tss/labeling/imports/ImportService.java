@@ -27,17 +27,11 @@ public class ImportService {
     private final ObjectMapper json;
     private final ImportSettings settings;
     private final ImportStorage storage;
-    private final ArchiveParser parser;
-    private final EnergyArchiveParser energy;
+    private final com.tss.labeling.plugins.TaskPluginRegistry plugins;
 
-    public ImportService(JdbcTemplate db, ObjectMapper json, ImportSettings settings, ImportStorage storage, ArchiveParser parser,
-            EnergyArchiveParser energy) {
-        this.db = db;
-        this.json = json;
-        this.settings = settings;
-        this.storage = storage;
-        this.parser = parser;
-        this.energy = energy;
+    public ImportService(JdbcTemplate db, ObjectMapper json, ImportSettings settings, ImportStorage storage,
+            com.tss.labeling.plugins.TaskPluginRegistry plugins) {
+        this.db=db;this.json=json;this.settings=settings;this.storage=storage;this.plugins=plugins;
     }
 
     @Transactional
@@ -50,7 +44,8 @@ public class ImportService {
         if (cached != null) return cached;
         writable(state);
         String task = db.queryForObject("SELECT task_type FROM project WHERE id = ?", String.class, project);
-        com.tss.labeling.ls.TaskRegistry.requireType(task);
+        var projectBinding=db.queryForMap("SELECT template_id,template_version FROM project WHERE id=?",project);
+        var plugin=plugins.forCreation(task,(String)projectBinding.get("template_id"),(String)projectBinding.get("template_version"));
         if (!body.filename().toLowerCase(Locale.ROOT).endsWith(".zip")
                 || body.filename().contains("/") || body.filename().contains("\\")) {
             throw failure(422, "UNSUPPORTED_FORMAT", "请上传 ZIP 数据压缩包");
@@ -62,6 +57,7 @@ public class ImportService {
 INSERT INTO import_batch(id, project_id, original_name, storage_key, size_bytes, chunk_size_bytes, sha256)
 VALUES (?, ?, ?, ?, ?, ?, ?)
 """, batch, project, body.filename(), batch + "/archive.zip", body.sizeBytes(), settings.chunkSizeBytes(), body.sha256().toLowerCase(Locale.ROOT));
+        db.update("UPDATE import_batch SET template_id=?,template_version=? WHERE id=?",plugin.descriptor().id(),plugin.descriptor().version(),batch);
         BatchView response = view(batch);
         remember(actor.actorId(), operation, key, hash, batch, response);
         return response;
@@ -175,36 +171,14 @@ updated_at = CURRENT_TIMESTAMP WHERE id = ?
         ArchiveParser.ParsedArchive parsed;
         UUID project = projectOf(batch);
         String taskType = db.queryForObject("SELECT task_type FROM project WHERE id=?", String.class, project);
-        boolean isEnergy = "TIMESERIES_ANNOTATION".equals(taskType);
+        var binding=db.queryForMap("SELECT template_id,template_version FROM import_batch WHERE id=?",batch);
+        com.tss.labeling.plugins.TaskPlugin plugin;
         try {
+            plugin=plugins.resolve(taskType,(String)binding.get("template_id"),(String)binding.get("template_version"));
             verifyArchive(batch, view(batch));
-            parsed = isEnergy ? energy.parse(batch, project) : parser.parse(batch, taskType);
-            if (isEnergy) {
-                for (var sample : parsed.samples()) {
-                    var source = (Map<?, ?>) sample.metadata().get("source");
-                    var payload = (Map<?, ?>) sample.metadata().get("payload");
-                    boolean duplicate =
-                            Boolean.TRUE.equals(
-                                    db.queryForObject(
-                                            "SELECT EXISTS(SELECT 1 FROM sample_input WHERE"
-                                                + " project_id=? AND dataset_version=? AND"
-                                                + " (source_task_id=? OR (station_key=? AND"
-                                                + " date_local=?::date)))",
-                                            Boolean.class,
-                                            project,
-                                            source.get("datasetVersion"),
-                                            source.get("sourceTaskId"),
-                                            payload.get("stationKey"),
-                                            payload.get("dateLocal")));
-                    if (duplicate)
-                        throw new EnergyArchiveParser.Invalid(
-                                "DUPLICATE_ENERGY_SAMPLE",
-                                ((Number) source.get("sourceRow")).longValue(),
-                                "task_id",
-                                "项目内同数据集版本的任务或站点日已存在");
-                }
-            }
-        } catch (EnergyArchiveParser.Invalid exception) {
+            parsed = plugin.parseArchive(batch, project);
+            plugin.validateImport(project, parsed);
+        } catch (com.tss.labeling.plugins.TaskPlugin.ImportFailure exception) {
             db.update(
                     "UPDATE import_batch SET"
                         + " status='FAILED',valid_sample_count=0,error_count=1,error_code=?,errors=?::jsonb,updated_at=CURRENT_TIMESTAMP"
@@ -214,9 +188,9 @@ updated_at = CURRENT_TIMESTAMP WHERE id = ?
                             List.of(
                                     Map.of(
                                             "sourcePath",
-                                            EnergyArchiveParser.SOURCE,
+                                            exception.sourcePath,
                                             "sourceRow",
-                                            exception.row,
+                                            exception.sourceRow,
                                             "field",
                                             exception.field,
                                             "code",
@@ -232,49 +206,14 @@ updated_at = CURRENT_TIMESTAMP WHERE id = ?
         } catch (IOException exception) {
             failed(batch, "ARCHIVE_READ_FAILED", "压缩包损坏或存储读取失败"); return;
         }
-        UUID asset = null;
-        if (isEnergy && !parsed.samples().isEmpty()
-                && "application/json".equals(parsed.samples().get(0).mediaType())) {
-            asset = UUID.randomUUID();
-            var source = (Map<?, ?>) parsed.samples().get(0).metadata().get("source");
-            db.update(
-                    "INSERT INTO"
-                        + " source_asset(id,project_id,batch_id,dataset_version,source_path,archive_sha256)"
-                        + " VALUES (?,?,?,?,?,?)",
-                    asset,
-                    project,
-                    batch,
-                    source.get("datasetVersion"),
-                    EnergyArchiveParser.SOURCE,
-                    db.queryForObject(
-                            "SELECT sha256 FROM import_batch WHERE id=?", String.class, batch));
-        }
         for (var sample : parsed.samples()) {
             db.update(
                     """
 INSERT INTO sample(id, project_id, batch_id, source_path, storage_key, content_sha256, media_type, metadata)
 VALUES (?, ?, ?, ?, ?, ?, ?, CAST(? AS jsonb)) ON CONFLICT (batch_id, source_path) DO NOTHING
 """, sample.id(), project, batch, sample.sourcePath(), sample.storageKey(), sample.sha256(), sample.mediaType(), writeJson(sample.metadata()));
-            if (asset != null) {
-                var source = (Map<?, ?>) sample.metadata().get("source");
-                var payload = (Map<?, ?>) sample.metadata().get("payload");
-                db.update(
-                        "INSERT INTO"
-                            + " sample_input(sample_id,project_id,asset_id,dataset_version,source_task_id,station_key,date_local,input_format,input_hash,source_row,input_payload)"
-                            + " VALUES (?,?,?,?,?,?,?::date,?,?,?,?::jsonb)",
-                        sample.id(),
-                        project,
-                        asset,
-                        source.get("datasetVersion"),
-                        source.get("sourceTaskId"),
-                        payload.get("stationKey"),
-                        payload.get("dateLocal"),
-                        sample.metadata().get("inputFormat"),
-                        sample.sha256(),
-                        source.get("sourceRow"),
-                        writeJson(sample.metadata()));
-            }
         }
+        plugin.persistInputs(project, batch, parsed);
         for (var resource : parsed.resources()) {
             db.update(
                     """

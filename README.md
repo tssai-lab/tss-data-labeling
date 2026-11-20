@@ -1,24 +1,24 @@
-# tss-data-labeling：后端分支
+# TSS AI Platform 与数据标注服务
 
-本分支 `backend` 保存 2026-11-03 本地 Trunk 工作区的源码快照，包含尚未提交到原仓库的修改；不代表生产环境已验收。
+本仓库工作区包含训练平台、统一入口/平台选择、手动标注 Demo，以及新数据标注业务服务。具体代码目录和是否包含某个功能，以当前检出的分支和文件为准；不要把某一功能分支的源码状态误当成服务器部署状态。
 
-两个分支分别保存前端与后端，请克隆到两个目录，不要把两条分支相互合并：
+新标注后端代码位于 `labeling-service/`，当前本地 `labeling-backend` 分支 HEAD 为 `b8a3040`。它包含身份/项目、图片与能耗输入、人工任务、AI 执行接口、需求方审核、集成建议、成果快照和导出实现。概览见 [标注服务说明](labeling-service/README.md)，产品/技术资料索引见 [V1.1 文档总览](docs/labeling-v1.1/README.md)。
 
-```bash
-git clone --branch frontend --single-branch https://github.com/tssai-lab/tss-data-labeling.git frontend
-git clone --branch backend --single-branch https://github.com/tssai-lab/tss-data-labeling.git backend
-```
+多人协作时，先确认团队约定的目标分支，再检出相应分支；常见目标分支包括 `backend`、`frontend`、`labeling-backend` 和 `frontend-local-integration`。这些分支的代码范围及提交进度可能不同，合并前应比较 commit 和文件差异，不要仅凭分支名称推断两者已经同步。
 
-## 当前功能范围
+**状态边界：** 本 README 说明当前检出的代码布局，不承诺 GitHub 分支、服务器、数据库迁移或 CI 与本工作区一致。上线情况应查看对应 workflow、服务器部署 revision 和数据库 Flyway 历史。
 
-- 统一登录、平台选择页与训练平台：现有源码。
-- 数据标注平台 Demo：已有人工标注页面与独立 Python 服务。
-- 新数据标注平台：目前只有待接入入口与 V1.1 产品、架构、数据库、接口和分工设计，尚未完成新业务服务。最近的数据库审查建议尚未全部落实到设计稿或建表脚本。
-- 后端分支 `docs/labeling-v1.1/README.md` 为新标注平台文档索引。
+## 功能目录
+
+- `backend/`：统一身份、训练等既有后端能力。
+- `frontend/`：统一前端及平台入口（以当前分支实际文件为准）。
+- `labeling-service/`：独立的新标注业务后端及 Flyway 迁移。
+- `manual-label/`：旧手动标注演示服务，属于兼容/演示代码，不代表新标注平台业务实现。
+- `docs/labeling-v1.1/`：新标注平台产品、架构、接口、编辑器和进度文档。
 
 ## 配套运行
 
-前端按下方开发说明安装依赖并配置代理；训练后端按后端分支 `backend/README.md` 配置数据库和依赖；Demo 按后端分支 `manual-label/README.md` 启动。仓库不包含本机数据库、用户上传数据、运行凭据、依赖目录及构建产物。文中 `/home/leriger/` 绝对路径描述原维护者环境，其他机器应按实际配置替换。
+各模块的开发和运行方式分别见 `backend/README.md`、`frontend/README.md`、`labeling-service/README.md` 和 `manual-label/README.md`（文件是否存在以当前分支为准）。仓库不包含本机数据库、用户上传数据、运行凭据、依赖目录及构建产物。文中 `/home/leriger/` 绝对路径描述维护者环境，其他机器应按实际配置替换。
 
 # TSSAIPlatform
 

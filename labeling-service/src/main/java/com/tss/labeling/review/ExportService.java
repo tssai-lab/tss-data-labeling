@@ -17,12 +17,43 @@ import java.util.zip.*;
 @Service
 public class ExportService {
     private final WorkflowStore s;
+    private final com.tss.labeling.plugins.TaskPluginRegistry plugins;
 
-    public ExportService(WorkflowStore s) {
-        this.s = s;
+    public ExportService(WorkflowStore s, com.tss.labeling.plugins.TaskPluginRegistry plugins) {
+        this.s = s; this.plugins = plugins;
     }
 
     public record Input(String format, boolean includeOriginals, List<UUID> finalSnapshotIds) {}
+
+    @Transactional
+    public JsonNode formats(ActorContext actor, UUID snapshot) {
+        var owner=s.one("SELECT project_id FROM final_snapshot WHERE id=?",snapshot);
+        s.owner(actor,(UUID)owner.get("project_id"),false);
+        var versions=s.db.queryForList("SELECT DISTINCT v.* FROM final_snapshot_item i JOIN spec_version v ON v.id=i.spec_version_id WHERE i.snapshot_id=?",snapshot);
+        var formats=new LinkedHashSet<String>();
+        String binding=null;
+        for(var version:versions) {
+            var plugin=plugins.frozen(version);
+            String key=plugin.descriptor().id()+"@"+plugin.descriptor().version();
+            if(binding!=null && !binding.equals(key)) throw error(422,"EXPORT_PLUGIN_AMBIGUOUS","不同插件版本的成果请分别导出");
+            binding=key; formats.addAll(plugin.exportFormats());
+        }
+        return s.json.valueToTree(Map.of("formats",formats.stream().sorted().map(format->Map.of("name",format,"title",format,"enabled",true)).toList()));
+    }
+    @Transactional
+    public JsonNode list(ActorContext actor, UUID project, UUID snapshot, int limit, String cursor) {
+        s.owner(actor,project,false);
+        if(limit<1 || limit>100) throw error(400,"INVALID_REQUEST","分页大小应为 1 至 100");
+        UUID before;
+        try { before=cursor==null?new UUID(-1L,-1L):UUID.fromString(cursor); }
+        catch(IllegalArgumentException ex) { throw error(400,"INVALID_CURSOR","分页游标无效"); }
+        var rows=s.db.queryForList("SELECT id AS \"exportId\",format,CASE WHEN expires_at<=CURRENT_TIMESTAMP THEN 'EXPIRED' ELSE status END AS status,error_code AS \"errorCode\",created_at AS \"createdAt\",expires_at AS \"expiresAt\",octet_length(archive) AS \"fileSize\" FROM export_job WHERE project_id=? AND id<? AND (?::jsonb IS NULL OR snapshot_ids @> ?::jsonb) ORDER BY id DESC LIMIT ?",
+                project,before,snapshot==null?null:s.write(List.of(snapshot)),snapshot==null?null:s.write(List.of(snapshot)),limit+1);
+        boolean more=rows.size()>limit;if(more)rows.remove(rows.size()-1);
+        var out=s.json.createObjectNode();out.set("items",s.json.valueToTree(rows));
+        if(more)out.put("nextCursor",rows.get(rows.size()-1).get("exportId").toString());else out.putNull("nextCursor");
+        return out;
+    }
 
     @Transactional
     public JsonNode create(ActorContext actor, UUID project, Input input, String key) {
@@ -30,10 +61,8 @@ public class ExportService {
         String op = "POST:/projects/" + project + "/exports";
         var replay = s.replay(actor, op, key, input);
         if (replay != null) return replay;
-        if (input.format() == null
-                || !Set.of("classification-csv-zip", "energy-jsonl-zip").contains(input.format())
-                || input.includeOriginals())
-            throw error(422, "UNSUPPORTED_EXPORT_FORMAT", "仅支持分类 CSV 或能耗 JSONL ZIP，暂不包含原始文件");
+        com.tss.labeling.plugins.TaskPlugin exporter = null;
+        if (input.includeOriginals()) throw error(422,"UNSUPPORTED_EXPORT_FORMAT","该插件导出暂不包含原始文件");
         if (input.finalSnapshotIds() == null
                 || input.finalSnapshotIds().isEmpty()
                 || input.finalSnapshotIds().size() > 100
@@ -46,15 +75,16 @@ public class ExportService {
         for (UUID snapshot : input.finalSnapshotIds()) {
             var spec =
                     s.one(
-                            "SELECT v.task_type FROM final_snapshot f JOIN spec_version v ON"
+                            "SELECT v.* FROM final_snapshot f JOIN spec_version v ON"
                                     + " v.id=f.spec_version_id WHERE f.id=? AND f.project_id=?",
                             snapshot,
                             project);
-            if (!("classification-csv-zip".equals(input.format())
-                            ? "IMAGE_CLASSIFICATION"
-                            : "TIMESERIES_ANNOTATION")
-                    .equals(spec.get("task_type")))
-                throw error(422, "UNSUPPORTED_EXPORT_FORMAT", "快照任务类型与导出格式不一致");
+            var frozen = plugins.frozen(spec);
+            if (!frozen.exportFormats().contains(input.format()))
+                throw error(422,"UNSUPPORTED_EXPORT_FORMAT","快照插件与导出格式不匹配");
+            if (exporter != null && (!frozen.descriptor().id().equals(exporter.descriptor().id()) || !frozen.descriptor().version().equals(exporter.descriptor().version())))
+                throw error(422,"EXPORT_PLUGIN_AMBIGUOUS","不同插件版本的成果请分别导出");
+            exporter = frozen;
             for (var row :
                     s.db.queryForList(
                             "SELECT sample_id,result::text AS"
@@ -161,43 +191,11 @@ FROM final_snapshot_item f JOIN sample s ON s.id=f.sample_id WHERE f.snapshot_id
                     rows.add(row);
                 }
             }
-            String filename;
-            byte[] data;
-            if ("classification-csv-zip".equals(job.get("format"))) {
-                filename = "results.csv";
-                StringBuilder csv =
-                        new StringBuilder(
-                                "sampleId,sourcePath,specVersionId,resultId,labelId,reviewRevision,sourceKind,submissionId,executionId,inputHash\r\n");
-                for (var row : rows) {
-                    StringJoiner line = new StringJoiner(",");
-                    for (String field :
-                            List.of(
-                                    "sampleId",
-                                    "sourcePath",
-                                    "specVersionId",
-                                    "resultId",
-                                    "labelId",
-                                    "reviewRevision",
-                                    "sourceKind",
-                                    "submissionId",
-                                    "executionId",
-                                    "inputHash"))
-                        line.add(
-                                cell(
-                                        "labelId".equals(field)
-                                                ? ((JsonNode) row.get("result"))
-                                                        .path("labelId")
-                                                        .asText()
-                                                : row.get(field)));
-                    csv.append(line).append("\r\n");
-                }
-                data = csv.toString().getBytes(StandardCharsets.UTF_8);
-            } else {
-                filename = "results.jsonl";
-                StringBuilder lines = new StringBuilder();
-                for (var row : rows) lines.append(s.write(row)).append('\n');
-                data = lines.toString().getBytes(StandardCharsets.UTF_8);
-            }
+            UUID firstSnapshot=UUID.fromString(s.read(job.get("snapshot_ids").toString()).get(0).asText());
+            var frozenPlugin=plugins.frozen(s.one("SELECT v.* FROM final_snapshot f JOIN spec_version v ON v.id=f.spec_version_id WHERE f.id=?",firstSnapshot));
+            var exported = frozenPlugin.export((String)job.get("format"),rows);
+            String filename = exported.filename();
+            byte[] data = exported.bytes();
             if (data.length > 64 * 1024 * 1024) throw new IOException("export size limit");
             byte[] manifest =
                     s.write(
@@ -237,7 +235,7 @@ FROM final_snapshot_item f JOIN sample s ON s.id=f.sample_id WHERE f.snapshot_id
                     archive,
                     WorkflowStore.digest(archive),
                     id);
-        } catch (IOException | IllegalStateException ex) {
+        } catch (IOException | IllegalStateException | com.tss.labeling.common.BusinessException ex) {
             s.db.update(
                     "UPDATE export_job SET status='FAILED',error_code='EXPORT_BUILD_FAILED' WHERE"
                         + " id=?",

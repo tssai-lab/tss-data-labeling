@@ -1619,6 +1619,9 @@ class ImportIntegrationTest {
                                 "sampleIds",
                                 revisions.stream().map(x -> x.get("sampleId")).toList()),
                         201);
+        var pluginFormats=resultGet("/final-snapshots/"+finalSnapshot.path("finalSnapshotId").asText()+"/plugin-export-formats","owner",200);
+        assertEquals("energy-jsonl-zip",pluginFormats.path("formats").get(0).path("name").asText());
+        resultGet("/final-snapshots/"+finalSnapshot.path("finalSnapshotId").asText()+"/plugin-export-formats","other",404);
         var export =
                 taskPost(
                         "/projects/" + p + "/exports",
@@ -1636,6 +1639,9 @@ class ImportIntegrationTest {
                 resultGet("/exports/" + export.path("exportId").asText(), "owner", 200)
                         .path("status")
                         .asText());
+        var exportList=resultGet("/projects/"+p+"/exports?snapshotId="+finalSnapshot.path("finalSnapshotId").asText(),"owner",200);
+        assertEquals(export.path("exportId").asText(),exportList.path("items").get(0).path("exportId").asText());
+        resultGet("/projects/"+p+"/exports","other",404);
         assertEquals(
                 1,
                 db.queryForObject(
@@ -2470,5 +2476,55 @@ class ImportIntegrationTest {
         taskPost("/projects/"+f.project+"/sample-reviews","owner",UUID.randomUUID().toString(),Map.of("items",java.util.List.of(Map.of("sampleId",sample,"specVersionId",otherSpec,"action","ACCEPT","sourceKind","HUMAN","submissionId",submission))),409);
         assertEquals("normal",resultGet("/submissions/"+submission,"owner",200).path("items").get(0).path("result").path("labelId").asText());
         assertThrows(org.springframework.dao.DataAccessException.class,()->db.update("UPDATE submission_item SET result='{}' WHERE submission_id=?",UUID.fromString(submission)));
+    }
+
+    @Test
+    void trustedPluginCataloguePinsProjectsSpecsAndInflightImports() throws Exception {
+        var catalogue=json.readTree(mvc.perform(get(API+"/task-templates").header("Authorization","Bearer owner"))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString()).path("data");
+        assertEquals(4,catalogue.size());
+        for(var plugin:catalogue) {
+            assertTrue(plugin.path("enabled").asBoolean());
+            assertTrue(plugin.path("capabilities").path("importer").asBoolean());
+            assertTrue(plugin.path("capabilities").path("completion").asBoolean());
+            assertEquals(64,plugin.path("schemaDigest").asText().length());
+        }
+        String p=project();
+        var spec=taskPost("/projects/"+p+"/spec-versions","owner",UUID.randomUUID().toString(),
+                Map.of("taskType","IMAGE_CLASSIFICATION","schemaVersion","1","labels",java.util.List.of(Map.of("id","normal","name","正常"))),201);
+        assertEquals("image-classification",spec.path("templateId").asText());
+        assertEquals("1.0.0",spec.path("templateVersion").asText());
+        assertEquals("1.0.0",db.queryForObject("SELECT template_version FROM labeling.project WHERE id=?",String.class,UUID.fromString(p)));
+        String batch=uploaded(p,zip(Map.of("sample.png",image("png"))));
+        db.update("UPDATE labeling.project SET template_version='2.0.0' WHERE id=?",UUID.fromString(p));
+        assertEquals("1.0.0",db.queryForObject("SELECT template_version FROM labeling.import_batch WHERE id=?",String.class,UUID.fromString(batch)));
+        command(batch,"complete",UUID.randomUUID().toString()).andExpect(status().isAccepted());
+        processQueue();
+        assertEquals("READY",statusOf(batch).path("status").asText());
+        taskPost("/projects","owner",UUID.randomUUID().toString(),Map.of("name","未知插件","taskType","IMAGE_CLASSIFICATION","templateId","unknown","templateVersion","1.0.0"),422);
+    }
+
+    @Test
+    void actualEnergyDatasetImportsAllTwoThousandSamplesAndPublishesTwoHundredPackages() throws Exception {
+        String folder=System.getProperty("labeling.energy.dataset");
+        org.junit.jupiter.api.Assumptions.assumeTrue(folder!=null && !folder.isBlank());
+        Path dataset=Path.of(folder);
+        String version=json.readTree(Files.readAllBytes(dataset.resolve("manifest.json"))).path("version").asText();
+        byte[] csv=Files.readAllBytes(dataset.resolve("sample/station_day_tasks_2k.csv"));
+        String p=energyProject();
+        String batch=uploaded(p,zip(Map.of("manifest.json",json.writeValueAsBytes(Map.of("datasetVersion",version)),"sample/station_day_tasks_2k.csv",csv)));
+        command(batch,"complete",UUID.randomUUID().toString()).andExpect(status().isAccepted());
+        processQueue();
+        assertEquals("READY",statusOf(batch).path("status").asText());
+        assertEquals(2000,statusOf(batch).path("validSampleCount").asInt());
+        assertEquals(0,statusOf(batch).path("errorCount").asInt());
+        assertEquals(2000,db.queryForObject("SELECT count(*) FROM labeling.sample_input WHERE project_id=?",Integer.class,UUID.fromString(p)));
+        var spec=taskPost("/projects/"+p+"/spec-versions","owner",UUID.randomUUID().toString(),Map.of("taskType","TIMESERIES_ANNOTATION","schemaVersion","1.0.0","labels",java.util.List.of(Map.of("id","normal","name","正常"))),201);
+        var plan=taskPost("/projects/"+p+"/package-plans","owner",UUID.randomUUID().toString(),Map.of("batchId",batch,"specVersionId",spec.path("specVersionId").asText(),"packageSize",10,"annotatorsPerSample",1),201);
+        assertEquals(200,plan.path("packageSampleCounts").size());
+        assertEquals(2000,plan.path("sampleCount").asInt());
+        var published=publishTask(plan);
+        assertEquals("PUBLISHED",published.path("status").asText());
+        assertEquals(200,published.path("packages").size());
     }
 }

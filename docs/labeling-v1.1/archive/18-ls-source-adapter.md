@@ -14,7 +14,7 @@
 - 新增登录后的配置检查接口 `POST /api/labeling/v1/label-configs/inspect`；不写项目、不发布任务、不导出任意用户上传的结果。
 - 内部转换支持 JSON、JSON_MIN、CSV、TSV，以及适用检测配置的 COCO、YOLO。格式是否适用由 LS 控件配置判断。
 
-源码与协议详情见 [适配模块说明](../../labeling-service/ls-source-adapter/README.md)。
+源码与协议详情见 [适配模块说明](../../../labeling-service/ls-source-adapter/README.md)。
 
 ## 本地验证
 

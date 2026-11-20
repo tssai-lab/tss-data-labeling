@@ -17,7 +17,7 @@ import java.util.*;
 
 @Component
 public class EnergyArchiveParser {
-    static final String SOURCE = "sample/station_day_tasks_2k.csv";
+    public static final String SOURCE = "sample/station_day_tasks_2k.csv";
     private final ImportSettings settings;
     private final ImportStorage storage;
     private final ObjectMapper json;
@@ -29,10 +29,10 @@ public class EnergyArchiveParser {
     }
 
     public static class Invalid extends RuntimeException {
-        final String code, field;
-        final long row;
+        public final String code, field;
+        public final long row;
 
-        Invalid(String code, long row, String field, String message) {
+        public Invalid(String code, long row, String field, String message) {
             super(message);
             this.code = code;
             this.row = row;
@@ -44,7 +44,7 @@ public class EnergyArchiveParser {
         throw new Invalid("INVALID_ENERGY_INPUT", row, field, message);
     }
 
-    ArchiveParser.ParsedArchive parse(UUID batch, UUID project) throws IOException {
+    public ArchiveParser.ParsedArchive parse(UUID batch, UUID project) throws IOException {
         ZipSafety.check(storage.archive(batch), settings);
         try (var zip =
                 ZipFile.builder()

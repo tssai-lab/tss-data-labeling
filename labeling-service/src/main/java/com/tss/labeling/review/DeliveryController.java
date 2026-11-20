@@ -86,6 +86,18 @@ public class DeliveryController {
         return out(aggregation.items(actor(auth), aggregationId, limit, cursor), req);
     }
 
+    @GetMapping("/final-snapshots/{snapshotId}/plugin-export-formats")
+    public ApiResponse<JsonNode> pluginExportFormats(@RequestHeader(value="Authorization",required=false)String auth,
+            @PathVariable UUID snapshotId,HttpServletRequest req) {
+        return out(exports.formats(actor(auth),snapshotId),req);
+    }
+    @GetMapping("/projects/{projectId}/exports")
+    public ApiResponse<JsonNode> exportList(@RequestHeader(value="Authorization",required=false)String auth,
+            @PathVariable UUID projectId,@RequestParam(required=false)UUID snapshotId,
+            @RequestParam(defaultValue="20")int limit,@RequestParam(required=false)String cursor,HttpServletRequest req) {
+        return out(exports.list(actor(auth),projectId,snapshotId,limit,cursor),req);
+    }
+
     @PostMapping("/projects/{projectId}/exports")
     @ResponseStatus(HttpStatus.ACCEPTED)
     public ApiResponse<JsonNode> createExport(

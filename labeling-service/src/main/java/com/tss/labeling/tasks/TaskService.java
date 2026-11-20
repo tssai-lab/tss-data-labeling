@@ -32,6 +32,7 @@ public class TaskService {
     private final com.tss.labeling.review.ReferenceService references;
     private final com.tss.labeling.review.ResultScopeService scopes;
     private final org.springframework.beans.factory.ObjectProvider<com.tss.labeling.imports.NativeTaskService> nativeInputs;
+    private final com.tss.labeling.plugins.TaskPluginRegistry plugins;
     private final int maxSamples;
     private final int maxPackageSize;
     private final int maxAnnotators;
@@ -40,6 +41,7 @@ public class TaskService {
             com.tss.labeling.review.ResultScopeService scopes,
             com.tss.labeling.review.ReferenceService references,
             org.springframework.beans.factory.ObjectProvider<com.tss.labeling.imports.NativeTaskService> nativeInputs,
+            com.tss.labeling.plugins.TaskPluginRegistry plugins,
             @Value("${labeling.tasks.max-samples:10000}") int maxSamples,
             @Value("${labeling.tasks.max-package-size:1000}") int maxPackageSize,
             @Value("${labeling.tasks.max-annotators:10}") int maxAnnotators) {
@@ -47,7 +49,7 @@ public class TaskService {
         this.outcomes = outcomes;
         this.scopes = scopes;
         this.references = references;
-        this.nativeInputs = nativeInputs;
+        this.nativeInputs = nativeInputs; this.plugins = plugins;
         this.maxSamples = maxSamples; this.maxPackageSize = maxPackageSize; this.maxAnnotators = maxAnnotators;
     }
 
@@ -74,6 +76,7 @@ public class TaskService {
         JsonNode previous = replay(actor.actorId(), op, key, hash);
         if (previous != null) return previous;
         Map<String,Object> spec = one("SELECT * FROM spec_version WHERE id = ? AND project_id = ?", input.specVersionId(), project);
+        plugins.writable(plugins.frozen(spec));
         if (!Objects.equals(spec.get("task_type"), p.get("task_type"))) throw error(409,"SPEC_MISMATCH","规范任务类型不匹配");
         List<Map<String,Object>> rows;
         String selectionJson = null;
@@ -372,11 +375,13 @@ ORDER BY s.id LIMIT ?
         var response=(com.fasterxml.jackson.databind.node.ObjectNode)page(rows,limit,"sampleId");
         Map<String,Object> spec = one(
                         """
-SELECT s.id AS "specVersionId", s.template_id AS "templateId",s.template_version AS "templateVersion",s.input_schema_id AS "inputSchemaId",s.result_schema_id AS "resultSchemaId",s.task_type AS "taskType",s.schema_version AS "schemaVersion",s.labels::text AS labels, s.instructions, s.editor_config::text AS "editorConfig"
+SELECT s.id AS "specVersionId", s.template_id AS "templateId",s.template_version AS "templateVersion",s.input_schema_id AS "inputSchemaId",s.result_schema_id AS "resultSchemaId",s.schema_digest AS "schemaDigest",s.task_type AS "taskType",s.schema_version AS "schemaVersion",s.labels::text AS labels, s.instructions, s.editor_config::text AS "editorConfig"
 FROM spec_version s WHERE s.id=?
 """,a.get("spec_version_id"));
         spec.put("labels",read((String)spec.get("labels")));
         spec.put("editorConfig",read((String)spec.get("editorConfig")));
+        var binding = plugins.resolve((String)spec.get("taskType"),(String)spec.get("templateId"),(String)spec.get("templateVersion")).descriptor();
+        spec.put("editorKey",binding.editorKey()); spec.put("inputFormat",binding.inputFormat());
         response.set("specification",json.valueToTree(spec));
         response.put("assignmentId", assignment.toString());
         response.put("packageId", a.get("package_id").toString());
@@ -651,11 +656,11 @@ WHERE t.plan_id=? ORDER BY t.sequence_no
                                 ? Map.of("result_format",rs.getString("result_format"),"task_type",rs.getString("task_type"))
                                 : null,
                         refs.get(id),id,project);
-                Map<String,Object> target = one("SELECT task_type,schema_version FROM spec_version WHERE id=? AND project_id=?",spec,project);
+                Map<String,Object> target = one("SELECT * FROM spec_version WHERE id=? AND project_id=?",spec,project);
                 String taskType=(String)target.get("task_type");
                 String expectedFormat="label-studio-v1".equals(target.get("schema_version"))
                         ? "label-studio-v1"
-                        : (String)TaskTemplates.forType(taskType).get("resultFormat");
+                        : plugins.frozen(target).descriptor().resultFormat();
                 if(reference==null || !taskType.equals(reference.get("task_type"))
                         || !expectedFormat.equals(reference.get("result_format")))
                     throw error(422,"INVALID_REFERENCE","参考结果不属于该样本、项目或兼容的任务类型");

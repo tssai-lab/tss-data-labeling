@@ -55,7 +55,7 @@ public class TaskRegistry {
         if("custom".equals(id))frozen.put("templateVersion","custom:"+digest(xml).substring(0,16));
         else{
             JsonNode template=templates.find(id);
-            String group="TIME_SERIES".equals(type)?"Time Series Analysis":"Computer Vision";
+            String group=isTimeSeries(type)?"Time Series Analysis":"Computer Vision";
             if(!group.equals(template.path("group").asText())||!"community".equals(template.path("type").asText()))throw error(422,"TEMPLATE_CATEGORY_MISMATCH","模板与项目类别或已开放能力不匹配");
             frozen.put("templateVersion",template.path("version").asText());
             frozen.put("templateSourceSha256",template.path("sourceSha256").asText());
@@ -82,11 +82,14 @@ public class TaskRegistry {
         for(JsonNode control:parsed)if(!CONTROLS.contains(control.path("type").asText()))throw error(422,"CONTROL_NOT_ENABLED","此控件尚未开放："+control.path("type").asText());
         for (JsonNode control:parsed) for(JsonNode input:control.path("inputs")) {
             String object=input.path("type").asText();
-            if ("TIME_SERIES".equals(type) && !Set.of("TimeSeries","TimeSeriesChannel","Text","Header").contains(object))
+            if (isTimeSeries(type) && !Set.of("TimeSeries","TimeSeriesChannel","Text","Header").contains(object))
                 throw error(422,"CONFIG_CATEGORY_MISMATCH","时序项目包含其他类别的数据控件");
-            if (!"TIME_SERIES".equals(type) && Set.of("TimeSeries","Audio","Video").contains(object))
+            if (!isTimeSeries(type) && Set.of("TimeSeries","Audio","Video").contains(object))
                 throw error(422,"CONFIG_CATEGORY_MISMATCH","当前项目尚未登记该数据控件");
         }
+    }
+    private boolean isTimeSeries(String type) {
+        return Set.of("TIME_SERIES", "TIMESERIES_ANNOTATION").contains(type);
     }
     private String digest(String value){try{return java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(value.getBytes(java.nio.charset.StandardCharsets.UTF_8)));}catch(java.security.NoSuchAlgorithmException exc){throw new IllegalStateException(exc);}}
 }
