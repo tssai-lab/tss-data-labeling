@@ -33,6 +33,7 @@ import {
 } from '@/services/nativeLabeling';
 import { formatDisplayDateTime } from '@/utils/formatDateTime';
 import { normalizeWorkspaceProject, projectPanel } from '@/services/projectCompatibility.mjs';
+import { availableTaskPlugins, type AvailableTaskPlugin, type RegisteredTaskPlugin } from '@/services/labelingTemplates.mjs';
 import styles from './index.less';
 import NativeDataPreparation from './NativeDataPreparation';
 import NativeOutcome from './NativeOutcome';
@@ -72,9 +73,7 @@ export default function ServerWorkspace() {
   const [aiSession, setAiSession] = useState<{ projectId: string; samples: NativeSample[]; version: NativeProject['specVersions'][number]; config: { modelId: string; instructions: string }; results: DemoResult[] }>();
   const [projectQuery, setProjectQuery] = useState('');
   const [projectStatus, setProjectStatus] = useState('ALL');
-  const [taskTypes, setTaskTypes] = useState<
-    { taskType: string; name: string }[]
-  >([]);
+  const [taskTypes, setTaskTypes] = useState<AvailableTaskPlugin[]>([]);
   const [reload, setReload] = useState(0),
     [loading, setLoading] = useState(true),
     [busy, setBusy] = useState(false),
@@ -127,18 +126,14 @@ export default function ServerWorkspace() {
       if (!projectId) {
         const [values, types] = await Promise.all([
           collectPages<Project>('/projects?scope=owned', abort.signal),
-          labelingJson<{ taskType: string; name: string }[]>(
-            '/label-configs/task-types',
+          labelingJson<RegisteredTaskPlugin[]>(
+            '/task-templates',
             { signal: abort.signal },
           ),
         ]);
         if (!abort.signal.aborted) {
           setProjects(values);
-          setTaskTypes(
-            types.filter((value) =>
-              ['TIME_SERIES', 'COMPUTER_VISION'].includes(value.taskType),
-            ),
-          );
+          setTaskTypes(availableTaskPlugins(types));
           setProject(undefined);
         }
         return;
@@ -237,7 +232,7 @@ export default function ServerWorkspace() {
             <Button
               type="primary"
               icon={<PlusOutlined />}
-              disabled={loading || !taskTypes.length}
+              disabled={loading || !taskTypes.some((plugin) => plugin.enabled)}
               onClick={() => {
                 setName('');
                 setDescription('');
@@ -436,17 +431,20 @@ export default function ServerWorkspace() {
               onCancel={() => setCreating(false)}
               okText="创建"
               confirmLoading={busy}
-              okButtonProps={{ disabled: !name.trim() || !type }}
+              okButtonProps={{ disabled: !name.trim() || !taskTypes.some((plugin) => plugin.key === type && plugin.enabled) }}
               onOk={() =>
                 void run(async () => {
                   if (!name.trim()) throw Error('请输入项目名称');
-                  if (!type) throw Error('请选择任务类型');
+                  const selectedPlugin = taskTypes.find((plugin) => plugin.key === type && plugin.enabled);
+                  if (!selectedPlugin) throw Error('请选择已启用且已安装的任务模板');
                   const created = await post<NativeProject>(
                     '/projects',
                     {
                       name: name.trim(),
                       description: description.trim(),
-                      taskType: type,
+                      taskType: selectedPlugin.taskType,
+                      templateId: selectedPlugin.templateId,
+                      templateVersion: selectedPlugin.templateVersion,
                     },
                     operationKey(),
                   );
@@ -487,8 +485,10 @@ export default function ServerWorkspace() {
                     placeholder="请选择任务类型"
                     onChange={setType}
                     options={taskTypes.map((value) => ({
-                      value: value.taskType,
-                      label: value.name,
+                      value: value.key,
+                      label: `${value.name} · v${value.templateVersion}${value.enabled ? '' : '（暂不可用）'}`,
+                      disabled: !value.enabled,
+                      title: value.unavailableReason,
                     }))}
                   />
                 </Form.Item>

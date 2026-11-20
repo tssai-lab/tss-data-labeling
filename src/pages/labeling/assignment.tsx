@@ -13,7 +13,7 @@ import {
   Tag,
   Typography,
 } from 'antd';
-import { type ReactNode, useEffect, useRef, useState } from 'react';
+import { type ComponentType, type ReactNode, useEffect, useRef, useState } from 'react';
 import {
   assignmentSampleBlob,
   LabelingError,
@@ -33,7 +33,7 @@ import type {
   WorkSample,
 } from '@/services/labelingTasks';
 import { allWorkItems, tasks } from '@/services/labelingTasks';
-import { assertClassificationWork } from '@/services/labelingTemplates.mjs';
+import { assertClassificationWork, resolveTaskTemplate } from '@/services/labelingTemplates.mjs';
 import type {
   ClassificationEditorHandle,
   EditorState,
@@ -634,7 +634,7 @@ export default function AssignmentEntry() {
         if (work.assignmentId !== assignmentId)
           throw new Error('任务归属不匹配');
         if (!abort.signal.aborted)
-          setKind(work.specification.taskType || 'IMAGE_CLASSIFICATION');
+          setKind(resolveTaskTemplate(work.specification).editorKey);
       })
       .catch((e) => {
         if (!abort.signal.aborted) setError(describe(e));
@@ -650,10 +650,12 @@ export default function AssignmentEntry() {
         </Button>
       </WorkspaceLayout>
     );
-  if (kind === 'TIMESERIES_ANNOTATION')
-    return <EnergyAssignment key={assignmentId} />;
-  if (kind === 'IMAGE_CLASSIFICATION')
-    return <ClassificationAssignment key={assignmentId} />;
+  const registeredWorkspaces: Record<string, ComponentType> = {
+    'image-classification-editor': ClassificationAssignment,
+    'energy-station-day-editor': EnergyAssignment,
+  };
+  const Workspace = registeredWorkspaces[kind];
+  if (Workspace) return <Workspace key={assignmentId} />;
   return (
     <WorkspaceLayout>
       {kind ? <Alert type="error" message="任务类型尚未支持" /> : <Spin />}

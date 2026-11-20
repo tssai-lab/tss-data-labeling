@@ -326,6 +326,7 @@ export default function EnergyAssignment() {
           {loading && <Spin />}
           {input && draft && (
             <EnergyTaskEditor
+              binding={work.specification}
               key={`${sampleId}:${draft.revision}:${refresh}`}
               input={input}
               labels={work.specification.labels}

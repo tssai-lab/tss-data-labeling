@@ -12,7 +12,7 @@ import EnergyEditorAdapter, {
   type EnergyEditorProps,
 } from './EnergyEditorAdapter';
 
-// Only trusted, built components can enter this registry. Keys never become URLs/import expressions.
+// 仅登记随平台构建的可信组件，插件标识不能作为远程地址或动态导入表达式。
 const editors = Object.freeze({
   'image-classification-editor': ClassificationEditorAdapter,
   'energy-station-day-editor': EnergyEditorAdapter,
@@ -38,12 +38,13 @@ export const ClassificationTaskEditor = forwardRef<
     );
   }
 });
-export function EnergyTaskEditor(props: EnergyEditorProps) {
+export function EnergyTaskEditor({ binding, ...props }: EnergyEditorProps & { binding?: TaskBinding }) {
   try {
     resolveTaskTemplate(
       {
         templateId: 'energy-station-day',
         templateVersion: '1.0.0',
+        ...binding,
         inputFormat: props.input.inputFormat,
         inputSchemaId: props.input.schemaId,
       },

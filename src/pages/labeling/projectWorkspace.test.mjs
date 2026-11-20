@@ -3,8 +3,8 @@ import test from 'node:test';
 import dayjs from 'dayjs';
 import { renderHooks, flushHooks } from '../../../scripts/qa/render-hook-component.mjs';
 
-function workspace(taskType = 'IMAGE_CLASSIFICATION') {
-  const location = { pathname: '/labeling/projects/historical', search: '?panel=publish' };
+function workspace(taskType = 'IMAGE_CLASSIFICATION', { root = false, catalogue = [] } = {}) {
+  const location = { pathname: root ? '/labeling' : '/labeling/projects/historical', search: '?panel=publish' };
   const spec = { specVersionId: 'frozen', versionNo: 1, schemaVersion: 'image-classification-v1', labels: [{ id: 'normal', name: '正常' }], instructions: '冻结规范', editorConfig: null };
   const project = { projectId: 'historical', name: '历史项目', taskType, status: 'OPEN', specVersions: [spec] };
   const sample = { sampleId: 'sample-1', metadata: {}, sourcePath: 'normal.jpg', mediaType: 'image/jpeg' };
@@ -17,9 +17,9 @@ function workspace(taskType = 'IMAGE_CLASSIFICATION') {
     antd: ui,
     dayjs: { default: dayjs },
     '@ant-design/icons': { PlusOutlined: 'PlusIcon' },
-    '@umijs/max': { Link: 'Link', useLocation: () => location, useParams: () => ({ projectId: project.projectId }), history: { block: () => () => {}, push(path) { location.search = path.slice(path.indexOf('?')); } } },
+    '@umijs/max': { Link: 'Link', useLocation: () => location, useParams: () => ({ projectId: root ? undefined : project.projectId }), history: { block: () => () => {}, push(path) { location.search = path.slice(path.indexOf('?')); } } },
     './index.less': { default: {} },
-    '@/services/labeling': { labelingJson: async (path) => { requested.push(path); return project; }, describeLabelingError: (error) => error.message },
+    '@/services/labeling': { labelingJson: async (path) => { requested.push(path); return path === '/task-templates' ? catalogue : project; }, describeLabelingError: (error) => error.message, operationKey: () => 'fixture-key', post: async (path, body) => { requested.push({ path, body }); return project; } },
     '@/services/nativeLabeling': { collectPages: async (path) => { requested.push(path); return path.endsWith('/input-samples') ? [sample] : []; } },
   };
   for (const name of ['NativeDataPreparation', 'NativeOutcome', 'NativePublish', 'NativeReview', 'NativeAi', 'NativeSpecSettings', 'StatusBadge', 'WorkspaceLayout', 'ProjectManagement', 'ProjectBreadcrumbs']) dependencies[`./${name}`] = { default: name };
@@ -58,5 +58,25 @@ test('switching AI back to human removes the AI step and clears candidates; retu
   assert.equal(r.nodes('NativeAi').length, 0);
   location.search = '?panel=review'; r.render(); r.render();
   assert.equal(r.nodes('NativeReview')[0].props.aiResults, undefined);
+  r.dispose();
+});
+
+
+test('project creation uses available server plugins and sends the exact frozen plugin version', async () => {
+  const capabilities = { importer: true, inputReader: true, resultValidator: true, completion: true, exporter: true };
+  const plugin = { templateId: 'energy-station-day', templateVersion: '1.0.0', name: '能耗插件', taskType: 'TIMESERIES_ANNOTATION', editorKey: 'energy-station-day-editor', enabled: true, capabilities };
+  const { runtime: r, requested } = workspace('IMAGE_CLASSIFICATION', { root: true, catalogue: [plugin, { ...plugin, templateVersion: '2.0.0' }] });
+  r.render(); await flushHooks(); r.render();
+  const select = r.nodes('Select').find((node) => node.props['aria-label'] === '任务类别');
+  assert.equal(select.props.options[0].disabled, false);
+  assert.equal(select.props.options[1].disabled, true);
+  select.props.onChange('energy-station-day@1.0.0');
+  r.nodes('Input').find((node) => node.props['aria-label'] === '项目名称').props.onChange({ target: { value: '插件项目' } });
+  r.render();
+  r.nodes('Modal')[0].props.onOk(); await flushHooks();
+  const call = requested.find((item) => item?.path === '/projects');
+  assert.equal(call.body.taskType, 'TIMESERIES_ANNOTATION');
+  assert.equal(call.body.templateId, 'energy-station-day');
+  assert.equal(call.body.templateVersion, '1.0.0');
   r.dispose();
 });

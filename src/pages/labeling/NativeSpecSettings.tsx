@@ -174,6 +174,8 @@ function NativeConfigurationSettings({
       `/projects/${project.projectId}/spec-versions`,
       {
         taskType: project.taskType,
+        templateId: version?.templateId || project.templateId,
+        templateVersion: version?.templateVersion || project.templateVersion,
         schemaVersion: 'label-studio-v1',
         labels: [],
         instructions,
@@ -340,6 +342,6 @@ function NativeConfigurationSettings({
 }
 
 export default function NativeSpecSettings(props: Parameters<typeof NativeConfigurationSettings>[0]) {
-  return isLegacyProjectSpec(props.version, props.project.taskType) || (!props.version && props.project.taskType === 'IMAGE_CLASSIFICATION')
+  return isLegacyProjectSpec(props.version, props.project.taskType) || (!props.version && ['IMAGE_CLASSIFICATION', 'TIMESERIES_ANNOTATION'].includes(props.project.taskType))
     ? <LegacyProjectSettings {...props} /> : <NativeConfigurationSettings {...props} />;
 }

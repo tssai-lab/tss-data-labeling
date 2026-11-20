@@ -60,3 +60,24 @@ test('assignment and individual sample metadata are checked before draft or imag
     }),
   );
 });
+
+test('plugin registration rejects duplicate IDs and keeps versions isolated', async () => {
+  const { createTaskPluginRegistry, taskTemplates } = await import('./labelingTemplates.mjs');
+  const image = taskTemplates.find((template) => template.id === 'image-classification');
+  assert.throws(() => createTaskPluginRegistry([image, image]));
+  assert.throws(() => createTaskPluginRegistry([{ ...image, editorKey: '' }]));
+  const registry = createTaskPluginRegistry([image, { ...image, version: '2.0.0' }]);
+  assert.equal(registry.resolve({ templateId: image.id, templateVersion: '1.0.0' }).version, '1.0.0');
+  assert.throws(() => registry.resolve({ templateId: image.id, templateVersion: '3.0.0' }));
+});
+
+test('server availability and installed frontend versions jointly control selectable plugins', async () => {
+  const { availableTaskPlugins } = await import('./labelingTemplates.mjs');
+  const capabilities = { importer: true, inputReader: true, resultValidator: true, completion: true, exporter: true };
+  const registered = { templateId: 'energy-station-day', templateVersion: '1.0.0', taskType: 'TIMESERIES_ANNOTATION', editorKey: 'energy-station-day-editor', enabled: true, capabilities };
+  assert.equal(availableTaskPlugins([registered])[0].enabled, true);
+  assert.equal(availableTaskPlugins([{ ...registered, capabilities: { ...capabilities, importer: false } }])[0].enabled, false);
+  assert.equal(availableTaskPlugins([{ ...registered, enabled: false }])[0].enabled, false);
+  assert.equal(availableTaskPlugins([{ ...registered, templateVersion: '2.0.0' }])[0].installed, false);
+  assert.equal(availableTaskPlugins([{ ...registered, editorKey: 'https://untrusted.example/editor.js' }])[0].enabled, false);
+});
