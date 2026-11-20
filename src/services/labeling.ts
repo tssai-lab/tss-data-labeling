@@ -11,6 +11,8 @@ export type SpecVersion = TaskBinding & {
   instructions: string;
 };
 export type Project = {
+  templateId?: string;
+  templateVersion?: string;
   projectId: string;
   name: string;
   description: string;

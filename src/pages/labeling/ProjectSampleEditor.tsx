@@ -163,6 +163,7 @@ export default function ProjectSampleEditor({
     );
   return energy ? (
     <EnergyTaskEditor
+      binding={version}
       input={energy}
       labels={version.labels}
       draft={{

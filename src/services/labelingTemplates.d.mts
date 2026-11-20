@@ -28,3 +28,15 @@ export function resolveTaskTemplate(
 export function assertClassificationWork(
   work: TaskBinding & { specification?: TaskBinding; items?: TaskBinding[] },
 ): TaskTemplate;
+
+export function createTaskPluginRegistry(definitions: readonly TaskTemplate[]): { templates: readonly TaskTemplate[]; resolve: typeof resolveTaskTemplate };
+export type RegisteredTaskPlugin = TaskBinding & {
+  templateId: string;
+  templateVersion: string;
+  taskType: string;
+  name?: string;
+  enabled: boolean;
+  capabilities?: { importer: boolean; inputReader: boolean; resultValidator: boolean; completion: boolean; exporter: boolean };
+};
+export type AvailableTaskPlugin = RegisteredTaskPlugin & { key: string; name: string; installed: boolean; unavailableReason: string };
+export function availableTaskPlugins(catalogue: RegisteredTaskPlugin[]): AvailableTaskPlugin[];

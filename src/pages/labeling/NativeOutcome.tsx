@@ -25,6 +25,7 @@ import {
 } from '@/services/nativeLabeling';
 import { formatDisplayDateTime } from '@/utils/formatDateTime';
 import OutcomeDetails from './OutcomeDetails';
+import { isLegacyProjectSpec } from '@/services/projectCompatibility.mjs';
 import { fileSizeName, sampleName } from './resultDisplay';
 
 export default function NativeOutcome({
@@ -52,6 +53,10 @@ export default function NativeOutcome({
     [reload, setReload] = useState(0),
     [error, setError] = useState('');
   const selected = snapshotId || snapshots[0]?.finalSnapshotId;
+  const selectedSnapshot = snapshots.find((snapshot) => snapshot.finalSnapshotId === selected);
+  const selectedSpec = project.specVersions.find((spec) => spec.specVersionId === selectedSnapshot?.specVersionId);
+  const pluginExport = selectedSpec ? isLegacyProjectSpec(selectedSpec, project.taskType)
+    : project.specVersions.length > 0 && project.specVersions.every((spec) => isLegacyProjectSpec(spec, project.taskType));
   const [outcomeSelection, setOutcomeSelection] = useState<React.Key[]>([]);
   const accepted = reviews
     .filter((row) => row.status === 'ACCEPTED')
@@ -71,10 +76,10 @@ export default function NativeOutcome({
     const abort = new AbortController();
     setError('');
     void Promise.all([
-      labelingJson<any>(`/final-snapshots/${selected}/export-formats`, {
+      labelingJson<any>(`/final-snapshots/${selected}/${pluginExport ? 'plugin-export-formats' : 'export-formats'}`, {
         signal: abort.signal,
       }),
-      collectPages<any>(`/final-snapshots/${selected}/exports`, abort.signal),
+      collectPages<any>(pluginExport ? `/projects/${project.projectId}/exports?snapshotId=${selected}` : `/final-snapshots/${selected}/exports`, abort.signal),
     ])
       .then(([value, list]) => {
         if (!abort.signal.aborted) {
@@ -84,16 +89,16 @@ export default function NativeOutcome({
               (item: any) => item.name === current && item.enabled,
             )
               ? current
-              : 'JSON',
+              : value.formats.find((item: any) => item.enabled)?.name || '',
           );
-          setJobs(list);
+          setJobs(list.map((job) => pluginExport && job.status === 'SUCCEEDED' ? { ...job, status: 'READY' } : job));
         }
       })
       .catch((e) => {
         if (!abort.signal.aborted) setError(describeLabelingError(e));
       });
     return () => abort.abort();
-  }, [selected, reload]);
+  }, [selected, reload, pluginExport, project.projectId]);
   useEffect(() => {
     if (!pending) return;
     const timer = setInterval(() => setReload((value) => value + 1), 2000);
@@ -298,6 +303,8 @@ export default function NativeOutcome({
                   label:
                     (
                       {
+                        'classification-csv-zip': '图片分类 CSV · ZIP',
+                        'energy-jsonl-zip': '能耗标注 JSONL · ZIP',
                         JSON: '任务与标注 JSON',
                         JSON_MIN: '精简标注 JSON',
                         CSV: 'CSV 表格',
@@ -317,8 +324,8 @@ export default function NativeOutcome({
                 onClick={() =>
                   void run(async () => {
                     await post(
-                      `/final-snapshots/${selected}/exports`,
-                      { format },
+                      pluginExport ? `/projects/${project.projectId}/exports` : `/final-snapshots/${selected}/exports`,
+                      pluginExport ? { format, includeOriginals: false, finalSnapshotIds: [selected] } : { format },
                       operationKey(),
                     );
                     setReload((value) => value + 1);
@@ -329,8 +336,7 @@ export default function NativeOutcome({
               </Button>
             </Space>
             <Typography.Paragraph type="secondary" style={{ marginTop: 10 }}>
-              下载包包含所选格式、标注配置和引用资源。CSV／TSV
-              每行描述一个标注任务，区间等结构按对应格式保存。
+              {pluginExport ? '下载包包含插件结果文件和冻结规范、来源清单。' : '下载包包含所选格式、标注配置和引用资源。CSV／TSV 每行描述一个标注任务，区间等结构按对应格式保存。'}
             </Typography.Paragraph>
             <Table
               rowKey="exportId"
@@ -355,6 +361,8 @@ export default function NativeOutcome({
                     <Tag>
                       {row.status === 'QUEUED'
                         ? '排队／生成中'
+                        : row.status === 'EXPIRED'
+                          ? '已过期'
                         : row.status === 'READY'
                           ? '可下载'
                           : `生成失败（${row.errorCode || '未知错误'}）`}
@@ -369,7 +377,7 @@ export default function NativeOutcome({
                       onClick={() =>
                         void run(async () => {
                           const blob = await labelingBlob(
-                              `/exports/${row.exportId}/file`,
+                              `/exports/${row.exportId}/${pluginExport ? 'download' : 'file'}`,
                             ),
                             url = URL.createObjectURL(blob);
                           const anchor = document.createElement('a');
