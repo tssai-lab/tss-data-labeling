@@ -16,6 +16,8 @@ import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import java.sql.Timestamp;
+import java.time.Instant;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.security.MessageDigest;
@@ -218,24 +220,35 @@ VALUES (?,?,?,?,1,'HUMAN_POOL',?,'OPEN')
     @Transactional
     public JsonNode pool(ActorContext actor, int limit, String cursor, String taskType) {
         enabled(actor.actorId()); pageLimit(limit);
-        UUID after = cursor(cursor);
+        TimeCursor after = timeCursor(cursor);
+        String cursorClause = after == null ? "" : " AND (r.created_at,t.id) < (?,?)";
+        List<Object> arguments = new ArrayList<>();
+        arguments.add(taskType == null ? "" : taskType);
+        arguments.add(taskType == null ? "" : taskType);
+        if (after != null) {
+            arguments.add(Timestamp.from(after.createdAt()));
+            arguments.add(after.id());
+        }
+        arguments.add(actor.actorId());
+        arguments.add(limit + 1);
         List<Map<String,Object>> rows = db.queryForList(
                         """
 SELECT t.id AS "packageId", p.id AS "projectId", p.name AS "projectName", p.task_type AS "taskType",
-  t.sample_count AS "sampleCount", t.required_count AS "requiredCount", r.id AS "roundId",
+  t.sample_count AS "sampleCount", t.required_count AS "requiredCount", r.id AS "roundId", r.created_at AS "publishedAt",
   t.required_count - (SELECT count(*) FROM assignment a WHERE a.round_id=r.id
     AND a.status IN ('CLAIMED','IN_PROGRESS','SUBMITTED')) AS "remainingSlots"
 FROM task_package t JOIN publication_round r ON r.package_id=t.id AND r.status='OPEN'
 JOIN package_plan plan ON plan.id=t.plan_id JOIN project p ON p.id=plan.project_id
 WHERE p.status='OPEN' AND p.visibility='PLATFORM' AND t.status='OPEN' AND plan.status='PUBLISHED'
-  AND t.id > ? AND (? = '' OR p.task_type = ?)
+  AND (? = '' OR p.task_type = ?)
+""" + cursorClause + """
   AND NOT EXISTS(SELECT 1 FROM assignment a WHERE a.round_id=r.id AND a.actor_id=?
     AND a.status IN ('CLAIMED','IN_PROGRESS','SUBMITTED'))
   AND EXISTS(SELECT 1 FROM package_slot s WHERE s.round_id=r.id AND NOT EXISTS
     (SELECT 1 FROM assignment a WHERE a.slot_id=s.id AND a.status IN ('CLAIMED','IN_PROGRESS','SUBMITTED')))
-ORDER BY t.id LIMIT ?
-""",after,taskType,taskType,actor.actorId(),limit+1);
-        return page(rows,limit,"packageId");
+ORDER BY r.created_at DESC, t.id DESC LIMIT ?
+""", arguments.toArray());
+        return timePage(rows, limit, "packageId", "publishedAt");
     }
 
     @Transactional
@@ -277,14 +290,25 @@ ORDER BY s.slot_no LIMIT 1
     @Transactional
     public JsonNode mine(ActorContext actor,int limit,String cursor) {
         enabled(actor.actorId());pageLimit(limit);
-        return page(db.queryForList(
+        TimeCursor after = timeCursor(cursor);
+        String cursorClause = after == null ? "" : " AND (a.claimed_at,a.id) < (?,?)";
+        List<Object> arguments = new ArrayList<>();
+        arguments.add(actor.actorId());
+        if (after != null) {
+            arguments.add(Timestamp.from(after.createdAt()));
+            arguments.add(after.id());
+        }
+        arguments.add(limit + 1);
+        List<Map<String,Object>> rows = db.queryForList(
                         """
-SELECT a.id AS "assignmentId", a.package_id AS "packageId", a.round_id AS "roundId", a.status, a.revision,(SELECT sub.id FROM submission sub WHERE sub.assignment_id=a.id) AS "submissionId",
+SELECT a.id AS "assignmentId", a.package_id AS "packageId", a.round_id AS "roundId", a.status, a.revision, a.claimed_at AS "claimedAt", (SELECT sub.id FROM submission sub WHERE sub.assignment_id=a.id) AS "submissionId",
   s.slot_no AS "slotNo", plan.spec_version_id AS "specVersionId", plan.project_id AS "projectId", p.name AS "projectName"
 FROM assignment a JOIN package_slot s ON s.id=a.slot_id JOIN task_package t ON t.id=a.package_id
 JOIN package_plan plan ON plan.id=t.plan_id JOIN project p ON p.id=plan.project_id
-WHERE a.actor_id=? AND a.id>? ORDER BY a.id LIMIT ?
-""",actor.actorId(),cursor(cursor),limit+1),limit,"assignmentId");
+WHERE a.actor_id=?
+""" + cursorClause + " ORDER BY a.claimed_at DESC, a.id DESC LIMIT ?",
+                arguments.toArray());
+        return timePage(rows, limit, "assignmentId", "claimedAt");
     }
 
     @Transactional
@@ -703,6 +727,35 @@ WHERE r.status='OPEN' AND c.project_id=?
     private void pageLimit(int limit){if(limit<1||limit>100)throw error(400,"INVALID_REQUEST","分页大小应为1至100");}
     private UUID cursor(String cursor){try{return cursor==null?new UUID(0,0):UUID.fromString(cursor);}catch(IllegalArgumentException ex){throw error(400,"INVALID_CURSOR","分页游标无效");}}
     private JsonNode page(List<Map<String,Object>> rows,int limit,String id){boolean more=rows.size()>limit;var selected=more?rows.subList(0,limit):rows;Map<String,Object> result=new LinkedHashMap<>();result.put("items",selected);result.put("nextCursor",more?selected.get(selected.size()-1).get(id).toString():null);return json.valueToTree(result);}
+    private TimeCursor timeCursor(String cursor){
+        if(cursor==null||cursor.isBlank())return null;
+        try{
+            String decoded=new String(Base64.getUrlDecoder().decode(cursor),StandardCharsets.UTF_8);
+            int separator=decoded.lastIndexOf('#');
+            if(separator<1)throw new IllegalArgumentException();
+            return new TimeCursor(Instant.parse(decoded.substring(0,separator)),UUID.fromString(decoded.substring(separator+1)));
+        }catch(RuntimeException ex){throw error(400,"INVALID_CURSOR","分页游标无效");}
+    }
+    private JsonNode timePage(List<Map<String,Object>> rows,int limit,String id,String time){
+        boolean more=rows.size()>limit;
+        List<Map<String,Object>> selected=more?rows.subList(0,limit):rows;
+        String nextCursor=more&&!selected.isEmpty()?encodeTimeCursor(selected.get(selected.size()-1).get(time),selected.get(selected.size()-1).get(id)):null;
+        for(Map<String,Object> row:selected){
+            Object value=row.get(time);
+            if(value instanceof Timestamp timestamp)row.put(time,timestamp.toInstant().toString());
+            else if(value instanceof Instant instant)row.put(time,instant.toString());
+        }
+        Map<String,Object> result=new LinkedHashMap<>();
+        result.put("items",selected);
+        result.put("nextCursor",nextCursor);
+        return json.valueToTree(result);
+    }
+    private String encodeTimeCursor(Object createdAt,Object id){
+        Instant instant=createdAt instanceof Timestamp timestamp?timestamp.toInstant():createdAt instanceof Instant value?value:Instant.parse(createdAt.toString());
+        String value=instant+"#"+id;
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(value.getBytes(StandardCharsets.UTF_8));
+    }
+    private record TimeCursor(Instant createdAt,UUID id){}
     private JsonNode replay(UUID actor,String op,String key,String hash){
         if(key==null||key.isBlank()||key.length()>200)throw error(400,"INVALID_REQUEST","需要有效的幂等键");
         db.queryForObject("SELECT pg_advisory_xact_lock(hashtextextended(?,0))",Object.class,actor+":"+op+":"+key);
