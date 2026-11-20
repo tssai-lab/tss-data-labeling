@@ -27,3 +27,25 @@ export function classificationFromChoices(raw, labels) {
   if (matches.length !== 1) throw new Error('分类不属于当前规范或名称有歧义');
   return { labelId: matches[0].id };
 }
+
+export function classificationLabelConfig(labels) {
+  if (!labels.length || new Set(labels.map((label) => label.name)).size !== labels.length)
+    throw new Error('分类标签不能为空或包含重名标签');
+  const escape = (value) => String(value).replace(/[&<>"']/g, (char) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;',
+  })[char]);
+  return `<View><Image name="image" value="$image" zoom="true" zoomControl="true" rotateControl="true"/><Choices name="category" toName="image" choice="single-radio" layout="inline" required="true">${labels.map((label) => `<Choice value="${escape(label.name)}"/>`).join('')}</Choices></View>`;
+}
+
+export function classificationToChoices(labelId, labels) {
+  if (!labelId) return [];
+  const label = labels.find((item) => item.id === labelId);
+  if (!label) throw new Error('草稿分类不属于当前冻结规范');
+  return [{ from_name: 'category', to_name: 'image', type: 'choices', value: { choices: [label.name] } }];
+}
+
+export function classificationSaveInput(raw, labels, baseRevision, done) {
+  const result = Array.isArray(raw) && !raw.length && !done
+    ? {} : classificationFromChoices(raw, labels);
+  return { baseRevision, explicitDone: done, resultFormat: 'image-classification-v1', result };
+}

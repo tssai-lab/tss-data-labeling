@@ -47,3 +47,29 @@ test('strict cropped-control conversion accepts one known category only, stable 
   ])
     assert.throws(() => classificationFromChoices(invalid, labels));
 });
+
+test('shared editor configuration escapes label names and restores stable IDs', async () => {
+  const { classificationLabelConfig, classificationToChoices } = await import('./classificationEditor.mjs');
+  const escaped = [{ id: 'stable-id', name: '正常 & "可用" <A>' }];
+  const config = classificationLabelConfig(escaped);
+  assert.match(config, /<Image name="image" value="\$image"/);
+  assert.match(config, /zoomControl="true"/);
+  assert.match(config, /name="category" toName="image" choice="single-radio"/);
+  assert.match(config, /正常 &amp; &quot;可用&quot; &lt;A&gt;/);
+  assert.deepEqual(classificationFromChoices(classificationToChoices('stable-id', escaped), escaped), { labelId: 'stable-id' });
+  assert.deepEqual(classificationToChoices('', escaped), []);
+  assert.throws(() => classificationToChoices('removed-label', escaped));
+  assert.throws(() => classificationLabelConfig([]));
+  assert.throws(() => classificationLabelConfig([{ id: 'a', name: '同名' }, { id: 'b', name: '同名' }]));
+});
+
+test('saving a shared-editor draft never implicitly completes a sample', async () => {
+  const { classificationToChoices, classificationSaveInput } = await import('./classificationEditor.mjs');
+  const raw = classificationToChoices('stable-normal', labels);
+  const draft = classificationSaveInput(raw, labels, 4, false);
+  assert.deepEqual(draft, { baseRevision: 4, explicitDone: false, resultFormat: 'image-classification-v1', result: { labelId: 'stable-normal' } });
+  assert.equal(classificationSaveInput(raw, labels, 4, true).explicitDone, true);
+  assert.deepEqual(classificationSaveInput([], labels, 4, false).result, {});
+  assert.throws(() => classificationSaveInput([], labels, 4, true));
+  assert.throws(() => classificationSaveInput([{ from_name: 'category', to_name: 'image', type: 'choices', value: { choices: ['不在规范中'] } }], labels, 4, false));
+});

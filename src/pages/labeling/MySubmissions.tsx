@@ -31,11 +31,20 @@ export default function MySubmissions() {
   }, []);
   return (
     <>
-      <h3>本人已提交结果</h3>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          marginBottom: 16,
+        }}
+      >
+        <h3 style={{ margin: 0 }}>本人已提交结果</h3>
+        <Button disabled={loading} onClick={() => void load()}>
+          刷新
+        </Button>
+      </div>
       {error && <Alert type="error" message={error} />}
-      <Button disabled={loading} onClick={() => void load()}>
-        刷新本人提交
-      </Button>
       <Table<SubmissionSummary>
         rowKey="submissionId"
         loading={loading}

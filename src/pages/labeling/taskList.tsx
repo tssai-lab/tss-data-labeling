@@ -6,16 +6,19 @@ import {
   Card,
   Empty,
   Input,
+  Modal,
   Select,
   Space,
+  Tabs,
   Table,
+  Typography,
 } from 'antd';
 import { useEffect, useRef, useState } from 'react';
 import { describeLabelingError, operationKey } from '@/services/labeling';
 import type { Assignment, Package } from '@/services/labelingTasks';
 import { tasks } from '@/services/labelingTasks';
+import { formatDisplayDateTime } from '@/utils/formatDateTime';
 import MySubmissions from './MySubmissions';
-import OperationHistory from './OperationHistory';
 import StatusBadge from './StatusBadge';
 import useOwnerAction from './useOwnerAction';
 import WorkspaceLayout from './WorkspaceLayout';
@@ -23,12 +26,14 @@ import ui from './workspaceUi.less';
 
 type Row = Partial<Package> & Partial<Assignment>;
 export default function TaskList() {
-  const { pathname } = useLocation();
+  const { pathname, search } = useLocation();
   const mine = pathname === '/labeling/assignments';
-  const { message, modal } = App.useApp();
+  const { message } = App.useApp();
   const releaseAction = useOwnerAction();
   const [releaseReason, setReleaseReason] = useState('');
+  const [releaseTarget, setReleaseTarget] = useState<Row | null>(null);
   const [filter, setFilter] = useState<string>();
+  const [mineView, setMineView] = useState('tasks');
   const [submissionId, setSubmissionId] = useState('');
   const [rows, setRows] = useState<Row[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
@@ -56,6 +61,10 @@ export default function TaskList() {
   }
   useEffect(() => {
     ++version.current;
+    const requestedView = new URLSearchParams(search).get('view');
+    setMineView(
+      requestedView === 'submissions' ? requestedView : 'tasks',
+    );
     const current = version.current;
     setRows([]);
     setCursor(null);
@@ -64,7 +73,9 @@ export default function TaskList() {
     void tasks
       .me()
       .then((me) => {
-        if (current === version.current) setCanAnnotate(me.canAnnotate);
+        if (current === version.current) {
+          setCanAnnotate(me.canAnnotate);
+        }
       })
       .catch((e) => {
         if (current === version.current) setError(describeLabelingError(e));
@@ -73,7 +84,7 @@ export default function TaskList() {
     return () => {
       ++version.current;
     };
-  }, [mine]);
+  }, [mine, search]);
 
   async function claim(row: Row) {
     if (claiming) return;
@@ -99,6 +110,26 @@ export default function TaskList() {
     }
   }
 
+  async function releaseAssignment(): Promise<void> {
+    const row = releaseTarget;
+    if (!row?.assignmentId || typeof row.revision !== 'number' || !releaseReason.trim()) return;
+    const current = version.current;
+    const assignmentId = row.assignmentId;
+    const body = { baseRevision: row.revision, reason: releaseReason.trim() };
+    const value = await releaseAction.run(
+      `release:${assignmentId}`,
+      body,
+      (key) => tasks.release(assignmentId, body.baseRevision, body.reason, key),
+      '已放弃领取',
+    );
+    if (value && current === version.current) {
+      keys.current.delete(row.roundId || row.packageId || '');
+      setReleaseTarget(null);
+      setReleaseReason('');
+      void load();
+    }
+  }
+
   return (
     <WorkspaceLayout>
       <header className={ui.pageHeader}>
@@ -112,11 +143,15 @@ export default function TaskList() {
         </div>
       </header>
       {mine && (
-        <details>
-          <summary>本人提交与操作记录</summary>
-          <MySubmissions />
-          <OperationHistory />
-        </details>
+        <Tabs
+          className={ui.taskSectionTabs}
+          activeKey={mineView}
+          onChange={setMineView}
+          items={[
+            { key: 'tasks', label: '领取任务' },
+            { key: 'submissions', label: '提交记录' },
+          ]}
+        />
       )}
       {(error || releaseAction.error) && (
         <Alert
@@ -126,75 +161,58 @@ export default function TaskList() {
           style={{ marginBottom: 20 }}
         />
       )}
-      {mine && (
-        <Card title="任务筛选与提交查询">
-          <Alert
-            type="info"
-            message="状态筛选只作用于已加载的任务"
-            description="展开上方“本人提交与操作记录”可查看提交历史；也可在这里输入提交编号直接查看结果。"
-          />
-          <Space wrap style={{ marginTop: 16 }}>
-            <Input
-              aria-label="已知提交编号"
-              placeholder="输入本人已知 submissionId"
-              value={submissionId}
-              onChange={(e) => setSubmissionId(e.target.value)}
-            />
-            <Button
-              disabled={!submissionId.trim()}
-              onClick={() =>
-                history.push(
-                  `/labeling/submissions/${encodeURIComponent(submissionId.trim())}`,
-                )
-              }
-            >
-              读取已提交结果
-            </Button>
-          </Space>
-          <Select
-            aria-label="本人任务状态筛选"
-            allowClear
-            value={filter}
-            onChange={setFilter}
-            placeholder="筛选已加载任务状态"
-            style={{ width: '100%', marginTop: 16 }}
-            options={[
-              'CLAIMED',
-              'IN_PROGRESS',
-              'SUBMITTED',
-              'RELEASED',
-              'REVOKED',
-            ].map((value) => ({
-              value,
-              label: (
-                {
-                  CLAIMED: '已领取',
-                  IN_PROGRESS: '标注中',
-                  SUBMITTED: '已交回',
-                  RELEASED: '已放弃',
-                  REVOKED: '已撤销',
-                } as Record<string, string>
-              )[value],
-            }))}
-          />
-          <Input.TextArea
-            aria-label="放弃领取原因"
-            placeholder="放弃领取前填写原因；已交回的领取不能放弃"
-            maxLength={1000}
-            value={releaseReason}
-            onChange={(event) => setReleaseReason(event.target.value)}
-            disabled={releaseAction.busy}
-            style={{ marginTop: 16 }}
-          />
-        </Card>
-      )}
-      <Card
+      {(!mine || mineView === 'tasks') && <Card
+        title={mine ? '已领取任务' : '可领取任务'}
         extra={
           <Button loading={busy} onClick={() => void load()}>
             刷新
           </Button>
         }
       >
+        {mine && (
+          <Space className={ui.taskListToolbar} wrap>
+            <Select
+              aria-label="本人任务状态筛选"
+              allowClear
+              value={filter}
+              onChange={setFilter}
+              placeholder="全部任务状态"
+              style={{ width: 180 }}
+              options={[
+                'CLAIMED',
+                'IN_PROGRESS',
+                'SUBMITTED',
+                'RELEASED',
+                'REVOKED',
+              ].map((value) => ({
+                value,
+                label: (
+                  {
+                    CLAIMED: '已领取',
+                    IN_PROGRESS: '标注中',
+                    SUBMITTED: '已交回',
+                    RELEASED: '已放弃',
+                    REVOKED: '已撤销',
+                  } as Record<string, string>
+                )[value],
+              }))}
+            />
+            <Input.Search
+              aria-label="已知提交编号"
+              placeholder="输入提交编号查看结果"
+              value={submissionId}
+              onChange={(event) => setSubmissionId(event.target.value)}
+              onSearch={(value) => {
+                if (value.trim()) history.push(`/labeling/submissions/${encodeURIComponent(value.trim())}`);
+              }}
+              enterButton="查看提交"
+              style={{ width: 380, maxWidth: '100%' }}
+            />
+            <Typography.Text type="secondary">
+              状态筛选只作用于当前已加载的任务
+            </Typography.Text>
+          </Space>
+        )}
         <Table<Row>
           rowKey={(row) =>
             row.assignmentId || row.roundId || row.packageId || ''
@@ -233,6 +251,12 @@ export default function TaskList() {
                     dataIndex: 'projectName',
                     ellipsis: true,
                     render: (value: string | undefined) => value || '未命名任务',
+                  },
+                  {
+                    title: '领取时间',
+                    dataIndex: 'claimedAt',
+                    width: 180,
+                    render: formatDisplayDateTime,
                   },
                   {
                     title: '领取编号',
@@ -287,45 +311,11 @@ export default function TaskList() {
                           <Button
                             danger
                             type="link"
-                            disabled={
-                              releaseAction.busy ||
-                              busy ||
-                              !releaseReason.trim()
-                            }
-                            onClick={() =>
-                              modal.confirm({
-                                title: '放弃此领取？',
-                                content:
-                                  '服务器保存的草稿保留在本次领取历史中；席位将释放，后续领取不会自动沿用本次草稿。',
-                                onOk: async () => {
-                                  if (!row.assignmentId || !row.revision)
-                                    return;
-                                  const current = version.current;
-                                  const body = {
-                                    baseRevision: row.revision,
-                                    reason: releaseReason.trim(),
-                                  };
-                                  const value = await releaseAction.run(
-                                    `release:${row.assignmentId}`,
-                                    body,
-                                    (key) =>
-                                      tasks.release(
-                                        row.assignmentId || '',
-                                        body.baseRevision,
-                                        body.reason,
-                                        key,
-                                      ),
-                                    '已放弃领取',
-                                  );
-                                  if (value && current === version.current) {
-                                    keys.current.delete(
-                                      row.roundId || row.packageId || '',
-                                    );
-                                    void load();
-                                  }
-                                },
-                              })
-                            }
+                            disabled={releaseAction.busy || busy}
+                            onClick={() => {
+                              setReleaseReason('');
+                              setReleaseTarget(row);
+                            }}
                           >
                             放弃领取
                           </Button>
@@ -336,6 +326,12 @@ export default function TaskList() {
                 ]
               : [
                   { title: '项目', dataIndex: 'projectName' },
+                  {
+                    title: '发布时间',
+                    dataIndex: 'publishedAt',
+                    width: 180,
+                    render: formatDisplayDateTime,
+                  },
                   { title: '图片数', dataIndex: 'sampleCount' },
                   { title: '所需人数', dataIndex: 'requiredCount' },
                   { title: '剩余席位', dataIndex: 'remainingSlots' },
@@ -366,7 +362,33 @@ export default function TaskList() {
             </Button>
           </Space>
         )}
-      </Card>
+      </Card>}
+      {mine && mineView === 'submissions' && (
+        <Card><MySubmissions /></Card>
+      )}
+      <Modal
+        title="放弃领取"
+        open={!!releaseTarget}
+        onCancel={() => setReleaseTarget(null)}
+        okText="确认放弃"
+        cancelText="继续标注"
+        confirmLoading={releaseAction.busy}
+        okButtonProps={{ disabled: !releaseReason.trim() }}
+        onOk={() => void releaseAssignment()}
+      >
+        <Typography.Paragraph>
+          放弃后会释放席位，已保存的草稿保留在本次领取记录中。请填写原因。
+        </Typography.Paragraph>
+        <Input.TextArea
+          aria-label="放弃领取原因"
+          placeholder="填写放弃原因"
+          value={releaseReason}
+          maxLength={1000}
+          showCount
+          autoSize={{ minRows: 3, maxRows: 6 }}
+          onChange={(event) => setReleaseReason(event.target.value)}
+        />
+      </Modal>
     </WorkspaceLayout>
   );
 }

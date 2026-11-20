@@ -8,3 +8,11 @@ export function classificationFromChoices(
   raw: unknown,
   labels: ReadonlyArray<Label>,
 ): { labelId: string };
+export function classificationLabelConfig(labels: ReadonlyArray<Label>): string;
+export function classificationToChoices(labelId: string, labels: ReadonlyArray<Label>): unknown[];
+export function classificationSaveInput(raw: unknown, labels: ReadonlyArray<Label>, baseRevision: number, done: boolean): {
+  baseRevision: number;
+  explicitDone: boolean;
+  resultFormat: 'image-classification-v1';
+  result: { labelId?: string };
+};

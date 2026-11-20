@@ -36,6 +36,7 @@
 .content :global(.ant-space) { max-width: 100%; }
 .content :global(.ant-space-item) { min-width: 0; max-width: 100%; }
 .content :global(.ant-tag) { white-space: normal; overflow-wrap: anywhere; }
+.datasetImportedTag { border-color: #c9e5d6 !important; background: #edf7f1 !important; color: #347653 !important; }
 .content :global(.ant-form-inline) { gap: 16px; flex-wrap: wrap; }
 .content :global(.ant-form-inline .ant-form-item) { margin: 0; }
 .content :global(.ant-btn):focus-visible, .navTab:focus-visible, .account:focus-visible { outline: 3px solid #2875ed; outline-offset: 3px; }
@@ -130,6 +131,7 @@
   :global(.tss-brand-wordmark) { display:flex; flex-direction:column; align-items:center; min-width:0; line-height:1.05; strong { color:#f2f7fc; font-size:25px; } em { color:#92b8ff; } small { color:#a9bfd6; font-size:9px; letter-spacing:2.2px; } }
   .platformTitle { grid-column:1; grid-row:2; padding:2px 0 0; border:0; color:#f2f7fc; font-size:15px; line-height:1.35; text-align:center; }
 }
+.projectContext { display:block; overflow:hidden; margin-top:10px; color:#d5e3f2; font-size:12px; text-align:center; text-overflow:ellipsis; white-space:nowrap; }
 .navCaption { color:#b5c8dc; font-size:12px; font-weight:600; padding:0 11px; margin-bottom:12px; }
 .navGroup { display:flex; flex-direction:column; gap:4px; }
 .navGroupSecondary { border-top:0; margin-top:0; padding-top:0; }
@@ -170,13 +172,13 @@
   margin:0 0 18px; padding:0 12px; border:1px solid var(--label-edge); border-radius:10px; background:#fff;
   :global(.ant-tabs-nav) { margin:0; }
   :global(.ant-tabs-nav::before) { border-bottom:0; }
-  :global(.ant-tabs-nav-list) { display:flex; width:100%; }
-  :global(.ant-tabs-tab) { flex:1; justify-content:center; margin:0; padding:13px 10px; transition:background .16s,color .16s; }
+  :global(.ant-tabs-nav-list) { display:flex; width:100%; gap:0; }
+  :global(.ant-tabs-tab) { flex:1; justify-content:center; margin:0 !important; padding:13px 10px; transition:background .16s,color .16s; }
   :global(.ant-tabs-tab:hover) { background:#f5f8fc; }
-  :global(.ant-tabs-tab-active) { background:#f1f5ff; }
+  :global(.ant-tabs-tab-active) { background:#f1f5ff; box-shadow:inset 0 -3px 0 #3158bd; }
   :global(.ant-tabs-tab-btn) { color:#657b96; }
   :global(.ant-tabs-tab-active .ant-tabs-tab-btn) { color:#2148b5; }
-  :global(.ant-tabs-ink-bar) { height:3px; border-radius:3px 3px 0 0; background:#3158bd; }
+  :global(.ant-tabs-ink-bar) { display:none; }
   :global(.ant-tabs-nav-operations) { display:none; }
 }
 .projectStepLabel { display:inline-flex; align-items:center; justify-content:center; gap:9px; white-space:nowrap; font-size:14px; font-weight:650; }

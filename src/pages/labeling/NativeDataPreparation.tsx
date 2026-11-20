@@ -15,7 +15,7 @@ import {
 } from 'antd';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { imageImportAdapter } from '@/services/archiveImport.mjs';
-import { describeLabelingError, labelingBlob, labelingJson, operationKey, post } from '@/services/labeling';
+import { describeLabelingError, labelingBlob, labelingJson, operationKey, post, sampleBlob } from '@/services/labeling';
 import {
   categoryOf,
   collectPages,
@@ -25,7 +25,7 @@ import {
   type NativeSpec,
 } from '@/services/nativeLabeling';
 import ArchiveImportPanel from './ArchiveImportPanel';
-import NativeEditor from './NativeEditor';
+import ProjectSampleEditor from './ProjectSampleEditor';
 import styles from './index.less';
 
 type RawInputPreview = {
@@ -82,6 +82,15 @@ function RawSamplePreview({
         const imageResources = (data.resources || []).filter((resource) =>
           resource.mediaType.startsWith('image/'),
         );
+        if (!imageResources.length && taskType === 'IMAGE_CLASSIFICATION') {
+          const blob = await sampleBlob(projectId, sampleId, controller.signal);
+          if (controller.signal.aborted) return;
+          const url = URL.createObjectURL(blob);
+          objectUrls.push(url);
+          setImages([{ field: 'image', url }]);
+          setPreview({ ...data, rawData: data.task?.data || {} });
+          return;
+        }
         const loadedImages = await Promise.all(
           imageResources.map(async (resource) => {
             const blob = await labelingBlob(
@@ -504,10 +513,10 @@ export default function NativeDataPreparation({
       >
         {!!previewId &&
           (activeVersion ? (
-            <NativeEditor
-              path={`/projects/${project.projectId}/samples/${previewId}/task?specVersionId=${activeVersion.specVersionId}`}
+            <ProjectSampleEditor
+              project={project}
+              version={activeVersion}
               sampleId={previewId}
-              category={categoryOf(project)}
             />
           ) : (
             <RawSamplePreview

@@ -14,6 +14,7 @@ export type Package = {
   projectId: string;
   projectName: string;
   taskType: string;
+  publishedAt: string;
   sampleCount: number;
   requiredCount: number;
   remainingSlots: number;
@@ -26,6 +27,7 @@ export type Assignment = {
   slotNo: number;
   status: string;
   revision: number;
+  claimedAt?: string;
 };
 export type Plan = {
   planId: string;
@@ -177,6 +179,7 @@ export const tasks = {
     sampleId: string,
     baseRevision: number,
     labelId: string,
+    explicitDone = Boolean(labelId),
   ) =>
     labelingJson<Draft>(
       `/assignments/${encodeURIComponent(assignmentId)}/drafts/${encodeURIComponent(sampleId)}`,
@@ -185,7 +188,7 @@ export const tasks = {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           baseRevision,
-          explicitDone: Boolean(labelId),
+          explicitDone,
           resultFormat: 'image-classification-v1',
           result: labelId ? { labelId } : {},
         }),

@@ -127,6 +127,7 @@ function host(search = '') {
     'LiveRounds',
     'LiveSnapshots',
     'ProjectBreadcrumbs',
+    'ProjectManagement',
     'SubmissionReview',
   ])
     dependencies[`./${name}`] = { default: name };

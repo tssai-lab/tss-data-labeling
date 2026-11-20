@@ -320,7 +320,7 @@ test('authorized original image opens and closes its controlled preview and rele
   assert.deepEqual(released, ['blob:1', 'blob:2']);
 });
 
-test('project search and status filtering use loaded records; management selects a real project without changing the list route', async () => {
+test('project search and status filtering use loaded records; each management action receives its own project without changing the list route', async () => {
   const projects = [
     {
       projectId: 'a',
@@ -427,9 +427,9 @@ test('project search and status filtering use loaded records; management selects
     .find((node) => node.props['aria-label'] === '筛选已加载项目状态')
     .props.onChange('ALL');
   r.render();
-  r.nodes('Table')[0].props.onRow(projects[1]).onClick();
-  r.render();
-  assert.equal(r.nodes('ProjectManagement')[0].props.project.projectId, 'b');
+  const managementCell = r.nodes('Table')[0].props.columns.find((column) => column.title === '项目操作').render(undefined, projects[1]);
+  const management = managementCell.props.children.find((node) => node.type === 'ProjectManagement');
+  assert.equal(management.props.project.projectId, 'b');
   assert.deepEqual(routes, []);
   r.dispose();
 });

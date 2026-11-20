@@ -1,6 +1,8 @@
 import {
   AppstoreOutlined,
+  FileSearchOutlined,
   ExportOutlined,
+  FileTextOutlined,
   FolderOutlined,
   MenuOutlined,
   TeamOutlined,
@@ -20,6 +22,7 @@ export default function Navigation({
 }: {
   canLeave?: () => boolean;
   beforeAccountAction?: () => boolean | Promise<boolean>;
+  project?: { projectId: string; name?: string };
 }) {
   const { pathname } = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -42,9 +45,14 @@ export default function Navigation({
   const { initialState } = useModel('@@initialState');
   const user = initialState?.currentUser;
   const active =
-    pathname === '/labeling/admin/users'
-      ? 'users'
-      : pathname.startsWith('/labeling/assignments')
+    pathname.startsWith('/labeling/admin/operations')
+      ? 'operationLogs'
+      : pathname.startsWith('/labeling/admin/users')
+        ? 'users'
+        : pathname.startsWith('/labeling/my-operations')
+          ? 'personalOperations'
+      : pathname.startsWith('/labeling/assignments') ||
+          pathname.startsWith('/labeling/submissions')
         ? 'mine'
         : pathname.startsWith('/labeling/tasks')
           ? 'pool'
@@ -90,6 +98,12 @@ export default function Navigation({
       name: '我的任务',
       icon: <UserOutlined />,
     },
+    {
+      key: 'personalOperations',
+      to: '/labeling/my-operations',
+      name: '我的操作记录',
+      icon: <FileTextOutlined />,
+    },
     ...(admin
       ? [
           {
@@ -97,6 +111,12 @@ export default function Navigation({
             to: '/labeling/admin/users',
             name: '用户管理',
             icon: <TeamOutlined />,
+          },
+          {
+            key: 'operationLogs',
+            to: '/labeling/admin/operations',
+            name: '全平台操作记录',
+            icon: <FileSearchOutlined />,
           },
         ]
       : []),

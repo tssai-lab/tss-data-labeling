@@ -1,5 +1,5 @@
 import { Alert, Button, Input, Space, Spin } from 'antd';
-import { type ReactNode, useEffect, useId, useRef, useState } from 'react';
+import { type ReactNode, forwardRef, useEffect, useId, useImperativeHandle, useRef, useState } from 'react';
 import {
   type CompletionRules,
   compileCompletion,
@@ -14,6 +14,7 @@ import {
   loadLsEditor,
 } from '@/services/loadLsEditor';
 import styles from './annotationWorkspace.less';
+import { editorChoiceStyles } from './editorChoiceStyles';
 
 type EditorSample = {
   id: string;
@@ -24,6 +25,9 @@ type EditorSample = {
 };
 
 type Props = {
+  disabled?: boolean;
+  refreshKey?: string;
+  onStateChange?: (state: LocalEditorState) => void;
   compact?: boolean;
   footerActions?: ReactNode;
   instructions?: string;
@@ -47,7 +51,9 @@ type Props = {
   onGuard?: (guard: () => boolean) => void;
 };
 let disposing: Promise<unknown> = Promise.resolve();
-export default function LocalEditor(props: Props) {
+export type LocalEditorState = { ready: boolean; dirty: boolean; saving: boolean; result: unknown[] };
+export type LocalEditorHandle = { getState: () => LocalEditorState };
+export default forwardRef<LocalEditorHandle, Props>(function LocalEditor(props, ref) {
   const reasonId = useId();
   const session = useRef<EditorSession | null>(null);
   useEffect(
@@ -82,6 +88,37 @@ export default function LocalEditor(props: Props) {
   const reason = useRef(emptyReason),
     savedReason = useRef(props.emptyReason || '');
   reason.current = emptyReason;
+  const notification = useRef<number | undefined>(undefined);
+  const lastState = useRef('');
+  function getState(): LocalEditorState {
+    const annotation = editor.current?.store?.annotationStore?.selected;
+    const result = annotation?.serializeAnnotation() || [];
+    return {
+      ready: ready && !!annotation,
+      dirty: !!props.onSave && !!annotation && (JSON.stringify(result) !== snapshot.current || reason.current !== savedReason.current),
+      saving: savingAction.current || saving,
+      result,
+    };
+  }
+  useImperativeHandle(ref, () => ({ getState }));
+  function notifyState(): void {
+    if (!latest.current.onStateChange) return;
+    const state = getState();
+    const serialized = JSON.stringify(state);
+    if (serialized === lastState.current) return;
+    lastState.current = serialized;
+    latest.current.onStateChange?.(state);
+  }
+  function scheduleNotification(): void {
+    if (!latest.current.onStateChange) return;
+    window.clearTimeout(notification.current);
+    notification.current = window.setTimeout(notifyState, 0);
+  }
+  useEffect(() => { notifyState(); }, [ready, saving, props.disabled]);
+  useEffect(() => () => window.clearTimeout(notification.current), []);
+  useEffect(() => {
+    editor.current?.store?.annotationStore?.selected?.setReadonly(!props.onSave || !!props.disabled);
+  }, [ready, !!props.onSave, props.disabled]);
   useEffect(() => {
     setEmptyReason(props.emptyReason || '');
     savedReason.current = props.emptyReason || '';
@@ -129,6 +166,9 @@ export default function LocalEditor(props: Props) {
       else {
         shadow.replaceChildren();
         runtime.attachStyles(shadow);
+        const choiceStyle = document.createElement('style');
+        choiceStyle.textContent = editorChoiceStyles;
+        shadow.append(choiceStyle);
         node = document.createElement('div');
         node.className = 'root';
         shadow.append(node);
@@ -206,7 +246,7 @@ export default function LocalEditor(props: Props) {
           config: props.config,
           task: { id: props.sample.id, data, annotations: [], predictions: [] },
           result: props.result || [],
-          readOnly: !props.onSave,
+          readOnly: !props.onSave || !!props.disabled,
         });
         if (!active || !updated) return;
         editor.current = updated.instance;
@@ -236,9 +276,10 @@ export default function LocalEditor(props: Props) {
     !!props.onConfig,
     !!props.onSave,
     retry,
+    props.refreshKey,
   ]);
   async function save(done: boolean) {
-    if (savingAction.current || !editor.current || saving) return;
+    if (savingAction.current || !editor.current || saving || latest.current.disabled) return;
     savingAction.current = true;
     setSaving(true);
     try {
@@ -301,7 +342,7 @@ export default function LocalEditor(props: Props) {
             />
           ) : null;
         })()}
-      <div ref={host} style={{ maxWidth: '100%', overflowX: 'auto' }} />
+      <div ref={host} onClickCapture={scheduleNotification} onInputCapture={scheduleNotification} onKeyUpCapture={scheduleNotification} style={{ maxWidth: '100%', overflowX: 'auto' }} />
       {props.completion?.allowEmpty && props.onSave && (
         <label htmlFor={reasonId}>
           无目标说明
@@ -321,7 +362,7 @@ export default function LocalEditor(props: Props) {
           <Space wrap style={props.compact ? undefined : { marginTop: 16 }}>
             {!props.reviewMode && (
               <Button
-                disabled={!ready || saving}
+                disabled={!ready || saving || props.disabled}
                 onClick={() => void save(false)}
               >
                 保存草稿
@@ -329,7 +370,7 @@ export default function LocalEditor(props: Props) {
             )}
             <Button
               type="primary"
-              disabled={!ready || saving}
+              disabled={!ready || saving || props.disabled}
               onClick={() => void save(true)}
             >
               {props.reviewMode ? '保存修订并确认' : '标记完成并保存'}
@@ -344,4 +385,4 @@ export default function LocalEditor(props: Props) {
       )}
     </section>
   );
-}
+});

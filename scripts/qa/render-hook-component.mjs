@@ -38,6 +38,18 @@ export function renderHooks(entry, props, dependencies = {}, globals = {}) {
         });
       }
     },
+    useMemo(factory, deps) {
+      const i = index++;
+      if (!hooks[i] || deps.some((value, j) => !Object.is(value, hooks[i].deps[j]))) {
+        hooks[i] = { value: factory(), deps };
+      }
+      return hooks[i].value;
+    },
+    useCallback(callback, deps) {
+      const i = index++;
+      if (!hooks[i] || deps.some((value, j) => !Object.is(value, hooks[i].deps[j]))) hooks[i] = { value: callback, deps };
+      return hooks[i].value;
+    },
     useId() {
       const i = index++;
       return `control-${i}`;

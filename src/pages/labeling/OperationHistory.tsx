@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { describeLabelingError } from '@/services/labeling';
 import { type OperationReceipt, ownerApi } from '@/services/labelingOwner';
 
-export default function OperationHistory() {
+export default function OperationHistory({ global = false }: { global?: boolean }) {
   const [rows, setRows] = useState<OperationReceipt[]>([]),
     [cursor, setCursor] = useState<string | null>(null);
   const [error, setError] = useState(''),
@@ -13,7 +13,9 @@ export default function OperationHistory() {
     setLoading(true);
     setError('');
     try {
-      const page = await ownerApi.receipts(next, signal);
+      const page = global
+        ? await ownerApi.adminReceipts(next, signal)
+        : await ownerApi.receipts(next, signal);
       if (!signal?.aborted) {
         setRows((old) => (next ? [...old, ...page.items] : page.items));
         setCursor(page.nextCursor);
@@ -28,13 +30,15 @@ export default function OperationHistory() {
     const abort = new AbortController();
     void load(null, abort.signal);
     return () => abort.abort();
-  }, []);
+  }, [global]);
   const label = (r: OperationReceipt) =>
     r.operation.split('/').at(-1) || r.operation;
   return (
     <>
       <p>
-        服务器保存的本人操作回执；可复制成果、导出、执行或集成编号恢复查询。仅显示已持久保存响应的操作。
+        {global
+          ? '全平台操作回执，仅标注管理员可查看；仅显示已持久保存响应的操作。'
+          : '服务器保存的本人操作回执；可复制成果、导出、执行或集成编号恢复查询。仅显示已持久保存响应的操作。'}
       </p>
       {error && <Alert type="error" message={error} />}
       <Button disabled={loading} onClick={() => void load()}>
@@ -47,6 +51,18 @@ export default function OperationHistory() {
         pagination={false}
         scroll={{ x: 600 }}
         columns={[
+          ...(global
+            ? [
+                {
+                  title: '操作人',
+                  render: (_: unknown, r: OperationReceipt) => (
+                    <span title={`账号：${r.identityUserId || '未知'}；身份编号：${r.actorId || '未知'}`}>
+                      {r.actorName || r.identityUserId || r.actorId || '未知用户'}
+                    </span>
+                  ),
+                },
+              ]
+            : []),
           { title: '操作', render: (_, r) => label(r) },
           {
             title: '资源编号',

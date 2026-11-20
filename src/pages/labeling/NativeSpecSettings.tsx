@@ -10,10 +10,12 @@ import {
   nativeDefaults,
 } from '@/services/nativeLabeling';
 import LocalEditor from './LocalEditor';
+import LegacyProjectSettings from './LegacyProjectSettings';
+import { isLegacyProjectSpec } from '@/services/projectCompatibility.mjs';
 import NativeEditor from './NativeEditor';
 import styles from './annotationWorkspace.less';
 
-export default function NativeSpecSettings({
+function NativeConfigurationSettings({
   project,
   samples,
   version,
@@ -335,4 +337,9 @@ export default function NativeSpecSettings({
       </Space>
     </Card>
   );
+}
+
+export default function NativeSpecSettings(props: Parameters<typeof NativeConfigurationSettings>[0]) {
+  return isLegacyProjectSpec(props.version, props.project.taskType) || (!props.version && props.project.taskType === 'IMAGE_CLASSIFICATION')
+    ? <LegacyProjectSettings {...props} /> : <NativeConfigurationSettings {...props} />;
 }
