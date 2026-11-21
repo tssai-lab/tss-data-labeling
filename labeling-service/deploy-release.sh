@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Executed only by the authorized deployment workflow, never by local tests.
+# 仅由授权部署流程执行，不在本地测试中操作真实服务。
 set -Eeuo pipefail
+log() { printf '[%s] %s\n' "$(date -u +%FT%TZ)" "$*"; }
 umask 022
 [[ $EUID == 0 && $# == 4 ]]
 artifact=$1 digest=$2 revision=$3 bundle_tool=$4
@@ -8,9 +9,12 @@ artifact=$1 digest=$2 revision=$3 bundle_tool=$4
 [[ $artifact =~ ^/var/tmp/tss-labeling-[0-9a-f]{40}-[0-9]+-[0-9]+\.tar\.gz$ ]]
 [[ $bundle_tool == "${artifact%.tar.gz}-tool.py" ]]
 [[ -f $artifact && ! -L $artifact && -f $bundle_tool && ! -L $bundle_tool ]]
+log '校验上传发布包的 SHA-256'
 printf '%s  %s\n' "$digest" "$artifact" | sha256sum -c -
 exec 9>/run/lock/tss-labeling-release.lock
+log '等待部署锁，最长 120 秒'
 flock -w 120 9
+log '已取得部署锁，检查运行环境与当前服务'
 base=/opt/tss-labeling-service
 target=$base/tss-labeling-service.jar
 dropin=/etc/systemd/system/tss-labeling.service.d/30-ls-source.conf
@@ -27,10 +31,15 @@ install -d -m 755 "$base/releases"
 install -d -m 700 "$base/backups"
 release=$(mktemp -d "$base/releases/${revision}.XXXXXX")
 chmod 755 "$release"
+log '验证并解包发布内容'
 "$python_bin" "$bundle_tool" verify "$artifact" --revision "$revision" --destination "$release" >/dev/null
+log '创建独立 Python 环境'
 "$python_bin" -m venv "$release/venv"
+log '从发布包离线安装 Python 依赖'
 "$release/venv/bin/python" -m pip install --no-index --require-hashes --find-links "$release/wheels" -r "$release/requirements.lock"
+log '验证配置、结果与导出运行能力'
 "$release/venv/bin/python" "$release/release/runtime_check.py" --adapter-root "$release/ls-source-adapter"
+log '备份原应用和运行配置'
 backup=$(mktemp -d "$base/backups/${revision}.XXXXXX")
 cp -pL "$target" "$backup/service.jar"
 old_current=''
@@ -69,7 +78,9 @@ finish() {
 }
 trap finish EXIT
 service_pid=$(systemctl show tss-labeling.service --property MainPID --value)
+log '开始数据库备份，具体停写和备份步骤由备份工具执行'
 "$python_bin" "$release/release/backup_database.py" --pid "$service_pid" --output "$backup/labeling.dump"
+log '数据库备份完成，切换新应用和运行配置'
 activated=true
 install -d -m 755 "$(dirname "$dropin")"
 cat > "$release/runtime.env" <<EOF
@@ -86,8 +97,10 @@ mv -Tf "$base/.current-$$" "$base/current"
 ln -s "$base/current/service.jar" "$base/.jar-$$"
 mv -Tf "$base/.jar-$$" "$target"
 systemctl daemon-reload
+log '重启标注服务'
 systemctl restart tss-labeling.service
 for attempt in {1..15}; do
+    log "就绪检查：第 $attempt/15 次"
     if systemctl is-active --quiet tss-labeling.service && \
        curl -fsS --max-time 15 http://127.0.0.1:8083/api/labeling/v1/health/ready >/dev/null; then
         printf '%s\n' "$revision" > "$base/deployed-revision"
