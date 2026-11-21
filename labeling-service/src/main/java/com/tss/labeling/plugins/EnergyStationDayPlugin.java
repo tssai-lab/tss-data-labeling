@@ -48,8 +48,14 @@ public class EnergyStationDayPlugin implements TaskPlugin {
         return s.read((String)row.get("input"));
     }
     public void validateResult(UUID spec, UUID sample, Set<String> labels, JsonNode result, boolean done) { rules.validate(spec,sample,labels,result,done); }
-    public Set<String> exportFormats() { return Set.of("energy-jsonl-zip"); }
+    public Set<String> exportFormats() {
+        var formats = new HashSet<>(GenericTaskExport.formats());
+        formats.add("energy-jsonl-zip");
+        return Set.copyOf(formats);
+    }
     public ExportData export(String format,List<Map<String,Object>> rows) {
+        var generic = GenericTaskExport.export(format, rows);
+        if (generic != null) return generic;
         if (!exportFormats().contains(format)) throw error(422,"UNSUPPORTED_EXPORT_FORMAT","能耗插件不支持该导出格式");
         var lines = new StringBuilder();
         for (var row : rows) lines.append(s.write(row)).append('\n');

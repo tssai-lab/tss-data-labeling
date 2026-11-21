@@ -1,0 +1,2 @@
+ALTER TABLE export_job
+    ADD COLUMN include_originals BOOLEAN NOT NULL DEFAULT FALSE;

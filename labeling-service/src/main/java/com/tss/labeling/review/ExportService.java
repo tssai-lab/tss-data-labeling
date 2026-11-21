@@ -5,6 +5,7 @@ import static com.tss.labeling.common.WorkflowStore.error;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.tss.labeling.common.WorkflowStore;
 import com.tss.labeling.identity.ActorService.ActorContext;
+import com.tss.labeling.imports.ImportStorage;
 
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -18,9 +19,10 @@ import java.util.zip.*;
 public class ExportService {
     private final WorkflowStore s;
     private final com.tss.labeling.plugins.TaskPluginRegistry plugins;
+    private final ImportStorage storage;
 
-    public ExportService(WorkflowStore s, com.tss.labeling.plugins.TaskPluginRegistry plugins) {
-        this.s = s; this.plugins = plugins;
+    public ExportService(WorkflowStore s, com.tss.labeling.plugins.TaskPluginRegistry plugins, ImportStorage storage) {
+        this.s = s; this.plugins = plugins; this.storage = storage;
     }
 
     public record Input(String format, boolean includeOriginals, List<UUID> finalSnapshotIds) {}
@@ -62,7 +64,6 @@ public class ExportService {
         var replay = s.replay(actor, op, key, input);
         if (replay != null) return replay;
         com.tss.labeling.plugins.TaskPlugin exporter = null;
-        if (input.includeOriginals()) throw error(422,"UNSUPPORTED_EXPORT_FORMAT","该插件导出暂不包含原始文件");
         if (input.finalSnapshotIds() == null
                 || input.finalSnapshotIds().isEmpty()
                 || input.finalSnapshotIds().size() > 100
@@ -101,13 +102,13 @@ public class ExportService {
         }
         UUID id = UUID.randomUUID();
         s.db.update(
-                "INSERT INTO export_job(id,project_id,created_by,format,status,snapshot_ids) VALUES"
-                        + " (?,?,?,?,'QUEUED',?::jsonb)",
+                "INSERT INTO export_job(id,project_id,created_by,format,status,snapshot_ids,include_originals) VALUES"
+                        + " (?,?,?,?,'QUEUED',?::jsonb,?)",
                 id,
                 project,
                 actor.actorId(),
                 input.format(),
-                s.write(input.finalSnapshotIds()));
+                s.write(input.finalSnapshotIds()), input.includeOriginals());
         return s.remember(actor, op, key, input, id, view(actor, id));
     }
 
@@ -118,6 +119,7 @@ public class ExportService {
         out.put("exportId", id);
         out.put("projectId", row.get("project_id"));
         out.put("format", row.get("format"));
+        out.put("includeOriginals", row.get("include_originals"));
         out.put("status", row.get("status"));
         out.put("errorCode", row.get("error_code"));
         out.put("sha256", row.get("sha256"));
@@ -161,6 +163,9 @@ public class ExportService {
         var job = jobs.get(0);
         try {
             var rows = new ArrayList<Map<String, Object>>();
+            var originals = new LinkedHashMap<String, byte[]>();
+            var originalManifest = new ArrayList<Map<String, Object>>();
+            boolean includeOriginals = Boolean.TRUE.equals(job.get("include_originals"));
             Set<UUID> seen = new HashSet<>();
             Map<UUID,Map<String,Object>> specifications=new LinkedHashMap<>();
             List<Map<String,Object>> snapshots=new ArrayList<>();
@@ -177,13 +182,29 @@ public class ExportService {
                                 """
 SELECT f.snapshot_id AS "finalSnapshotId",f.sample_id AS "sampleId",f.spec_version_id AS "specVersionId",f.result_id AS "resultId",
 f.source_kind AS "sourceKind",f.submission_id AS "submissionId",f.execution_id AS "executionId",f.result::text AS result,
-f.review_revision AS "reviewRevision",f.source_path AS "sourcePath",f.content_hash AS "inputHash",s.metadata::text AS input
+f.review_revision AS "reviewRevision",f.source_path AS "sourcePath",f.content_hash AS "inputHash",s.metadata::text AS input,
+s.batch_id AS "batchId",s.media_type AS "mediaType"
 FROM final_snapshot_item f JOIN sample s ON s.id=f.sample_id WHERE f.snapshot_id=? ORDER BY f.sample_id
 """,
                                 UUID.fromString(snapshot.asText()))) {
                     if (!seen.add((UUID) row.get("sampleId"))) continue;
                     row.put("result", s.read((String) row.get("result")));
                     row.put("input", s.read((String) row.get("input")));
+                    if (includeOriginals) {
+                        UUID sampleId = (UUID) row.get("sampleId");
+                        String sourcePath = (String) row.get("sourcePath");
+                        String extension = sourcePath != null && sourcePath.lastIndexOf('.') >= 0
+                                ? sourcePath.substring(sourcePath.lastIndexOf('.') + 1).replaceAll("[^A-Za-z0-9]", "")
+                                : "bin";
+                        if (extension.isBlank() || extension.length() > 10) extension = "bin";
+                        String archivePath = "originals/" + sampleId + "." + extension;
+                        byte[] original = java.nio.file.Files.readAllBytes(
+                                storage.sample((UUID) row.get("batchId"), sampleId));
+                        originals.put(archivePath, original);
+                        originalManifest.add(Map.of("sampleId", sampleId, "sourcePath", sourcePath,
+                                "path", archivePath, "mediaType", row.get("mediaType"),
+                                "sha256", WorkflowStore.digest(original), "sizeBytes", original.length));
+                    }
                     if(row.get("resultId")!=null){
                         var provenance=s.db.queryForList("SELECT c.source_actor AS \"sourceActor\",c.model_version AS \"modelVersion\",c.confidence,o.parent_result_id AS \"parentResultId\" FROM project_result_candidate c LEFT JOIN owner_result o ON o.id=c.result_id WHERE c.result_id=?",row.get("resultId"));
                         row.put("provenance",provenance.isEmpty()?null:provenance.get(0));
@@ -196,37 +217,28 @@ FROM final_snapshot_item f JOIN sample s ON s.id=f.sample_id WHERE f.snapshot_id
             var exported = frozenPlugin.export((String)job.get("format"),rows);
             String filename = exported.filename();
             byte[] data = exported.bytes();
-            if (data.length > 64 * 1024 * 1024) throw new IOException("export size limit");
-            byte[] manifest =
-                    s.write(
-                                    Map.of(
-                                            "schemaVersion",
-                                            "1.0.0",
-                                            "exportId",
-                                            id,
-                                            "projectId",
-                                            job.get("project_id"),
-                                            "format",
-                                            job.get("format"),
-                                            "finalSnapshotIds",
-                                            s.read(job.get("snapshot_ids").toString()),
-                                            "specifications",specifications.values(),
-                                            "finalSnapshots",snapshots,
-                                            "sampleCount",
-                                            rows.size(),
-                                            "files",
-                                            List.of(
-                                                    Map.of(
-                                                            "path",
-                                                            filename,
-                                                            "sha256",
-                                                            WorkflowStore.digest(data),
-                                                            "sizeBytes",
-                                                            data.length))))
-                            .getBytes(StandardCharsets.UTF_8);
+            long archiveContentBytes = data.length + originals.values().stream().mapToLong(value -> value.length).sum();
+            if (archiveContentBytes > 64L * 1024 * 1024) throw new IOException("export size limit");
+            var files = new ArrayList<Map<String, Object>>();
+            files.add(Map.of("path", filename, "sha256", WorkflowStore.digest(data), "sizeBytes", data.length));
+            files.addAll(originalManifest);
+            byte[] manifest = s.write(Map.ofEntries(
+                    Map.entry("schemaVersion", "1.0.0"),
+                    Map.entry("exportId", id),
+                    Map.entry("projectId", job.get("project_id")),
+                    Map.entry("format", job.get("format")),
+                    Map.entry("finalSnapshotIds", s.read(job.get("snapshot_ids").toString())),
+                    Map.entry("specifications", specifications.values()),
+                    Map.entry("finalSnapshots", snapshots),
+                    Map.entry("sampleCount", rows.size()),
+                    Map.entry("includeOriginals", includeOriginals),
+                    Map.entry("originalFiles", originalManifest),
+                    Map.entry("files", files)))
+                    .getBytes(StandardCharsets.UTF_8);
             var bytes = new ByteArrayOutputStream();
             try (var zip = new ZipOutputStream(bytes, StandardCharsets.UTF_8)) {
                 entry(zip, filename, data);
+                for (var original : originals.entrySet()) entry(zip, original.getKey(), original.getValue());
                 entry(zip, "manifest.json", manifest);
             }
             byte[] archive = bytes.toByteArray();
