@@ -59,7 +59,10 @@ public class AiController {
             @PathVariable UUID projectId, @RequestHeader("Idempotency-Key") String key,
             @Valid @RequestBody CreateRequest body, HttpServletRequest req) {
         return response(ai.createExecution(actor(auth), projectId,
-                new AiService.CreateInput(body.specVersionId(), body.agentId(), body.samples(), body.instructions()), key), req);
+                new AiService.CreateInput(body.specVersionId(), body.agentId(), body.samples(), body.instructions(),
+                                body.selectionId(),
+                                body.referenceMode(),
+                                body.reopenAccepted()), key), req);
     }
 
     @GetMapping("/ai-executions/{executionId}")
@@ -97,8 +100,21 @@ public class AiController {
         return response(ai.confidencePolicies(actor(auth), roundId), req);
     }
 
-    public record CreateRequest(@NotNull UUID specVersionId, @NotNull UUID agentId,
-            @NotNull @Size(max = 10000) List<AiService.SelectionSample> samples, @Size(max = 500) String instructions) {}
+    @PostMapping("/ai-executions/{executionId}/retries")
+    @ResponseStatus(HttpStatus.CREATED)
+    public ApiResponse<JsonNode> retry(
+            @RequestHeader(value = "Authorization", required = false) String auth,
+            @PathVariable UUID executionId,
+            @RequestHeader("Idempotency-Key") String key,
+            @RequestBody AiService.RetryInput body,
+            HttpServletRequest req) {
+        return response(ai.retry(actor(auth), executionId, body, key), req);
+    }
+
+    public record CreateRequest(@NotNull UUID specVersionId, @NotNull UUID agentId, @Size(max = 10000) List<AiService.SelectionSample> samples, @Size(max = 500) String instructions,
+            UUID selectionId,
+            String referenceMode,
+            Boolean reopenAccepted) {}
 
     public record CancelRequest(@NotNull @Min(1) Long baseRevision, @Size(max = 1000) String reason) {}
 

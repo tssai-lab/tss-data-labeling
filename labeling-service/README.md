@@ -1,117 +1,61 @@
-# 标注服务本地联调
+# 标注服务
 
-## 接口
+本目录是 TSS 数据标注平台的 Java/Spring Boot 业务后端。服务复用统一登录身份，但独立保存标注业务数据；通过版本化 API 管理项目、样本、任务轮次、人工/AI 执行、审核和成果。
 
-本地地址默认为 `http://127.0.0.1:8082`。身份与项目接口：
+本文描述当前 Git 工作区 `labeling-backend` 分支的源码，不表示服务器已部署相同版本，也不表示所有业务流程已通过真实数据验收。当前工作区 HEAD：`b8a3040`。接口契约见 [04-api.md](../docs/labeling-v1.1/04-api.md)，分项进度见 [开发清单](../docs/labeling-v1.1/09-status.md)，发布和恢复步骤见 [RELEASE.md](RELEASE.md)。
 
-- `GET /api/labeling/v1/health`：检查服务进程。
-- `GET /api/labeling/v1/me`：验证统一登录并建立/读取人工 actor。
-- `GET /api/labeling/v1/admin/users?limit=20&offset=0`：标注管理员查看已建立映射的用户。
-- `PATCH /api/labeling/v1/admin/users/{actorId}`：标注管理员修改他人状态或管理员权限，需 reason。
-- `POST /api/labeling/v1/projects`：创建项目，调用者自动成为 owner。
-- `GET /api/labeling/v1/projects?scope=owned&limit=20`：列出自己的项目。
-- `GET /api/labeling/v1/projects/{projectId}`：读取自己的项目和规范版本。
-- `POST /api/labeling/v1/projects/{projectId}/spec-versions`：创建标签规范版本。
+2026-11-20 更新包含尚未提交的可信插件实现，不能只用上述 HEAD 标识本次交付代码。插件接口、前端配套、版本绑定及接入步骤见 [可信任务插件注册机制](../docs/labeling-v1.1/08-task-plugins.md)。
 
-项目业务ID在数据库中是 UUID，API传规范UUID字符串。统一身份ID不转成UUID，按身份服务原值保存。
+## 当前后端已覆盖的流程
 
-## 身份验证
+| 模块 | 当前源码能力 | 边界 |
+|---|---|---|
+| 身份和项目 | 统一登录令牌校验、HUMAN actor 映射、标注管理员、项目创建/查询、标签规范版本 | 不复制登录密码；标注角色不修改训练平台角色 |
+| 输入和任务 | 图片 ZIP 导入；CSV/JSON 原生任务与资源登记；模板目录；通用样本读取；站点日能耗 CSV 解析和结构化输入 | 当前内置模板有限，不等于任意数据格式自动适配 |
+| 人工标注 | 发布范围、按包、领取、样本授权、草稿/完成状态、整包完整提交 | 每个提交包必须全部样本完成；未完成内容可存草稿 |
+| AI 执行 | Agent 注册、执行队列、租约、逐样本结果、置信度、部分成功/失败、终态失败子集重试 | 提供的是平台执行接口；实际模型/Agent 运行和质量仍需单独配置、联调、验收 |
+| 需求方处理 | 结果查询、逐结果审核/修订、阈值分档、固定范围、再次发布、操作历史、项目完成 | 阈值不自动确认；需要前端呈现并由需求方操作 |
+| 集成和交付 | 多数投票建议、最终成果快照、异步 ZIP 导出；图片分类与能耗格式 | 投票只生成建议，不自动审核；导出能力不代表所有行业格式均已支持 |
+| 编辑器 | 后端适配器复用仓库内 Label Studio 源码中的配置、结果校验和转换能力 | 不部署、不启动 Label Studio 整体服务；不是调用外部 LS 项目/任务 API |
 
-标注服务把请求中的 `Authorization` 头转交给统一登录后端的 `/api/user/current-user` 验证。默认训练后端地址为 `http://127.0.0.1:8080`，其他环境设置 `LABELING_IDENTITY_BASE_URL`。标注服务不能单独验证训练后端的进程内会话；统一身份服务不可用时，业务请求失败关闭并返回503。
+## 数据库迁移
 
-数据库和迁移账号使用外部环境变量配置：`LABELING_DATABASE_URL`、`LABELING_DATABASE_USERNAME`、`LABELING_DATABASE_PASSWORD`、`LABELING_MIGRATION_USERNAME`、`LABELING_MIGRATION_PASSWORD`。凭据不要提交到代码库。
+当前源码包含 Flyway `V1` 至 `V24`。V6 是已有的编辑器映射迁移，并非缺号；V14—V23 逐步增加结果选择、需求方工作流、能耗输入、原生任务/资源、异步导出和多规范成果快照等结构；V24 增加项目/导入批次插件版本绑定，并将草稿结果格式交由冻结插件校验。**部署前必须先对目标数据库只读核对 Flyway 历史、脚本校验和及数据状态，再按发布流程备份并升级。** 不要在共享库手工重跑 SQL、使用 Flyway `repair/clean`，也不要因本地迁移齐全而推断服务器已升级。
 
-## 示例数据
+数据库、上传原始文件和导出存储需要独立配置与备份。连接串和口令从环境注入；禁止把凭据写入仓库。实际变量名和部署路径以 `RELEASE.md`、目标环境服务配置及部署 workflow 为准。
 
-开发库迁移完成后，可从已登录账号的 `/api/user/current-user` 响应取得自己的 `data.id`，再运行本机示例脚本。该脚本会为这个真实身份创建一个图像分类项目与标签规范；不创建密码或伪造登录用户。
+## 本地运行
 
-```bash
-PGPASSWORD="$LABELING_DATABASE_PASSWORD" psql \
-  -h 127.0.0.1 -p 5433 -U "$LABELING_DATABASE_USERNAME" -d tss_labeling \
-  -v identity_user_id='统一身份接口返回的data.id' \
-  -v display_name='本机联调用户' \
-  -f src/main/resources/db/dev-seed.sql
-```
+本服务使用 Java 17、Maven 和 PostgreSQL。需要先准备独立的标注数据库及身份服务可访问地址，再按本地环境设置数据库、迁移、身份服务和文件存储环境变量。仓库不包含生产凭据。
 
-示例项目ID固定为 `fa2336cf-6baf-4ff1-8f64-fc1fb886bdf1`。脚本仅供开发数据库使用，不作为生产数据迁移执行。
-
-## 示例调用
+在本目录执行：
 
 ```bash
-curl -H "Authorization: Bearer $TOKEN" \
-  http://127.0.0.1:8082/api/labeling/v1/me
-
-curl -X POST http://127.0.0.1:8082/api/labeling/v1/projects \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Idempotency-Key: create-demo-project-001" \
-  -H "Content-Type: application/json" \
-  -d '{"name":"表面缺陷标注","description":"接口联调项目","taskType":"IMAGE_CLASSIFICATION"}'
+mvn spring-boot:run
 ```
 
-创建项目和规范版本接口要求唯一 `Idempotency-Key`。相同用户、操作、键和请求会返回已创建的资源；复用同键提交不同请求会返回409。创建项目示例返回 `201`，响应体为 `{ "data": { ... }, "requestId": "..." }`。
+本地默认端口为 `8082`；健康检查：
 
-## 图片导入
-
-本功能分支增加 ZIP 分片上传、持久化解析、失败重试、JPEG/PNG 样本分页和 owner 授权原图。接口细则见 [图片导入 API](../docs/labeling-v1.1/08-image-import-api.md)，宋雷鸣可运行的调用示例见 [examples/README.md](examples/README.md)。
-
-启动前将 `LABELING_STORAGE_ROOT` 指向独立的可写持久化目录，数据库与文件目录需要共同备份。Flyway 新增 V3 迁移，不改已发布的 V1/V2；迁移账户需有 DDL 权限，服务仍使用 tss_labeling_app。不要在共享库中手工重跑建表脚本。
-
-```powershell
-# Java 17 + Maven，在 labeling-service 目录
-mvn test
-# 安装了 Node 18+ 时启用真实 HTTP 调用示例测试
-$env:LABELING_NODE_E2E = 'true'
-mvn test
-mvn package
+```bash
+curl -i http://127.0.0.1:8082/api/labeling/v1/health
 ```
 
-集成测试自行启动临时 PostgreSQL 和身份服务桩，不连接现有业务数据库。Linux 必须以普通用户运行。正式联调仍需用真实统一登录和选定的数据集复验。领取、平台分类草稿与提交已有本地实现；Label Studio 和导出仍未实现，导入通过不能代表标注全链路已经完成。
+身份接口会转发 Bearer Token 到统一身份服务验证。仅健康接口返回 200 不能证明登录、数据库迁移、文件访问和业务链路均正常。
 
-## 任务包与领取（本地已实现，需部署 V4）
+## 常用接口入口
 
-- `POST /api/labeling/v1/projects/{projectId}/package-plans`：owner 创建打包预览，默认每包 10 张、每张 1 人。
-- `POST /api/labeling/v1/package-plans/{planId}/publish`：owner 原子发布计划并开放项目。
-- `GET /api/labeling/v1/package-plans/{planId}`：owner 查看计划和包摘要。
-- `GET /api/labeling/v1/task-pool`：查看可领取包简介。
-- `POST /api/labeling/v1/packages/{packageId}/claims`：领取一个席位，支持幂等重试。
-- `GET /api/labeling/v1/assignments?scope=mine`：本人领取列表。
-- `GET /api/labeling/v1/assignments/{assignmentId}/items`：读取自己包内样本及规范。
-- `GET /api/labeling/v1/assignments/{assignmentId}/samples/{sampleId}/file`：授权读取包内图片。
+接口前缀为 `/api/labeling/v1`。完整字段、权限、错误码和调用顺序以 [04-api.md](../docs/labeling-v1.1/04-api.md) 为准。
 
-POST 均需 Idempotency-Key。完整字段、上限和错误码见 `../docs/labeling-v1.1/04-api.md` 的任务包首轮实现。
-任务包阶段不包含结果保存；后续 V5 已补上平台草稿与提交，见下一节。放弃/回收领取、Label Studio 和导出仍未实现。
+- `GET /me`：取得当前标注身份与权限。
+- `GET /task-templates`：读取插件目录、精确版本、编辑器键、五项能力、启用状态及导出格式；后端按 `TaskPlugin` 实现自动注册。
+- `POST /projects`、`GET /projects`：创建项目、列出本人项目。
+- `/projects/{id}/imports`、`/input-resources`、`/input-samples`：导入并浏览输入数据。
+- `/package-plans`、`/task-pool`、`/assignments`：创建发布计划、领取和处理人工任务。
+- `/ai-executions`：创建及查询 AI 执行批次，Worker API 负责领取和回报结果。
+- `/projects/{id}/reviews`、`/aggregations`、`/final-snapshots`、`/exports`：处理结果、生成集成建议、固定成果和导出。
 
-## 草稿与正式提交（V5，本地实现）
+## 测试状态
 
-- `PUT /api/labeling/v1/assignments/{assignmentId}/drafts/{sampleId}`：版本校验后保存本人图片分类草稿。
-- `GET /api/labeling/v1/assignments/{assignmentId}/drafts/{sampleId}`：刷新后读回；包内 items 也带草稿。
-- `POST /api/labeling/v1/assignments/{assignmentId}/submissions`：携带幂等键与整包样本版本清单，冻结个人提交。
-- `GET /api/labeling/v1/submissions/{submissionId}`：提交人/owner 查看冻结结果。
-- `GET /api/labeling/v1/projects/{projectId}/submissions`：owner 分页查看提交。
+集成测试包含独立 PostgreSQL、迁移升级、权限、并发、图片/原生任务导入、任务执行和结果交付等场景；部分测试依赖 Docker 镜像或 Python 环境。
 
-当前 resultFormat 为 image-classification-v1，结果为 {"labelId":"规范标签ID"}。
-Label Studio 原始 JSON 需适配器校验转换，尚未接入 editor-sync；导出与验收尚未实现。
-调用示例、冲突处理和权限边界见接口文档末尾“草稿与提交首轮实现”。
-
-## 需求方审核（V7，本地实现）
-
-- `GET /api/labeling/v1/submissions/{submissionId}/review`：owner 或提交者查看审核状态与逐样本结论，状态为 OPEN/ACCEPTED/REJECTED/CORRECTION/PARTIAL。
-- `PUT /api/labeling/v1/submissions/{submissionId}/review/items`：owner 逐样本接受/修改/退回/待修正（需 Idempotency-Key）。action ∈ ACCEPT/MODIFY/REJECT/CORRECTION，MODIFY 需 result，接受沿用冻结答案。
-- `POST /api/labeling/v1/submissions/{submissionId}/review/decide`：owner 对整份提交一次接受/退回/待修正（需 Idempotency-Key）。
-- `GET /api/labeling/v1/submissions/{submissionId}/review/audit`：按时间升序分页读取只增审计记录。
-
-审核不覆盖标注员答案；修改结果必须属于提交绑定的规范版本。
-
-## 发布轮次与再次发布（V8，本地实现）
-
-首次发布和再次发布都会创建 `publication_round`，同一样本同一时间只能属于一个 OPEN 轮次（`sample_work_claim` 防重叠），提交后轮次自动关闭并释放占用，需求方即可再次发布这些样本。
-
-- `POST /api/labeling/v1/projects/{projectId}/package-plans`：创建打包预览。首次发布传 `batchId`；按样本范围再次发布传 `samples:[{sampleId, referenceResultId?}]`（两者二选一），可选 `instructions`。
-- `POST /api/labeling/v1/package-plans/{planId}/publish`：发布计划，返回各 packageId/roundId。
-- `POST /api/labeling/v1/packages/{packageId}/rounds`：整包重发（复用原包，round_no 递增）。
-- `GET /api/labeling/v1/rounds/{roundId}`：owner 或本轮参与者查看轮次状态。
-- `POST /api/labeling/v1/rounds/{roundId}/claims`：仅人工轮次领取。
-- `POST /api/labeling/v1/rounds/{roundId}/cancel`：owner 结束轮次、释放样本占用并拒绝迟到写入（baseRevision + reason）。
-- `GET /api/labeling/v1/assignments/{assignmentId}/items`：新增 `roundId` 和每样本 `referenceResult`。
-
-按样本范围再次发布当前用显式 `samples[]` 冻结范围；待 B 的 `result_selection`（选择快照）就绪后，入口改为 `selectionId`。
+最新本地测试数量、迁移/真实数据结果及跳过项统一维护在 [当前状态](../docs/labeling-v1.1/09-status.md)，复现命令见 [插件说明](../docs/labeling-v1.1/08-task-plugins.md)。原生编辑器测试需要完整 Python 依赖，跳过不能计为通过；本地验证不等于浏览器业务验收、GitHub CI 或服务器核验。

@@ -76,7 +76,7 @@ class PermissionTest {
     @Test void projectAccessDoesNotBypassOwnerForAdmin() {
         when(jdbc.query(contains("SELECT status FROM actor"), any(ResultSetExtractor.class), eq(caller)))
                 .thenReturn("ENABLED");
-        ProjectService projects = new ProjectService(jdbc, new ObjectMapper());
+        ProjectService projects = new ProjectService(jdbc, new ObjectMapper(), null, null);
         UUID projectId = UUID.randomUUID();
         denied(404, () -> projects.get(new ActorService.ActorContext(caller, "ENABLED", true), projectId.toString()));
         verify(jdbc).query(contains("WHERE id = ? AND owner_actor_id = ?"),

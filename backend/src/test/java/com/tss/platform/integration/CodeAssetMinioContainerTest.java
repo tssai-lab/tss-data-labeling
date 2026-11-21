@@ -44,7 +44,7 @@ class CodeAssetMinioContainerTest {
     private static final String TEST_ACCESS_KEY = "codeasset-it-access";
     private static final String TEST_SECRET_KEY = "codeasset-it-secret-2026";
     private static final DockerImageName MINIO_IMAGE = DockerImageName.parse(
-            "quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z"
+            "pgsty/silo:RELEASE.2026-11-12T00-00-00Z@sha256:c20d112390b9a9ce8c11b8af95ad35bcaa62f4759663c09c936cd8d2b511f329"
     );
 
     @Container

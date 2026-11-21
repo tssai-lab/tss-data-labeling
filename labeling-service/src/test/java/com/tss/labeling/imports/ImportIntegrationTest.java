@@ -1,5 +1,9 @@
 package com.tss.labeling.imports;
 
+import static org.junit.jupiter.api.Assertions.*;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
+
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpServer;
@@ -8,31 +12,28 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.ApplicationContext;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
+
+import java.awt.image.BufferedImage;
+import java.io.ByteArrayOutputStream;
 
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.MessageDigest;
+import java.util.Arrays;
+import java.util.HexFormat;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
-import java.security.MessageDigest;
-import java.util.HexFormat;
-import java.util.Arrays;
-import org.springframework.jdbc.core.JdbcTemplate;
-import static org.junit.jupiter.api.Assertions.*;
-import java.io.ByteArrayOutputStream;
-import java.awt.image.BufferedImage;
-import javax.imageio.ImageIO;
-import java.util.LinkedHashMap;
-import java.util.zip.ZipOutputStream;
 import java.util.zip.ZipEntry;
-import org.springframework.context.ApplicationContext;
-
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
+import java.util.zip.ZipOutputStream;
+import javax.imageio.ImageIO;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @AutoConfigureMockMvc
@@ -77,6 +78,7 @@ class ImportIntegrationTest {
         properties.add("labeling.imports.storage-root", () -> STORAGE);
         properties.add("labeling.imports.chunk-size-bytes", () -> 256);
         properties.add("labeling.imports.worker-enabled", () -> false);
+        properties.add("labeling.exports.worker-enabled", () -> false);
     }
 
     @Autowired MockMvc mvc;
@@ -289,7 +291,9 @@ class ImportIntegrationTest {
         command(batch, "complete", "complete-stable").andExpect(status().isAccepted());
         processQueue();
         UUID sample = db.queryForObject("SELECT id FROM sample WHERE batch_id = ?", UUID.class, UUID.fromString(batch));
-        db.update("UPDATE import_batch SET status = 'FAILED', error_code = 'TEST_RECOVERY' WHERE id = ?", UUID.fromString(batch));
+        db.update(
+                "UPDATE import_batch SET status = 'FAILED', error_code = 'TEST_RECOVERY' WHERE id ="
+                    + " ?", UUID.fromString(batch));
         command(batch, "retry", "retry-stable").andExpect(status().isAccepted());
         processQueue();
         assertEquals("READY", statusOf(batch).path("status").asText());
@@ -345,7 +349,8 @@ class ImportIntegrationTest {
                         "--spring.datasource.url=jdbc:postgresql://127.0.0.1:" + PG.getPort() + "/postgres?currentSchema=labeling",
                         "--spring.datasource.username=tss_labeling_app", "--spring.datasource.password=",
                         "--spring.flyway.user=postgres", "--spring.flyway.password=",
-                        "--labeling.imports.storage-root=" + STORAGE, "--labeling.imports.worker-enabled=false")) {
+                        "--labeling.imports.storage-root=" + STORAGE, "--labeling.imports.worker-enabled=false",
+                                "--labeling.exports.worker-enabled=false")) {
             restarted.getBean(ImportWorker.class).runOnce();
         }
         assertEquals("READY", statusOf(batch).path("status").asText());
@@ -656,9 +661,1893 @@ class ImportIntegrationTest {
             assertTrue(codes.contains(200) && codes.contains(409));
             assertEquals(1, resultGet("/assignments/" + assignment + "/drafts/" + sample, "draft-race", 200).path("revision").asInt());
             // 验证大于 Long 缓存范围的版本仍按数值比较。
-            db.update("UPDATE annotation_draft SET revision=128 WHERE assignment_id=? AND sample_id=?", UUID.fromString(assignment), UUID.fromString(sample));
+            db.update(
+                    "UPDATE annotation_draft SET revision=128 WHERE assignment_id=? AND"
+                        + " sample_id=?", UUID.fromString(assignment), UUID.fromString(sample));
             assertEquals(129, saveDraft(assignment, sample, "draft-race", 128, true, "normal", 200).path("revision").asInt());
         } finally { executor.shutdownNow(); }
     }
 
+    record Fixture(String project, String spec, String batch, JsonNode plan) {
+
+}
+
+    Fixture fixture(int people) throws Exception {
+        String project = project();
+        String batch = uploaded(project, zip(Map.of("a.png", image("png"), "b.png", image("png"))));
+        command(batch, "complete", UUID.randomUUID().toString()).andExpect(status().isAccepted());
+        processQueue();
+        String spec =
+                taskPost(
+                                "/projects/" + project + "/spec-versions",
+                                "owner",
+                                UUID.randomUUID().toString(),
+                                Map.of(
+                                        "taskType",
+                                        "IMAGE_CLASSIFICATION",
+                                        "schemaVersion",
+                                        "1",
+                                        "labels",
+                                        java.util.List.of(
+                                                Map.of("id", "normal", "name", "正常"),
+                                                Map.of("id", "other", "name", "其他"))),
+                                201)
+                        .path("specVersionId")
+                        .asText();
+        JsonNode plan =
+                taskPost(
+                        "/projects/" + project + "/package-plans",
+                        "owner",
+                        UUID.randomUUID().toString(),
+                        Map.of(
+                                "batchId",
+                                batch,
+                                "specVersionId",
+                                spec,
+                                "packageSize",
+                                10,
+                                "annotatorsPerSample",
+                                people),
+                        201);
+        return new Fixture(project, spec, batch, publishTask(plan));
+    }
+
+    JsonNode complete(Fixture f, String user, String label) throws Exception {
+        String assignment =
+                taskPost(
+                                "/packages/"
+                                        + f.plan.path("packages").get(0).path("packageId").asText()
+                                        + "/claims",
+                                user,
+                                UUID.randomUUID().toString(),
+                                Map.of(),
+                                201)
+                        .path("assignmentId")
+                        .asText();
+        var revisions = new java.util.ArrayList<Map<String, Object>>();
+        for (var item :
+                resultGet("/assignments/" + assignment + "/items", user, 200).path("items")) {
+            String sample = item.path("sampleId").asText();
+            saveDraft(assignment, sample, user, 0, true, label, 200);
+            revisions.add(Map.of("sampleId", sample, "revision", 1));
+        }
+        String submission =
+                taskPost(
+                                "/assignments/" + assignment + "/submissions",
+                                user,
+                                UUID.randomUUID().toString(),
+                                Map.of("items", revisions),
+                                201)
+                        .path("submissionId")
+                        .asText();
+        return resultGet("/submissions/" + submission, user, 200);
+    }
+
+    java.util.List<Map<String, Object>> exact(JsonNode submitted, long revision) {
+        var items = new java.util.ArrayList<Map<String, Object>>();
+        for (var row : submitted.path("items"))
+            items.add(
+                    Map.of(
+                            "sampleId",
+                            row.path("sampleId").asText(),
+                            "resultId",
+                            row.path("resultId").asText(),
+                            "baseReviewRevision",
+                            revision));
+        return items;
+    }
+
+    JsonNode selection(Fixture f, JsonNode submitted, String purpose, String action, long revision)
+            throws Exception {
+        var items = new java.util.ArrayList<Map<String, Object>>();
+        for (var row : submitted.path("items"))
+            items.add(
+                    Map.of(
+                            "sampleId",
+                            row.path("sampleId").asText(),
+                            "resultId",
+                            row.path("resultId").asText(),
+                            "reviewRevision",
+                            revision));
+        var body = new LinkedHashMap<String, Object>();
+        body.put("specVersionId", f.spec);
+        body.put("purpose", purpose);
+        body.put("items", items);
+        if (action != null) body.put("reviewAction", action);
+        return taskPost(
+                "/projects/" + f.project + "/result-selections",
+                "owner",
+                UUID.randomUUID().toString(),
+                body,
+                201);
+    }
+
+    @Test
+    void acceptsLegacyHumanThenFreezesActualDatabaseResult() throws Exception {
+        var f = fixture(1);
+        var sub = complete(f, "legacy-" + UUID.randomUUID(), "normal");
+        var items = new java.util.ArrayList<Map<String, Object>>();
+        for (var row : sub.path("items"))
+            items.add(
+                    Map.of(
+                            "sampleId",
+                            row.path("sampleId").asText(),
+                            "specVersionId",
+                            f.spec,
+                            "action",
+                            "ACCEPT",
+                            "sourceKind",
+                            "HUMAN",
+                            "submissionId",
+                            sub.path("submissionId").asText()));
+        taskPost(
+                "/projects/" + f.project + "/sample-reviews",
+                "owner",
+                UUID.randomUUID().toString(),
+                Map.of("items", items),
+                200);
+        assertEquals(
+                "ACCEPTED",
+                resultGet("/projects/" + f.project + "/sample-reviews", "owner", 200)
+                        .path("items")
+                        .get(0)
+                        .path("status")
+                        .asText());
+        var snapshot =
+                taskPost(
+                        "/projects/" + f.project + "/final-snapshots",
+                        "owner",
+                        UUID.randomUUID().toString(),
+                        Map.of(
+                                "name",
+                                "legacy",
+                                "specVersionId",
+                                f.spec,
+                                "sampleIds",
+                                items.stream().map(i -> i.get("sampleId")).toList()),
+                        201);
+        assertFalse(snapshot.path("items").get(0).path("resultId").asText().isBlank());
+        assertEquals(2, snapshot.path("sampleCount").asInt());
+        assertEquals(
+                "normal", snapshot.path("items").get(0).path("result").path("labelId").asText());
+    }
+
+    @Test
+    void exactReviewIsAtomicIdempotentAndSelectionCannotHideARevisionConflict() throws Exception {
+        var f = fixture(1);
+        var sub = complete(f, "atomic-" + UUID.randomUUID(), "normal");
+        var chosen = selection(f, sub, "REVIEW", "ACCEPT", 0);
+        var bad = new java.util.ArrayList<>(exact(sub, 0));
+        var stale = new LinkedHashMap<>(bad.get(1));
+        stale.put("baseReviewRevision", 7);
+        bad.set(1, stale);
+        taskPost(
+                "/projects/" + f.project + "/reviews",
+                "owner",
+                UUID.randomUUID().toString(),
+                Map.of("specVersionId", f.spec, "action", "ACCEPT", "items", bad),
+                409);
+        assertEquals(
+                0,
+                db.queryForObject(
+                        "SELECT count(*) FROM sample_review WHERE project_id=?",
+                        Integer.class,
+                        UUID.fromString(f.project)));
+        var body = Map.of("selectionId", chosen.path("selectionId").asText(), "action", "ACCEPT");
+        String key = UUID.randomUUID().toString();
+        var response = taskPost("/projects/" + f.project + "/reviews", "owner", key, body, 200);
+        assertEquals(
+                response, taskPost("/projects/" + f.project + "/reviews", "owner", key, body, 200));
+        taskPost(
+                "/projects/" + f.project + "/reviews",
+                "owner",
+                UUID.randomUUID().toString(),
+                body,
+                409);
+        var finalized = selection(f, sub, "FINALIZE", null, 1);
+        var snapshot =
+                taskPost(
+                        "/projects/" + f.project + "/final-snapshots",
+                        "owner",
+                        UUID.randomUUID().toString(),
+                        Map.of(
+                                "name",
+                                "fixed",
+                                "specVersionId",
+                                f.spec,
+                                "selectionId",
+                                finalized.path("selectionId").asText()),
+                        201);
+        assertEquals(
+                sub.path("items").get(0).path("resultId"),
+                snapshot.path("items").get(0).path("resultId"));
+        var first = sub.path("items").get(0);
+        String parent = first.path("resultId").asText();
+        var revised =
+                taskPost(
+                        "/projects/" + f.project + "/results/" + parent + "/revisions",
+                        "owner",
+                        UUID.randomUUID().toString(),
+                        Map.of(
+                                "specVersionId",
+                                f.spec,
+                                "sampleId",
+                                first.path("sampleId").asText(),
+                                "baseReviewRevision",
+                                1,
+                                "result",
+                                Map.of("labelId", "other"),
+                                "reason",
+                                "纠正标签"),
+                        200);
+        assertEquals(2, revised.path("reviewRevision").asInt());
+        taskPost(
+                "/projects/" + f.project + "/final-snapshots",
+                "owner",
+                UUID.randomUUID().toString(),
+                Map.of(
+                        "name",
+                        "stale",
+                        "specVersionId",
+                        f.spec,
+                        "selectionId",
+                        finalized.path("selectionId").asText()),
+                409);
+        taskPost(
+                "/projects/" + f.project + "/reviews",
+                "owner",
+                UUID.randomUUID().toString(),
+                Map.of(
+                        "specVersionId",
+                        f.spec,
+                        "action",
+                        "ACCEPT",
+                        "items",
+                        java.util.List.of(
+                                Map.of(
+                                        "sampleId",
+                                        first.path("sampleId").asText(),
+                                        "resultId",
+                                        revised.path("resultId").asText(),
+                                        "baseReviewRevision",
+                                        2))),
+                200);
+        var newer =
+                taskPost(
+                        "/projects/" + f.project + "/final-snapshots",
+                        "owner",
+                        UUID.randomUUID().toString(),
+                        Map.of(
+                                "name",
+                                "revised",
+                                "specVersionId",
+                                f.spec,
+                                "sampleIds",
+                                java.util.List.of(first.path("sampleId").asText())),
+                        201);
+        assertEquals("other", newer.path("items").get(0).path("result").path("labelId").asText());
+        assertEquals(
+                snapshot,
+                resultGet(
+                        "/final-snapshots/" + snapshot.path("finalSnapshotId").asText(),
+                        "owner",
+                        200));
+        resultGet(
+                "/projects/"
+                        + f.project
+                        + "/samples/"
+                        + first.path("sampleId").asText()
+                        + "/results?specVersionId="
+                        + f.spec,
+                "stranger",
+                404);
+        assertEquals(
+                "normal",
+                resultGet("/submissions/" + sub.path("submissionId").asText(), "owner", 200)
+                        .path("items")
+                        .get(0)
+                        .path("result")
+                        .path("labelId")
+                        .asText());
+        assertEquals(
+                revised.path("resultId"),
+                resultGet(
+                                "/projects/" + f.project + "/results?specVersionId=" + f.spec,
+                                "owner",
+                                200)
+                        .path("items")
+                        .get(0)
+                        .path("selectedResultId"));
+    }
+
+    @Test
+    void selectionPublishChecksExpiryAndVersionAtFinalPublish() throws Exception {
+        var f = fixture(1);
+        var sub = complete(f, "publish-" + UUID.randomUUID(), "normal");
+        var chosen = selection(f, sub, "PUBLISH", null, 0);
+        var plan =
+                taskPost(
+                        "/projects/" + f.project + "/package-plans",
+                        "owner",
+                        UUID.randomUUID().toString(),
+                        Map.of(
+                                "selectionId",
+                                chosen.path("selectionId").asText(),
+                                "specVersionId",
+                                f.spec,
+                                "packageSize",
+                                1),
+                        201);
+        assertEquals(f.project, plan.path("projectId").asText());
+        assertEquals(f.spec, plan.path("specVersionId").asText());
+        taskPost(
+                "/projects/" + f.project + "/reviews",
+                "owner",
+                UUID.randomUUID().toString(),
+                Map.of("specVersionId", f.spec, "action", "ACCEPT", "items", exact(sub, 0)),
+                200);
+        taskPost(
+                "/package-plans/" + plan.path("planId").asText() + "/publish",
+                "owner",
+                UUID.randomUUID().toString(),
+                Map.of("selectionHash", plan.path("selectionHash").asText()),
+                409);
+        var fresh = selection(f, sub, "PUBLISH", null, 1);
+        var freshPlan =
+                taskPost(
+                        "/projects/" + f.project + "/package-plans",
+                        "owner",
+                        UUID.randomUUID().toString(),
+                        Map.of(
+                                "selectionId",
+                                fresh.path("selectionId").asText(),
+                                "specVersionId",
+                                f.spec,
+                                "packageSize",
+                                1,
+                                "referenceMode",
+                                "SELECTED"),
+                        201);
+        var republished = publishTask(freshPlan);
+        assertEquals(2, republished.path("packages").size());
+        String reader = "reference-" + UUID.randomUUID();
+        String assignment =
+                taskPost(
+                                "/packages/"
+                                        + republished
+                                                .path("packages")
+                                                .get(0)
+                                                .path("packageId")
+                                                .asText()
+                                        + "/claims",
+                                reader,
+                                UUID.randomUUID().toString(),
+                                Map.of(),
+                                201)
+                        .path("assignmentId")
+                        .asText();
+        var reference =
+                resultGet("/assignments/" + assignment + "/items", reader, 200)
+                        .path("items")
+                        .get(0)
+                        .path("referenceResult");
+        assertEquals("normal", reference.path("result").path("labelId").asText());
+        assertFalse(reference.path("resultId").asText().isBlank());
+        assertEquals(
+                "PENDING",
+                resultGet("/projects/" + f.project + "/sample-reviews", "owner", 200)
+                        .path("items")
+                        .get(0)
+                        .path("status")
+                        .asText());
+        var expired = selection(f, sub, "PUBLISH", null, 2);
+        db.update(
+                "UPDATE result_selection SET expires_at=CURRENT_TIMESTAMP-interval '1 second' WHERE"
+                    + " id=?",
+                UUID.fromString(expired.path("selectionId").asText()));
+        taskPost(
+                "/projects/" + f.project + "/package-plans",
+                "owner",
+                UUID.randomUUID().toString(),
+                Map.of(
+                        "selectionId",
+                        expired.path("selectionId").asText(),
+                        "specVersionId",
+                        f.spec),
+                410);
+    }
+
+    @Test
+    void stateChangesAndDraftDeletionAreOwnerScopedVersionedAndRecoverable() throws Exception {
+        String p = project(), key = UUID.randomUUID().toString();
+        var body = Map.of("baseRevision", 1, "reason", "删除空草稿");
+        mvc.perform(
+                        delete(API + "/projects/" + p)
+                                .header("Authorization", "Bearer stranger")
+                                .header("Idempotency-Key", key)
+                                .contentType("application/json")
+                                .content(json.writeValueAsString(body)))
+                .andExpect(status().isNotFound());
+        for (int i = 0; i < 2; i++)
+            mvc.perform(
+                            delete(API + "/projects/" + p)
+                                    .header("Authorization", "Bearer owner")
+                                    .header("Idempotency-Key", key)
+                                    .contentType("application/json")
+                                    .content(json.writeValueAsString(body)))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.deleted").value(true));
+        resultGet("/projects/" + p, "owner", 404);
+        taskPost(
+                "/projects/" + p + "/spec-versions",
+                "owner",
+                UUID.randomUUID().toString(),
+                Map.of(
+                        "taskType",
+                        "IMAGE_CLASSIFICATION",
+                        "schemaVersion",
+                        "1",
+                        "labels",
+                        java.util.List.of(Map.of("id", "n", "name", "N"))),
+                404);
+        var f = fixture(1);
+        var open = resultGet("/projects/" + f.project, "owner", 200);
+        taskPost(
+                "/projects/" + f.project + "/archive",
+                "owner",
+                UUID.randomUUID().toString(),
+                Map.of("baseRevision", open.path("revision").asLong(), "reason", "归档"),
+                409);
+        var paused =
+                taskPost(
+                        "/projects/" + f.project + "/pause",
+                        "owner",
+                        UUID.randomUUID().toString(),
+                        Map.of("baseRevision", open.path("revision").asLong(), "reason", "暂停"),
+                        200);
+        taskPost(
+                "/packages/"
+                        + f.plan.path("packages").get(0).path("packageId").asText()
+                        + "/claims",
+                "pause-user",
+                UUID.randomUUID().toString(),
+                Map.of(),
+                409);
+        taskPost(
+                "/projects/" + f.project + "/resume",
+                "owner",
+                UUID.randomUUID().toString(),
+                Map.of("baseRevision", open.path("revision").asLong(), "reason", "恢复"),
+                409);
+        taskPost(
+                "/projects/" + f.project + "/resume",
+                "owner",
+                UUID.randomUUID().toString(),
+                Map.of("baseRevision", paused.path("revision").asLong(), "reason", "恢复"),
+                200);
+        complete(f, "history-" + UUID.randomUUID(), "normal");
+        for (String path :
+                java.util.List.of("imports", "rounds", "ai-executions", "package-plans")) {
+            resultGet("/projects/" + f.project + "/" + path, "stranger", 404);
+            resultGet("/projects/" + f.project + "/" + path + "?limit=0", "owner", 400);
+            resultGet("/projects/" + f.project + "/" + path, "owner", 200);
+        }
+        assertFalse(
+                resultGet("/me/operation-receipts?limit=1", "owner", 200).path("items").isEmpty());
+    }
+
+    JsonNode worker(String method, String path, String workerKey, Object body, int expected)
+            throws Exception {
+        var request =
+                org.springframework.test.web.servlet.request.MockMvcRequestBuilders.request(
+                                org.springframework.http.HttpMethod.valueOf(method),
+                                "/internal/labeling/v1" + path)
+                        .header("X-Worker-Key", workerKey)
+                        .header("Idempotency-Key", UUID.randomUUID().toString());
+        if (body != null)
+            request.contentType("application/json").content(json.writeValueAsString(body));
+        String text =
+                mvc.perform(request)
+                        .andExpect(status().is(expected))
+                        .andReturn()
+                        .getResponse()
+                        .getContentAsString();
+        return text.isEmpty() ? null : json.readTree(text);
+    }
+
+    String agent(String taskType, String workerKey) throws Exception {
+        resultGet("/me", "admin-test", 200);
+        UUID admin =
+                db.queryForObject(
+                        "SELECT id FROM actor WHERE identity_user_id='admin-test'", UUID.class);
+        db.update(
+                "INSERT INTO actor_role_grant(actor_id,role_code) VALUES (?,'LABELING_ADMIN') ON"
+                    + " CONFLICT DO NOTHING",
+                admin);
+        return taskPost(
+                        "/admin/agents",
+                        "admin-test",
+                        UUID.randomUUID().toString(),
+                        Map.of(
+                                "taskType",
+                                taskType,
+                                "displayName",
+                                "test",
+                                "modelVersion",
+                                "1",
+                                "workerKey",
+                                workerKey),
+                        201)
+                .path("agentId")
+                .asText();
+    }
+
+    @Test
+    void aiPartialFailureHasRealSnapshotsAndRetriesOnlyFailedChildren() throws Exception {
+        var f = fixture(1);
+        var sub = complete(f, "ai-seed-" + UUID.randomUUID(), "normal");
+        String workerKey = UUID.randomUUID().toString();
+        String agent = agent("IMAGE_CLASSIFICATION", workerKey);
+        var samples = sub.path("items");
+        var refs = new java.util.ArrayList<Map<String, Object>>();
+        for (var row : samples) refs.add(Map.of("sampleId", row.path("sampleId").asText()));
+        var execution =
+                taskPost(
+                        "/projects/" + f.project + "/ai-executions",
+                        "owner",
+                        UUID.randomUUID().toString(),
+                        Map.of("specVersionId", f.spec, "agentId", agent, "samples", refs),
+                        202);
+        String id = execution.path("executionId").asText();
+        var claimed = worker("POST", "/executions/claim", workerKey, null, 200);
+        long gen = claimed.path("generation").asLong();
+        worker(
+                "PUT",
+                "/executions/" + id + "/outputs/" + samples.get(0).path("sampleId").asText(),
+                workerKey,
+                Map.of(
+                        "generation",
+                        gen,
+                        "status",
+                        "SUCCEEDED",
+                        "result",
+                        Map.of("labelId", "normal"),
+                        "confidence",
+                        0),
+                200);
+        worker(
+                "PUT",
+                "/executions/" + id + "/outputs/" + samples.get(1).path("sampleId").asText(),
+                workerKey,
+                Map.of("generation", gen, "status", "FAILED", "errorCode", "MODEL_ERROR"),
+                200);
+        worker("POST", "/executions/" + id + "/finish", workerKey, Map.of("generation", gen), 200);
+        var terminal = resultGet("/ai-executions/" + id, "owner", 200);
+        assertEquals("PARTIAL", terminal.path("status").asText());
+        var answers = resultGet("/ai-executions/" + id + "/results", "owner", 200).path("items");
+        assertEquals(0, answers.get(0).path("confidence").asDouble());
+        assertTrue(answers.get(1).path("resultId").isNull());
+        taskPost(
+                "/projects/" + f.project + "/sample-reviews",
+                "owner",
+                UUID.randomUUID().toString(),
+                Map.of(
+                        "items",
+                        java.util.List.of(
+                                Map.of(
+                                        "sampleId",
+                                        samples.get(0).path("sampleId").asText(),
+                                        "specVersionId",
+                                        f.spec,
+                                        "action",
+                                        "ACCEPT",
+                                        "sourceKind",
+                                        "AI",
+                                        "executionId",
+                                        id))),
+                200);
+        taskPost(
+                "/ai-executions/" + id + "/retries",
+                "owner",
+                UUID.randomUUID().toString(),
+                Map.of(
+                        "baseRevision",
+                        terminal.path("revision").asLong(),
+                        "sampleIds",
+                        java.util.List.of(samples.get(0).path("sampleId").asText())),
+                422);
+        String key = UUID.randomUUID().toString();
+        var body = Map.of("baseRevision", terminal.path("revision").asLong());
+        var retry = taskPost("/ai-executions/" + id + "/retries", "owner", key, body, 201);
+        assertEquals(1, retry.path("sampleCount").asInt());
+        assertEquals(id, retry.path("retryOfExecutionId").asText());
+        assertEquals(retry, taskPost("/ai-executions/" + id + "/retries", "owner", key, body, 201));
+        taskPost(
+                "/ai-executions/" + id + "/retries",
+                "stranger",
+                UUID.randomUUID().toString(),
+                body,
+                404);
+    }
+
+    @Test
+    void aggregationUsesIndependentAnswersAndExportsRealImmutableZip() throws Exception {
+        var f = fixture(2);
+        var first = complete(f, "vote-a-" + UUID.randomUUID(), "normal");
+        var second = complete(f, "vote-b-" + UUID.randomUUID(), "normal");
+        var inputs = new java.util.ArrayList<Map<String, Object>>();
+        for (int i = 0; i < first.path("items").size(); i++)
+            inputs.add(
+                    Map.of(
+                            "sampleId",
+                            first.path("items").get(i).path("sampleId").asText(),
+                            "resultIds",
+                            java.util.List.of(
+                                    first.path("items").get(i).path("resultId").asText(),
+                                    second.path("items").get(i).path("resultId").asText())));
+        var job =
+                taskPost(
+                        "/projects/" + f.project + "/aggregations",
+                        "owner",
+                        UUID.randomUUID().toString(),
+                        Map.of(
+                                "specVersionId",
+                                f.spec,
+                                "algorithmId",
+                                "majority-vote-v1",
+                                "items",
+                                inputs),
+                        201);
+        var items =
+                resultGet(
+                                "/aggregations/" + job.path("aggregationId").asText() + "/items",
+                                "owner",
+                                200)
+                        .path("items");
+        assertEquals("SUGGESTED", items.get(0).path("outcome").asText());
+        assertEquals(
+                "UNREVIEWED",
+                resultGet(
+                                "/projects/" + f.project + "/results?specVersionId=" + f.spec,
+                                "owner",
+                                200)
+                        .path("items")
+                        .get(0)
+                        .path("reviewStatus")
+                        .asText());
+        var accept = new java.util.ArrayList<Map<String, Object>>();
+        for (var row : items)
+            accept.add(
+                    Map.of(
+                            "sampleId",
+                            row.path("sampleId").asText(),
+                            "resultId",
+                            row.path("resultId").asText(),
+                            "baseReviewRevision",
+                            0));
+        taskPost(
+                "/projects/" + f.project + "/reviews",
+                "owner",
+                UUID.randomUUID().toString(),
+                Map.of("specVersionId", f.spec, "action", "ACCEPT", "items", accept),
+                200);
+        var snapshot =
+                taskPost(
+                        "/projects/" + f.project + "/final-snapshots",
+                        "owner",
+                        UUID.randomUUID().toString(),
+                        Map.of(
+                                "name",
+                                "voted",
+                                "specVersionId",
+                                f.spec,
+                                "sampleIds",
+                                accept.stream().map(x -> x.get("sampleId")).toList()),
+                        201);
+        var export =
+                taskPost(
+                        "/projects/" + f.project + "/exports",
+                        "owner",
+                        UUID.randomUUID().toString(),
+                        Map.of(
+                                "format",
+                                "classification-csv-zip",
+                                "finalSnapshotIds",
+                                java.util.List.of(snapshot.path("finalSnapshotId").asText())),
+                        202);
+        String id = export.path("exportId").asText();
+        assertEquals("QUEUED", export.path("status").asText());
+        resultGet("/exports/" + id + "/download", "stranger", 404);
+        resultGet("/exports/" + id + "/download", "owner", 409);
+        context.getBean(com.tss.labeling.review.ExportWorker.class).runOnce();
+        var done = resultGet("/exports/" + id, "owner", 200);
+        assertEquals("SUCCEEDED", done.path("status").asText());
+        byte[] bytes =
+                mvc.perform(
+                                get(API + "/exports/" + id + "/download")
+                                        .header("Authorization", "Bearer owner"))
+                        .andExpect(status().isOk())
+                        .andExpect(content().contentType("application/zip"))
+                        .andReturn()
+                        .getResponse()
+                        .getContentAsByteArray();
+        assertEquals(sha(bytes), done.path("sha256").asText());
+        Map<String, byte[]> files = new LinkedHashMap<>();
+        try (var zip = new java.util.zip.ZipInputStream(new java.io.ByteArrayInputStream(bytes))) {
+            java.util.zip.ZipEntry entry;
+            while ((entry = zip.getNextEntry()) != null)
+                files.put(entry.getName(), zip.readAllBytes());
+        }
+        assertTrue(new String(files.get("results.csv"), StandardCharsets.UTF_8).contains("normal"));
+        var manifest = json.readTree(files.get("manifest.json"));
+        assertEquals(2, manifest.path("sampleCount").asInt());
+        assertFalse(manifest.path("specifications").isEmpty());assertFalse(manifest.path("finalSnapshots").isEmpty());
+        assertEquals(
+                sha(files.get("results.csv")),
+                manifest.path("files").get(0).path("sha256").asText());
+    }
+
+    String energyRow(String task, String station, String h0, String label) {
+        var fields = new java.util.ArrayList<String>();
+        fields.addAll(java.util.List.of(task, station, "enterprise", "device", "2026-11-01", h0));
+        for (int h = 1; h < 24; h++) fields.add(h == 1 ? "" : "1.5");
+        fields.add("34.5");
+        fields.add(label);
+        return String.join(",", fields);
+    }
+
+    byte[] energyArchive(String version, String... rows) throws Exception {
+        var fields =
+                new java.util.ArrayList<String>(
+                        java.util.List.of(
+                                "task_id",
+                                "station_key",
+                                "enterprise_key",
+                                "station_level",
+                                "date_local"));
+        for (int h = 0; h < 24; h++) fields.add(String.format("h%02d", h));
+        fields.addAll(java.util.List.of("daily_kwh", "label"));
+        return zip(
+                Map.of(
+                        "manifest.json",
+                        json.writeValueAsBytes(Map.of("datasetVersion", version)),
+                        "sample/station_day_tasks_2k.csv",
+                        (String.join(",", fields) + "\r\n" + String.join("\r\n", rows) + "\r\n")
+                                .getBytes(StandardCharsets.UTF_8),
+                        "preview/ignore.png",
+                        image("png")));
+    }
+
+    String energyProject() throws Exception {
+        return taskPost(
+                        "/projects",
+                        "owner",
+                        UUID.randomUUID().toString(),
+                        Map.of(
+                                "name",
+                                "能耗",
+                                "taskType",
+                                "TIMESERIES_ANNOTATION",
+                                "templateId",
+                                "energy-station-day",
+                                "templateVersion",
+                                "1.0.0"),
+                        201)
+                .path("projectId")
+                .asText();
+    }
+
+    @Test
+    void energyInputIsAtomicAuthorizedAndRoundTripsThroughSubmissionReviewAndExport()
+            throws Exception {
+        String p = energyProject();
+        String batch =
+                uploaded(
+                        p,
+                        energyArchive(
+                                "energy-v1",
+                                energyRow("t1", "s1", "0", ""),
+                                energyRow("t2", "s2", "2", "")));
+        command(batch, "complete", UUID.randomUUID().toString()).andExpect(status().isAccepted());
+        processQueue();
+        assertEquals("READY", statusOf(batch).path("status").asText());
+        assertEquals(2, statusOf(batch).path("validSampleCount").asInt());
+        var samples = resultGet("/imports/" + batch + "/samples", "owner", 200).path("items");
+        String sid = samples.get(0).path("sampleId").asText();
+        var input = resultGet("/projects/" + p + "/samples/" + sid + "/data", "owner", 200);
+        assertEquals(24, input.path("payload").path("series").path("values").size());
+        assertTrue(input.path("payload").path("series").path("values").get(1).isNull());
+        assertEquals("NOT_PROVIDED", input.path("context").path("status").asText());
+        for (var sample : samples) {
+            var data =
+                    resultGet(
+                            "/projects/"
+                                    + p
+                                    + "/samples/"
+                                    + sample.path("sampleId").asText()
+                                    + "/data",
+                            "owner",
+                            200);
+            if ("t1".equals(data.path("source").path("sourceTaskId").asText()))
+                assertEquals(
+                        0, data.path("payload").path("series").path("values").get(0).asDouble());
+        }
+        resultGet("/projects/" + p + "/samples/" + sid + "/data", "stranger", 404);
+        resultGet("/projects/" + project() + "/samples/" + sid + "/data", "owner", 404);
+        String spec =
+                taskPost(
+                                "/projects/" + p + "/spec-versions",
+                                "owner",
+                                UUID.randomUUID().toString(),
+                                Map.of(
+                                        "taskType",
+                                        "TIMESERIES_ANNOTATION",
+                                        "schemaVersion",
+                                        "1.0.0",
+                                        "labels",
+                                        java.util.List.of(Map.of("id", "normal", "name", "正常"))),
+                                201)
+                        .path("specVersionId")
+                        .asText();
+        var plan =
+                taskPost(
+                        "/projects/" + p + "/package-plans",
+                        "owner",
+                        UUID.randomUUID().toString(),
+                        Map.of("batchId", batch, "specVersionId", spec, "packageSize", 10),
+                        201);
+        plan = publishTask(plan);
+        String user = "energy-" + UUID.randomUUID();
+        String assignment =
+                taskPost(
+                                "/packages/"
+                                        + plan.path("packages").get(0).path("packageId").asText()
+                                        + "/claims",
+                                user,
+                                UUID.randomUUID().toString(),
+                                Map.of(),
+                                201)
+                        .path("assignmentId")
+                        .asText();
+        assertEquals(
+                input,
+                resultGet("/assignments/" + assignment + "/samples/" + sid + "/data", user, 200));
+        resultGet("/assignments/" + assignment + "/samples/" + sid + "/data", "owner", 404);
+        var result =
+                Map.of(
+                        "schemaVersion",
+                        "1.0.0",
+                        "annotations",
+                        java.util.List.of(
+                                Map.of(
+                                        "id",
+                                        "primary",
+                                        "from_name",
+                                        "primary_label",
+                                        "to_name",
+                                        "load_curve",
+                                        "type",
+                                        "choices",
+                                        "value",
+                                        Map.of("labelIds", java.util.List.of("normal"))),
+                                Map.of(
+                                        "id",
+                                        "point",
+                                        "from_name",
+                                        "point_labels",
+                                        "to_name",
+                                        "load_curve",
+                                        "type",
+                                        "timeseries_point",
+                                        "value",
+                                        Map.of(
+                                                "timestamp",
+                                                "2026-11-01T01:00:00+08:00",
+                                                "channel",
+                                                "value_kwh",
+                                                "labelIds",
+                                                java.util.List.of("normal")))));
+        var revisions = new java.util.ArrayList<Map<String, Object>>();
+        for (var sample : samples) {
+            String id = sample.path("sampleId").asText();
+            mvc.perform(
+                            put(API + "/assignments/" + assignment + "/drafts/" + id)
+                                    .header("Authorization", "Bearer " + user)
+                                    .contentType("application/json")
+                                    .content(
+                                            json.writeValueAsString(
+                                                    Map.of(
+                                                            "baseRevision",
+                                                            0,
+                                                            "explicitDone",
+                                                            true,
+                                                            "resultFormat",
+                                                            "annotation-record-v1",
+                                                            "inputHash",
+                                                            sample.path("contentSha256").asText(),
+                                                            "result",
+                                                            result))))
+                    .andExpect(status().isOk());
+            revisions.add(Map.of("sampleId", id, "revision", 1));
+        }
+        var receipt =
+                taskPost(
+                        "/assignments/" + assignment + "/submissions",
+                        user,
+                        UUID.randomUUID().toString(),
+                        Map.of("items", revisions),
+                        201);
+        var submitted =
+                resultGet("/submissions/" + receipt.path("submissionId").asText(), user, 200);
+        assertEquals(json.valueToTree(result), submitted.path("items").get(0).path("result"));
+        taskPost(
+                "/projects/" + p + "/reviews",
+                "owner",
+                UUID.randomUUID().toString(),
+                Map.of("specVersionId", spec, "action", "ACCEPT", "items", exact(submitted, 0)),
+                200);
+        var finalSnapshot =
+                taskPost(
+                        "/projects/" + p + "/final-snapshots",
+                        "owner",
+                        UUID.randomUUID().toString(),
+                        Map.of(
+                                "name",
+                                "energy",
+                                "specVersionId",
+                                spec,
+                                "sampleIds",
+                                revisions.stream().map(x -> x.get("sampleId")).toList()),
+                        201);
+        var pluginFormats=resultGet("/final-snapshots/"+finalSnapshot.path("finalSnapshotId").asText()+"/plugin-export-formats","owner",200);
+        assertTrue(pluginFormats.path("formats").toString().contains("energy-jsonl-zip"));
+        assertTrue(pluginFormats.path("formats").toString().contains("JSON_MIN"));
+        resultGet("/final-snapshots/"+finalSnapshot.path("finalSnapshotId").asText()+"/plugin-export-formats","other",404);
+        var export =
+                taskPost(
+                        "/projects/" + p + "/exports",
+                        "owner",
+                        UUID.randomUUID().toString(),
+                        Map.of(
+                                "format",
+                                "energy-jsonl-zip",
+                                "finalSnapshotIds",
+                                java.util.List.of(finalSnapshot.path("finalSnapshotId").asText())),
+                        202);
+        context.getBean(com.tss.labeling.review.ExportWorker.class).runOnce();
+        assertEquals(
+                "SUCCEEDED",
+                resultGet("/exports/" + export.path("exportId").asText(), "owner", 200)
+                        .path("status")
+                        .asText());
+        var exportList=resultGet("/projects/"+p+"/exports?snapshotId="+finalSnapshot.path("finalSnapshotId").asText(),"owner",200);
+        assertEquals(export.path("exportId").asText(),exportList.path("items").get(0).path("exportId").asText());
+        resultGet("/projects/"+p+"/exports","other",404);
+        assertEquals(
+                1,
+                db.queryForObject(
+                        "SELECT count(*) FROM source_asset WHERE project_id=?",
+                        Integer.class,
+                        UUID.fromString(p)));
+        String duplicate = uploaded(p, energyArchive("energy-v1", energyRow("t1", "s1", "0", "")));
+        command(duplicate, "complete", UUID.randomUUID().toString())
+                .andExpect(status().isAccepted());
+        processQueue();
+        assertEquals("DUPLICATE_ENERGY_SAMPLE", statusOf(duplicate).path("errorCode").asText());
+    }
+
+    @Test
+    void actualEnergyDatasetFirstPackageRoundTripsThroughReviewAndExport() throws Exception {
+        String datasetDirectory = System.getProperty("labeling.energy.dataset");
+        org.junit.jupiter.api.Assumptions.assumeTrue(
+                datasetDirectory != null && !datasetDirectory.isBlank(),
+                "通过 -Dlabeling.energy.dataset 指定本地能耗数据集目录后运行");
+
+        Path dataset = Path.of(datasetDirectory);
+        var manifest = json.readTree(Files.readAllBytes(dataset.resolve("manifest.json")));
+        String version = manifest.path("version").asText();
+        assertFalse(version.isBlank(), "数据集 manifest.json 应包含 version");
+        var csvLines = Files.readAllLines(
+                dataset.resolve("sample/station_day_tasks_2k.csv"), StandardCharsets.UTF_8);
+        assertTrue(csvLines.size() >= 11, "样例 CSV 至少应有 10 条任务数据");
+        String csv = String.join("\r\n", csvLines.subList(0, 11)) + "\r\n";
+        byte[] archive = zip(Map.of(
+                "manifest.json",
+                json.writeValueAsBytes(Map.of("datasetVersion", version)),
+                "sample/station_day_tasks_2k.csv",
+                csv.getBytes(StandardCharsets.UTF_8)));
+
+        String project = energyProject();
+        String batch = uploaded(project, archive);
+        command(batch, "complete", UUID.randomUUID().toString())
+                .andExpect(status().isAccepted());
+        processQueue();
+        assertEquals("READY", statusOf(batch).path("status").asText());
+        assertEquals(10, statusOf(batch).path("validSampleCount").asInt());
+
+        JsonNode samples = resultGet("/imports/" + batch + "/samples", "owner", 200)
+                .path("items");
+        assertEquals(10, samples.size());
+        JsonNode specification = taskPost(
+                "/projects/" + project + "/spec-versions",
+                "owner",
+                UUID.randomUUID().toString(),
+                Map.of(
+                        "taskType", "TIMESERIES_ANNOTATION",
+                        "schemaVersion", "1.0.0",
+                        "labels", java.util.List.of(Map.of("id", "normal", "name", "正常"))),
+                201);
+        JsonNode plan = taskPost(
+                "/projects/" + project + "/package-plans",
+                "owner",
+                UUID.randomUUID().toString(),
+                Map.of(
+                        "batchId", batch,
+                        "specVersionId", specification.path("specVersionId").asText(),
+                        "packageSize", 10),
+                201);
+        JsonNode published = publishTask(plan);
+        String annotator = "real-energy-" + UUID.randomUUID();
+        String assignment = taskPost(
+                "/packages/" + published.path("packages").get(0).path("packageId").asText()
+                        + "/claims",
+                annotator,
+                UUID.randomUUID().toString(),
+                Map.of(),
+                201).path("assignmentId").asText();
+
+        var submissionItems = new java.util.ArrayList<Map<String, Object>>();
+        for (JsonNode sample : samples) {
+            String sampleId = sample.path("sampleId").asText();
+            JsonNode input = resultGet(
+                    "/assignments/" + assignment + "/samples/" + sampleId + "/data",
+                    annotator,
+                    200);
+            String date = input.path("payload").path("dateLocal").asText();
+            assertEquals(24, input.path("payload").path("series").path("values").size());
+            Map<String, Object> result = Map.of(
+                    "schemaVersion", "1.0.0",
+                    "annotations", java.util.List.of(Map.of(
+                            "id", "primary",
+                            "from_name", "primary_label",
+                            "to_name", "load_curve",
+                            "type", "choices",
+                            "value", Map.of("labelIds", java.util.List.of("normal")))));
+            mvc.perform(put(API + "/assignments/" + assignment + "/drafts/" + sampleId)
+                            .header("Authorization", "Bearer " + annotator)
+                            .contentType("application/json")
+                            .content(json.writeValueAsString(Map.of(
+                                    "baseRevision", 0,
+                                    "explicitDone", true,
+                                    "resultFormat", "annotation-record-v1",
+                                    "inputHash", input.path("inputHash").asText(),
+                                    "result", result))))
+                    .andExpect(status().isOk());
+            submissionItems.add(Map.of("sampleId", sampleId, "revision", 1));
+            assertFalse(date.isBlank(), "每条站点日样本应包含日期");
+        }
+
+        JsonNode receipt = taskPost(
+                "/assignments/" + assignment + "/submissions",
+                annotator,
+                UUID.randomUUID().toString(),
+                Map.of("items", submissionItems),
+                201);
+        JsonNode submitted = resultGet(
+                "/submissions/" + receipt.path("submissionId").asText(), annotator, 200);
+        assertEquals(10, submitted.path("items").size());
+        taskPost(
+                "/projects/" + project + "/reviews",
+                "owner",
+                UUID.randomUUID().toString(),
+                Map.of(
+                        "specVersionId", specification.path("specVersionId").asText(),
+                        "action", "ACCEPT",
+                        "items", exact(submitted, 0)),
+                200);
+        JsonNode snapshot = taskPost(
+                "/projects/" + project + "/final-snapshots",
+                "owner",
+                UUID.randomUUID().toString(),
+                Map.of(
+                        "name", "真实能耗数据首包验收",
+                        "specVersionId", specification.path("specVersionId").asText(),
+                        "sampleIds", submissionItems.stream().map(item -> item.get("sampleId")).toList()),
+                201);
+        JsonNode export = taskPost(
+                "/projects/" + project + "/exports",
+                "owner",
+                UUID.randomUUID().toString(),
+                Map.of(
+                        "format", "energy-jsonl-zip",
+                        "finalSnapshotIds", java.util.List.of(snapshot.path("finalSnapshotId").asText())),
+                202);
+        context.getBean(com.tss.labeling.review.ExportWorker.class).runOnce();
+        String exportId = export.path("exportId").asText();
+        JsonNode completedExport = resultGet("/exports/" + exportId, "owner", 200);
+        assertEquals("SUCCEEDED", completedExport.path("status").asText());
+        byte[] exportedArchive = mvc.perform(
+                        get(API + "/exports/" + exportId + "/download")
+                                .header("Authorization", "Bearer owner"))
+                .andExpect(status().isOk())
+                .andExpect(content().contentType("application/zip"))
+                .andReturn().getResponse().getContentAsByteArray();
+        assertEquals(sha(exportedArchive), completedExport.path("sha256").asText());
+        Map<String, byte[]> exportedFiles = new LinkedHashMap<>();
+        try (var zip = new java.util.zip.ZipInputStream(
+                new java.io.ByteArrayInputStream(exportedArchive))) {
+            java.util.zip.ZipEntry entry;
+            while ((entry = zip.getNextEntry()) != null)
+                exportedFiles.put(entry.getName(), zip.readAllBytes());
+        }
+        String exportedResults = new String(exportedFiles.get("results.jsonl"), StandardCharsets.UTF_8);
+        assertEquals(10, exportedResults.lines().count());
+        assertTrue(exportedResults.contains("\"labelIds\":[\"normal\"]"));
+        assertEquals(10, json.readTree(exportedFiles.get("manifest.json")).path("sampleCount").asInt());
+    }
+
+    @Test
+    void energyInvalidOrAnnotatedRowsLeaveNoPartialSamples() throws Exception {
+        for (String type : java.util.List.of("negative", "annotated", "duplicate")) {
+            String p = energyProject();
+            String row =
+                    energyRow(
+                            "bad",
+                            "s-bad",
+                            type.equals("negative") ? "-1" : "0",
+                            type.equals("annotated") ? "normal" : "");
+            if (type.equals("duplicate")) row = energyRow("good", "s-good", "0", "");
+            String batch =
+                    uploaded(p, energyArchive("bad-v1", energyRow("good", "s-good", "0", ""), row));
+            command(batch, "complete", UUID.randomUUID().toString())
+                    .andExpect(status().isAccepted());
+            processQueue();
+            var status = statusOf(batch);
+            assertEquals("FAILED", status.path("status").asText());
+            assertEquals(
+                    0,
+                    db.queryForObject(
+                            "SELECT count(*) FROM sample WHERE project_id=?",
+                            Integer.class,
+                            UUID.fromString(p)));
+            assertTrue(status.path("errors").get(0).path("sourceRow").asInt() > 0);
+            assertFalse(status.path("errors").get(0).path("field").asText().isBlank());
+        }
+    }
+
+    @Test
+    void concurrentExactReviewsHaveOneWinnerAndNoPartialCommit() throws Exception {
+        var f = fixture(1);
+        var sub = complete(f, "race-" + UUID.randomUUID(), "normal");
+        var body = Map.of("specVersionId", f.spec, "action", "ACCEPT", "items", exact(sub, 0));
+        var start = new java.util.concurrent.CountDownLatch(1);
+        var pool = java.util.concurrent.Executors.newFixedThreadPool(2);
+        try {
+            var tasks = new java.util.ArrayList<java.util.concurrent.Future<Integer>>();
+            for (int i = 0; i < 2; i++)
+                tasks.add(
+                        pool.submit(
+                                () -> {
+                                    start.await();
+                                    return mvc.perform(
+                                                    post(API
+                                                                    + "/projects/"
+                                                                    + f.project
+                                                                    + "/reviews")
+                                                            .header("Authorization", "Bearer owner")
+                                                            .header(
+                                                                    "Idempotency-Key",
+                                                                    UUID.randomUUID().toString())
+                                                            .contentType("application/json")
+                                                            .content(json.writeValueAsString(body)))
+                                            .andReturn()
+                                            .getResponse()
+                                            .getStatus();
+                                }));
+            start.countDown();
+            var statuses = new java.util.ArrayList<Integer>();
+            for (var task : tasks)
+                statuses.add(task.get(10, java.util.concurrent.TimeUnit.SECONDS));
+            java.util.Collections.sort(statuses);
+            assertEquals(java.util.List.of(200, 409), statuses);
+            assertEquals(
+                    2,
+                    db.queryForObject(
+                            "SELECT count(*) FROM review_event WHERE project_id=?",
+                            Integer.class,
+                            UUID.fromString(f.project)));
+            assertEquals(
+                    1,
+                    db.queryForObject(
+                            "SELECT max(revision) FROM sample_review WHERE project_id=?",
+                            Integer.class,
+                            UUID.fromString(f.project)));
+        } finally {
+            pool.shutdownNow();
+        }
+    }
+
+    @Test
+    void upgradesV6EditorAndSubmittedImageDataWithoutRewritingHistory() throws Exception {
+        String database = "upgrade_" + UUID.randomUUID().toString().replace("-", "");
+        try (var c = PG.getPostgresDatabase().getConnection();
+                var statement = c.createStatement()) {
+            statement.execute("CREATE DATABASE " + database);
+        }
+        String url =
+                "jdbc:postgresql://127.0.0.1:"
+                        + PG.getPort()
+                        + "/"
+                        + database
+                        + "?currentSchema=labeling";
+        org.flywaydb.core.Flyway.configure()
+                .dataSource(url, "postgres", "")
+                .schemas("labeling")
+                .defaultSchema("labeling")
+                .target("6")
+                .load()
+                .migrate();
+        var ds =
+                new org.springframework.jdbc.datasource.DriverManagerDataSource(
+                        url, "postgres", "");
+        var old = new JdbcTemplate(ds);
+        UUID actor = UUID.randomUUID(),
+                project = UUID.randomUUID(),
+                spec = UUID.randomUUID(),
+                batch = UUID.randomUUID(),
+                sample = UUID.randomUUID(),
+                plan = UUID.randomUUID(),
+                pkg = UUID.randomUUID(),
+                slot = UUID.randomUUID(),
+                assignment = UUID.randomUUID(),
+                submission = UUID.randomUUID();
+        String hash = "a".repeat(64);
+        old.update(
+                "INSERT INTO actor(id,kind,identity_user_id,display_name) VALUES"
+                        + " (?,'HUMAN','legacy','legacy')",
+                actor);
+        old.update(
+                "INSERT INTO project(id,owner_actor_id,name,task_type,status) VALUES"
+                        + " (?,?,'legacy','IMAGE_CLASSIFICATION','OPEN')",
+                project,
+                actor);
+        old.update(
+                "INSERT INTO spec_version(id,project_id,version_no,task_type,labels,schema_version)"
+                    + " VALUES"
+                    + " (?,?,1,'IMAGE_CLASSIFICATION','[{\"id\":\"normal\",\"name\":\"Normal\"}]','1')",
+                spec,
+                project);
+        old.update(
+                "INSERT INTO"
+                    + " import_batch(id,project_id,status,original_name,storage_key,size_bytes,received_bytes,chunk_size_bytes,sha256,original_complete,valid_sample_count)"
+                    + " VALUES (?,?,'READY','old.zip','old.zip',1,1,1,?,true,1)",
+                batch,
+                project,
+                hash);
+        old.update(
+                "INSERT INTO"
+                    + " sample(id,project_id,batch_id,source_path,storage_key,content_sha256,media_type,metadata)"
+                    + " VALUES (?,?,?,'old.png','old.bin',?,'image/png','{\"sizeBytes\":1}')",
+                sample,
+                project,
+                batch,
+                hash);
+        old.update(
+                "INSERT INTO"
+                    + " package_plan(id,project_id,batch_id,spec_version_id,package_size,annotators_per_sample,sample_count,status,selection_hash,published_at)"
+                    + " VALUES (?,?,?,?,1,1,1,'PUBLISHED',?,CURRENT_TIMESTAMP)",
+                plan,
+                project,
+                batch,
+                spec,
+                hash);
+        old.update(
+                "INSERT INTO task_package(id,plan_id,sequence_no,sample_count,required_count)"
+                    + " VALUES (?,?,1,1,1)",
+                pkg,
+                plan);
+        old.update(
+                "INSERT INTO package_item(package_id,plan_id,batch_id,sample_id,ordinal) VALUES"
+                        + " (?,?,?,?,1)",
+                pkg,
+                plan,
+                batch,
+                sample);
+        old.update("INSERT INTO package_slot(id,package_id,slot_no) VALUES (?,?,1)", slot, pkg);
+        old.update(
+                "INSERT INTO assignment(id,slot_id,package_id,actor_id,status,ended_at) VALUES"
+                        + " (?,?,?,?,'SUBMITTED',CURRENT_TIMESTAMP)",
+                assignment,
+                slot,
+                pkg,
+                actor);
+        old.update(
+                "INSERT INTO"
+                    + " editor_mapping(assignment_id,package_id,sample_id,actor_id,spec_version_id,sync_status,image_sha256,external_project_id,external_task_id,external_author_id)"
+                    + " VALUES (?,?,?,?,?,'READY',?,'old-project','old-task','old-author')",
+                assignment,
+                pkg,
+                sample,
+                actor,
+                spec,
+                hash);
+        old.update(
+                "INSERT INTO"
+                    + " submission(id,assignment_id,package_id,plan_id,project_id,spec_version_id,submitted_by,content_hash)"
+                    + " VALUES (?,?,?,?,?,?,?,?)",
+                submission,
+                assignment,
+                pkg,
+                plan,
+                project,
+                spec,
+                actor,
+                hash);
+        old.update(
+                "INSERT INTO"
+                    + " submission_item(submission_id,package_id,sample_id,draft_revision,result_format,result)"
+                    + " VALUES (?,?,?,1,'image-classification-v1','{\"labelId\":\"normal\"}')",
+                submission,
+                pkg,
+                sample);
+        var upgraded =
+                org.flywaydb.core.Flyway.configure()
+                        .dataSource(url, "postgres", "")
+                        .schemas("labeling")
+                        .defaultSchema("labeling")
+                        .load();
+        upgraded.migrate();
+        upgraded.validate();
+        assertEquals(
+                "image-classification",
+                old.queryForObject(
+                        "SELECT template_id FROM spec_version WHERE id=?", String.class, spec));
+        assertEquals(
+                old.queryForObject(
+                        "SELECT round_id FROM assignment WHERE id=?", UUID.class, assignment),
+                old.queryForObject(
+                        "SELECT round_id FROM editor_mapping WHERE assignment_id=?",
+                        UUID.class,
+                        assignment));
+        assertEquals(
+                "CLOSED",
+                old.queryForObject(
+                        "SELECT status FROM publication_round WHERE package_id=?",
+                        String.class,
+                        pkg));
+        assertEquals(
+                "normal",
+                json.readTree(
+                                old.queryForObject(
+                                        "SELECT result::text FROM project_result_candidate WHERE"
+                                            + " sample_id=?",
+                                        String.class,
+                                        sample))
+                        .path("labelId")
+                        .asText());
+        assertNotNull(
+                old.queryForObject(
+                        "SELECT result_id FROM project_result_candidate WHERE sample_id=?",
+                        UUID.class,
+                        sample));
+    }
+
+    @Test
+    void energyWorkerUsesLeasedSlicesAndTheSameCompletionValidator() throws Exception {
+        String p = energyProject();
+        String batch =
+                uploaded(p, energyArchive("worker-v1", energyRow("w1", "w-station", "0", "")));
+        command(batch, "complete", UUID.randomUUID().toString()).andExpect(status().isAccepted());
+        processQueue();
+        String sample =
+                resultGet("/imports/" + batch + "/samples", "owner", 200)
+                        .path("items")
+                        .get(0)
+                        .path("sampleId")
+                        .asText();
+        String spec =
+                taskPost(
+                                "/projects/" + p + "/spec-versions",
+                                "owner",
+                                UUID.randomUUID().toString(),
+                                Map.of(
+                                        "taskType",
+                                        "TIMESERIES_ANNOTATION",
+                                        "schemaVersion",
+                                        "1.0.0",
+                                        "labels",
+                                        java.util.List.of(Map.of("id", "normal", "name", "正常"))),
+                                201)
+                        .path("specVersionId")
+                        .asText();
+        String credential = UUID.randomUUID().toString(),
+                agent = agent("TIMESERIES_ANNOTATION", credential);
+        var execution =
+                taskPost(
+                        "/projects/" + p + "/ai-executions",
+                        "owner",
+                        UUID.randomUUID().toString(),
+                        Map.of(
+                                "specVersionId",
+                                spec,
+                                "agentId",
+                                agent,
+                                "samples",
+                                java.util.List.of(Map.of("sampleId", sample))),
+                        202);
+        String id = execution.path("executionId").asText();
+        var claim = worker("POST", "/executions/claim", credential, null, 200);
+        long gen = claim.path("generation").asLong();
+        assertEquals("annotation-record-v1", claim.path("resultFormat").asText());
+        var data =
+                worker(
+                        "GET",
+                        "/executions/" + id + "/samples/" + sample + "/data?generation=" + gen,
+                        credential,
+                        null,
+                        200);
+        assertEquals("energy-station-day-input-v1", data.path("inputFormat").asText());
+        worker(
+                "GET",
+                "/executions/" + id + "/samples/" + UUID.randomUUID() + "/data?generation=" + gen,
+                credential,
+                null,
+                404);
+        worker(
+                "GET",
+                "/executions/" + id + "/samples/" + sample + "/data?generation=" + (gen + 1),
+                credential,
+                null,
+                409);
+        var primary =
+                Map.of(
+                        "id",
+                        "p",
+                        "from_name",
+                        "primary_label",
+                        "to_name",
+                        "load_curve",
+                        "type",
+                        "choices",
+                        "value",
+                        Map.of("labelIds", java.util.List.of("normal")));
+        var invalidPoint =
+                Map.of(
+                        "id",
+                        "out",
+                        "from_name",
+                        "point_labels",
+                        "to_name",
+                        "load_curve",
+                        "type",
+                        "timeseries_point",
+                        "value",
+                        Map.of(
+                                "timestamp",
+                                "2026-11-02T00:00:00+08:00",
+                                "channel",
+                                "value_kwh",
+                                "labelIds",
+                                java.util.List.of("normal")));
+        worker(
+                "PUT",
+                "/executions/" + id + "/outputs/" + sample,
+                credential,
+                Map.of(
+                        "generation",
+                        gen,
+                        "status",
+                        "SUCCEEDED",
+                        "result",
+                        Map.of("schemaVersion", "1.0.0", "annotations", java.util.List.of())),
+                422);
+        worker(
+                "PUT",
+                "/executions/" + id + "/outputs/" + sample,
+                credential,
+                Map.of(
+                        "generation",
+                        gen,
+                        "status",
+                        "SUCCEEDED",
+                        "result",
+                        Map.of(
+                                "schemaVersion",
+                                "1.0.0",
+                                "annotations",
+                                java.util.List.of(primary, invalidPoint))),
+                422);
+        var interval =
+                Map.of(
+                        "id",
+                        "interval",
+                        "from_name",
+                        "interval_labels",
+                        "to_name",
+                        "load_curve",
+                        "type",
+                        "timeseries_interval",
+                        "value",
+                        Map.of(
+                                "start",
+                                "2026-11-01T23:00:00+08:00",
+                                "end",
+                                "2026-11-02T00:00:00+08:00",
+                                "channel",
+                                "value_kwh",
+                                "labelIds",
+                                java.util.List.of("normal")));
+        var certainty =
+                Map.of(
+                        "id",
+                        "certainty",
+                        "from_name",
+                        "self_reported_certainty",
+                        "to_name",
+                        "load_curve",
+                        "type",
+                        "choices",
+                        "value",
+                        Map.of("labelIds", java.util.List.of("UNKNOWN")));
+        worker(
+                "PUT",
+                "/executions/" + id + "/outputs/" + sample,
+                credential,
+                Map.of(
+                        "generation",
+                        gen,
+                        "status",
+                        "SUCCEEDED",
+                        "result",
+                        Map.of(
+                                "schemaVersion",
+                                "1.0.0",
+                                "annotations",
+                                java.util.List.of(primary, interval, certainty))),
+                200);
+        worker("POST", "/executions/" + id + "/finish", credential, Map.of("generation", gen), 200);
+        assertTrue(
+                resultGet("/ai-executions/" + id + "/results", "owner", 200)
+                        .path("items")
+                        .get(0)
+                        .path("confidence")
+                        .isNull());
+        worker(
+                "GET",
+                "/executions/" + id + "/samples/" + sample + "/data?generation=" + gen,
+                credential,
+                null,
+                409);
+    }
+
+    @Test
+    void tiesDoNotBecomeSuggestionsAndDerivedOrRepeatedVotesAreRejected() throws Exception {
+        var f = fixture(2);
+        String a = "tie-a-" + UUID.randomUUID(), b = "tie-b-" + UUID.randomUUID();
+        var first = complete(f, a, "normal");
+        var second = complete(f, b, "other");
+        String sample = first.path("items").get(0).path("sampleId").asText(),
+                ra = first.path("items").get(0).path("resultId").asText(),
+                rb = second.path("items").get(0).path("resultId").asText();
+        var body =
+                Map.of(
+                        "specVersionId",
+                        f.spec,
+                        "algorithmId",
+                        "majority-vote-v1",
+                        "items",
+                        java.util.List.of(
+                                Map.of(
+                                        "sampleId",
+                                        sample,
+                                        "resultIds",
+                                        java.util.List.of(ra, rb))));
+        var job =
+                taskPost(
+                        "/projects/" + f.project + "/aggregations",
+                        "owner",
+                        UUID.randomUUID().toString(),
+                        body,
+                        201);
+        var item =
+                resultGet(
+                                "/aggregations/" + job.path("aggregationId").asText() + "/items",
+                                "owner",
+                                200)
+                        .path("items")
+                        .get(0);
+        assertEquals("TIE", item.path("outcome").asText());
+        assertTrue(item.path("resultId").isNull());
+        taskPost(
+                "/projects/" + f.project + "/aggregations",
+                "owner",
+                UUID.randomUUID().toString(),
+                Map.of(
+                        "specVersionId",
+                        f.spec,
+                        "algorithmId",
+                        "majority-vote-v1",
+                        "items",
+                        java.util.List.of(
+                                Map.of(
+                                        "sampleId",
+                                        sample,
+                                        "resultIds",
+                                        java.util.List.of(ra, ra)))),
+                422);
+        taskPost(
+                "/packages/"
+                        + f.plan.path("packages").get(0).path("packageId").asText()
+                        + "/rounds",
+                "owner",
+                UUID.randomUUID().toString(),
+                Map.of(),
+                201);
+        var third = complete(f, a, "normal");
+        String rc = third.path("items").get(0).path("resultId").asText();
+        taskPost(
+                "/projects/" + f.project + "/aggregations",
+                "owner",
+                UUID.randomUUID().toString(),
+                Map.of(
+                        "specVersionId",
+                        f.spec,
+                        "algorithmId",
+                        "majority-vote-v1",
+                        "items",
+                        java.util.List.of(
+                                Map.of(
+                                        "sampleId",
+                                        sample,
+                                        "resultIds",
+                                        java.util.List.of(ra, rc)))),
+                422);
+    }
+
+    @Test
+    void exportExpiryOverlapAndOperationReceiptPaginationAreExplicit() throws Exception {
+        var f = fixture(1);
+        String author = "receipt-" + UUID.randomUUID();
+        var sub = complete(f, author, "normal");
+        taskPost(
+                "/projects/" + f.project + "/reviews",
+                "owner",
+                UUID.randomUUID().toString(),
+                Map.of("specVersionId", f.spec, "action", "ACCEPT", "items", exact(sub, 0)),
+                200);
+        var snapshots = new java.util.ArrayList<String>();
+        var ids = exact(sub, 0).stream().map(x -> x.get("sampleId")).toList();
+        snapshots.add(
+                taskPost(
+                                "/projects/" + f.project + "/final-snapshots",
+                                "owner",
+                                UUID.randomUUID().toString(),
+                                Map.of("name", "first", "specVersionId", f.spec, "sampleIds", ids),
+                                201)
+                        .path("finalSnapshotId")
+                        .asText());
+        taskPost(
+                "/projects/" + f.project + "/final-snapshots",
+                "owner",
+                UUID.randomUUID().toString(),
+                Map.of("name", "same content with another name", "specVersionId", f.spec, "sampleIds", ids),
+                409);
+        mvc.perform(patch(API + "/final-snapshots/" + snapshots.get(0))
+                        .header("Authorization", "Bearer owner")
+                        .header("Idempotency-Key", UUID.randomUUID().toString())
+                        .contentType("application/json")
+                        .content(json.writeValueAsString(Map.of("name", "renamed"))))
+                .andExpect(status().isOk());
+        assertEquals("renamed", resultGet("/final-snapshots/" + snapshots.get(0), "owner", 200).path("name").asText());
+        mvc.perform(patch(API + "/final-snapshots/" + snapshots.get(0))
+                        .header("Authorization", "Bearer other")
+                        .header("Idempotency-Key", UUID.randomUUID().toString())
+                        .contentType("application/json")
+                        .content(json.writeValueAsString(Map.of("name", "forbidden"))))
+                .andExpect(status().isNotFound());
+        mvc.perform(put(API + "/submissions/" + sub.path("submissionId").asText() + "/review/items")
+                        .header("Authorization", "Bearer owner")
+                        .header("Idempotency-Key", UUID.randomUUID().toString())
+                        .contentType("application/json")
+                        .content(json.writeValueAsString(Map.of("items", java.util.List.of(
+                                Map.of("sampleId", ids.get(0), "action", "MODIFY", "result", Map.of("labelId", "other"), "reason", "修正"))))))
+                .andExpect(status().isOk());
+        snapshots.add(
+                taskPost(
+                                "/projects/" + f.project + "/final-snapshots",
+                                "owner",
+                                UUID.randomUUID().toString(),
+                                Map.of("name", "second", "specVersionId", f.spec, "sampleIds", ids),
+                                201)
+                        .path("finalSnapshotId")
+                        .asText());
+        taskPost(
+                "/projects/" + f.project + "/exports",
+                "owner",
+                UUID.randomUUID().toString(),
+                Map.of("format", "classification-csv-zip", "finalSnapshotIds", snapshots),
+                409);
+        var export =
+                taskPost(
+                        "/projects/" + f.project + "/exports",
+                        "owner",
+                        UUID.randomUUID().toString(),
+                        Map.of(
+                                "format",
+                                "classification-csv-zip",
+                                "finalSnapshotIds",
+                                java.util.List.of(snapshots.get(0))),
+                        202);
+        db.update(
+                "UPDATE export_job SET expires_at=CURRENT_TIMESTAMP-interval '1 second' WHERE id=?",
+                UUID.fromString(export.path("exportId").asText()));
+        resultGet("/exports/" + export.path("exportId").asText() + "/download", "owner", 410);
+        var page = resultGet("/me/operation-receipts?limit=1", author, 200);
+        assertEquals(1, page.path("items").size());
+        assertFalse(page.path("nextCursor").isNull());
+        var next =
+                resultGet(
+                        "/me/operation-receipts?limit=1&cursor=" + page.path("nextCursor").asText(),
+                        author,
+                        200);
+        assertNotEquals(
+                page.path("items").get(0).path("operation"),
+                next.path("items").get(0).path("operation"));
+        resultGet("/me/operation-receipts?cursor=invalid", "owner", 400);
+        assertTrue(
+                resultGet("/me/submissions", author, 200)
+                        .path("items")
+                        .toString()
+                        .contains(sub.path("submissionId").asText()));
+    }
+
+    @Test
+    void globalOperationReceiptsAreAdminOnlyAndIncludeOperatorIdentity() throws Exception {
+        complete(fixture(1), "operation-log-author", "normal");
+        resultGet("/me", "admin-log-viewer", 200);
+        UUID admin =
+                db.queryForObject(
+                        "SELECT id FROM actor WHERE identity_user_id='admin-log-viewer'",
+                        UUID.class);
+        db.update(
+                "INSERT INTO actor_role_grant(actor_id,role_code) VALUES (?,'LABELING_ADMIN') ON"
+                    + " CONFLICT DO NOTHING",
+                admin);
+
+        resultGet("/admin/operation-receipts?limit=1", "ordinary-user", 403);
+        var page = resultGet("/admin/operation-receipts?limit=1", "admin-log-viewer", 200);
+        assertEquals(1, page.path("items").size());
+        var item = page.path("items").get(0);
+        assertFalse(item.path("actorId").asText().isBlank());
+        assertFalse(item.path("actorName").asText().isBlank());
+        assertFalse(item.path("identityUserId").asText().isBlank());
+        assertFalse(page.path("nextCursor").isNull());
+        var next =
+                resultGet(
+                        "/admin/operation-receipts?limit=1&cursor="
+                                + page.path("nextCursor").asText(),
+                        "admin-log-viewer",
+                        200);
+        assertNotEquals(
+                item.path("idempotencyKey").asText(),
+                next.path("items").get(0).path("idempotencyKey").asText());
+    }
+
+    @Test
+    void assignmentListReturnsClaimedAtForTheAnnotator() throws Exception {
+        var f = fixture(1);
+        String annotator = "claim-time-" + UUID.randomUUID();
+        String assignment =
+                taskPost(
+                                "/packages/"
+                                        + f.plan.path("packages").get(0).path("packageId").asText()
+                                        + "/claims",
+                                annotator,
+                                UUID.randomUUID().toString(),
+                                Map.of(),
+                                201)
+                        .path("assignmentId")
+                        .asText();
+
+        JsonNode page = resultGet("/assignments?scope=mine", annotator, 200);
+        JsonNode item = page.path("items").get(0);
+        assertEquals(assignment, item.path("assignmentId").asText());
+        assertTrue(item.path("claimedAt").isTextual());
+        assertDoesNotThrow(() -> java.time.Instant.parse(item.path("claimedAt").asText()));
+    }
+
+    @Test void archivedResultsAreReadOnlyButOldReceiptsRemainReplayable()throws Exception{
+        var f=fixture(1);var sub=complete(f,"archive-"+UUID.randomUUID(),"normal");String key=UUID.randomUUID().toString();var body=Map.of("specVersionId",f.spec,"action","ACCEPT","items",exact(sub,0));
+        var original=taskPost("/projects/"+f.project+"/reviews","owner",key,body,200);
+        taskPost("/projects/"+f.project+"/package-plans","owner",UUID.randomUUID().toString(),Map.of("specVersionId",f.spec,"samples",java.util.List.of(Map.of("sampleId",sub.path("items").get(0).path("sampleId").asText())),"reopenAccepted",false),409);
+        long revision=resultGet("/projects/"+f.project,"owner",200).path("revision").asLong();taskPost("/projects/"+f.project+"/archive","owner",UUID.randomUUID().toString(),Map.of("baseRevision",revision,"reason","关闭项目"),200);
+        assertEquals(original,taskPost("/projects/"+f.project+"/reviews","owner",key,body,200));
+        taskPost("/projects/"+f.project+"/reviews","owner",UUID.randomUUID().toString(),Map.of("specVersionId",f.spec,"action","ACCEPT","items",exact(sub,1)),409);
+        taskPost("/projects/"+f.project+"/final-snapshots","owner",UUID.randomUUID().toString(),Map.of("name","closed","specVersionId",f.spec,"sampleIds",exact(sub,0).stream().map(x->x.get("sampleId")).toList()),409);
+        mvc.perform(put(API+"/submissions/"+sub.path("submissionId").asText()+"/review/items").header("Authorization","Bearer owner").header("Idempotency-Key",UUID.randomUUID().toString()).contentType("application/json").content(json.writeValueAsString(Map.of("items",java.util.List.of(Map.of("sampleId",sub.path("items").get(0).path("sampleId").asText(),"action","REJECT")))))).andExpect(status().isConflict());
+        resultGet("/submissions/"+sub.path("submissionId").asText(),"owner",200);
+    }
+
+    @Test void legacySubmissionModificationKeepsSubmissionImmutableAndChecksSpecBeforeAdoption()throws Exception{
+        var f=fixture(1);var sub=complete(f,"modify-"+UUID.randomUUID(),"normal");String sample=sub.path("items").get(0).path("sampleId").asText(),submission=sub.path("submissionId").asText();
+        mvc.perform(put(API+"/submissions/"+submission+"/review/items").header("Authorization","Bearer owner").header("Idempotency-Key",UUID.randomUUID().toString()).contentType("application/json").content(json.writeValueAsString(Map.of("items",java.util.List.of(Map.of("sampleId",sample,"action","MODIFY","result",Map.of("labelId","other"),"reason","修正")))))).andExpect(status().isOk());
+        var results=resultGet("/projects/"+f.project+"/results?specVersionId="+f.spec,"owner",200);assertEquals("other",results.path("items").get(0).path("result").path("labelId").asText());
+        var snapshot=taskPost("/projects/"+f.project+"/final-snapshots","owner",UUID.randomUUID().toString(),Map.of("name","modified","specVersionId",f.spec,"sampleIds",java.util.List.of(sample)),201);assertEquals("other",snapshot.path("items").get(0).path("result").path("labelId").asText());
+        String otherSpec=taskPost("/projects/"+f.project+"/spec-versions","owner",UUID.randomUUID().toString(),Map.of("taskType","IMAGE_CLASSIFICATION","schemaVersion","2","labels",java.util.List.of(Map.of("id","normal","name","正常"))),201).path("specVersionId").asText();
+        taskPost("/projects/"+f.project+"/sample-reviews","owner",UUID.randomUUID().toString(),Map.of("items",java.util.List.of(Map.of("sampleId",sample,"specVersionId",otherSpec,"action","ACCEPT","sourceKind","HUMAN","submissionId",submission))),409);
+        assertEquals("normal",resultGet("/submissions/"+submission,"owner",200).path("items").get(0).path("result").path("labelId").asText());
+        assertThrows(org.springframework.dao.DataAccessException.class,()->db.update("UPDATE submission_item SET result='{}' WHERE submission_id=?",UUID.fromString(submission)));
+    }
+
+    @Test
+    void trustedPluginCataloguePinsProjectsSpecsAndInflightImports() throws Exception {
+        var catalogue=json.readTree(mvc.perform(get(API+"/task-templates").header("Authorization","Bearer owner"))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString()).path("data");
+        assertEquals(4,catalogue.size());
+        assertEquals(2,java.util.stream.StreamSupport.stream(catalogue.spliterator(),false)
+                .filter(item->item.path("creationAvailable").asBoolean()).count());
+        for(var plugin:catalogue) {
+            assertTrue(plugin.path("enabled").asBoolean());
+            assertTrue(plugin.path("capabilities").path("importer").asBoolean());
+            assertTrue(plugin.path("capabilities").path("completion").asBoolean());
+            assertEquals(64,plugin.path("schemaDigest").asText().length());
+        }
+        String p=project();
+        var spec=taskPost("/projects/"+p+"/spec-versions","owner",UUID.randomUUID().toString(),
+                Map.of("taskType","IMAGE_CLASSIFICATION","schemaVersion","1","labels",java.util.List.of(Map.of("id","normal","name","正常"))),201);
+        assertEquals("image-classification",spec.path("templateId").asText());
+        assertEquals("1.0.0",spec.path("templateVersion").asText());
+        assertEquals("1.0.0",db.queryForObject("SELECT template_version FROM labeling.project WHERE id=?",String.class,UUID.fromString(p)));
+        String batch=uploaded(p,zip(Map.of("sample.png",image("png"))));
+        db.update("UPDATE labeling.project SET template_version='2.0.0' WHERE id=?",UUID.fromString(p));
+        assertEquals("1.0.0",db.queryForObject("SELECT template_version FROM labeling.import_batch WHERE id=?",String.class,UUID.fromString(batch)));
+        command(batch,"complete",UUID.randomUUID().toString()).andExpect(status().isAccepted());
+        processQueue();
+        assertEquals("READY",statusOf(batch).path("status").asText());
+        taskPost("/projects","owner",UUID.randomUUID().toString(),Map.of("name","未知插件","taskType","IMAGE_CLASSIFICATION","templateId","unknown","templateVersion","1.0.0"),422);
+    }
+
+    @Test
+    void actualEnergyDatasetImportsAllTwoThousandSamplesAndPublishesTwoHundredPackages() throws Exception {
+        String folder=System.getProperty("labeling.energy.dataset");
+        org.junit.jupiter.api.Assumptions.assumeTrue(folder!=null && !folder.isBlank());
+        Path dataset=Path.of(folder);
+        String version=json.readTree(Files.readAllBytes(dataset.resolve("manifest.json"))).path("version").asText();
+        byte[] csv=Files.readAllBytes(dataset.resolve("sample/station_day_tasks_2k.csv"));
+        String p=energyProject();
+        String batch=uploaded(p,zip(Map.of("manifest.json",json.writeValueAsBytes(Map.of("datasetVersion",version)),"sample/station_day_tasks_2k.csv",csv)));
+        command(batch,"complete",UUID.randomUUID().toString()).andExpect(status().isAccepted());
+        processQueue();
+        assertEquals("READY",statusOf(batch).path("status").asText());
+        assertEquals(2000,statusOf(batch).path("validSampleCount").asInt());
+        assertEquals(0,statusOf(batch).path("errorCount").asInt());
+        assertEquals(2000,db.queryForObject("SELECT count(*) FROM labeling.sample_input WHERE project_id=?",Integer.class,UUID.fromString(p)));
+        var spec=taskPost("/projects/"+p+"/spec-versions","owner",UUID.randomUUID().toString(),Map.of("taskType","TIMESERIES_ANNOTATION","schemaVersion","1.0.0","labels",java.util.List.of(Map.of("id","normal","name","正常"))),201);
+        var plan=taskPost("/projects/"+p+"/package-plans","owner",UUID.randomUUID().toString(),Map.of("batchId",batch,"specVersionId",spec.path("specVersionId").asText(),"packageSize",10,"annotatorsPerSample",1),201);
+        assertEquals(200,plan.path("packageSampleCounts").size());
+        assertEquals(2000,plan.path("sampleCount").asInt());
+        var published=publishTask(plan);
+        assertEquals("PUBLISHED",published.path("status").asText());
+        assertEquals(200,published.path("packages").size());
+    }
 }

@@ -58,13 +58,21 @@ public class OutcomeController {
             @PathVariable UUID projectId, @RequestHeader("Idempotency-Key") String key,
             @Valid @RequestBody FinalSnapshotRequest body, HttpServletRequest req) {
         return response(outcomes.createFinalSnapshot(actor(auth), projectId,
-                new OutcomeService.FinalInput(body.name(), body.specVersionId(), body.sampleIds()), key), req);
+                new OutcomeService.FinalInput(body.name(), body.specVersionId(), body.sampleIds(),
+                                body.selectionId(), body.selections()), key), req);
     }
 
     @GetMapping("/final-snapshots/{finalSnapshotId}")
     public ApiResponse<JsonNode> finalSnapshot(@RequestHeader(value = "Authorization", required = false) String auth,
             @PathVariable UUID finalSnapshotId, HttpServletRequest req) {
         return response(outcomes.finalSnapshot(actor(auth), finalSnapshotId), req);
+    }
+
+    @PatchMapping("/final-snapshots/{finalSnapshotId}")
+    public ApiResponse<JsonNode> renameFinalSnapshot(@RequestHeader(value = "Authorization", required = false) String auth,
+            @PathVariable UUID finalSnapshotId, @RequestHeader("Idempotency-Key") String key,
+            @Valid @RequestBody RenameFinalSnapshotRequest body, HttpServletRequest req) {
+        return response(outcomes.renameFinalSnapshot(actor(auth), finalSnapshotId, body.name(), key), req);
     }
 
     @GetMapping("/projects/{projectId}/final-snapshots")
@@ -76,6 +84,9 @@ public class OutcomeController {
 
     public record ReviewSamplesRequest(@NotEmpty @Size(max = 10000) List<OutcomeService.SampleReviewInput> items) {}
 
-    public record FinalSnapshotRequest(@NotNull @Size(max = 120) String name, @NotNull UUID specVersionId,
-            @NotEmpty List<UUID> sampleIds) {}
+    public record FinalSnapshotRequest(@NotNull @Size(max = 120) String name, UUID specVersionId,
+            @Size(max = 10000) List<UUID> sampleIds,
+            UUID selectionId, @Valid @Size(max = 10000) List<OutcomeService.FinalSelection> selections) {}
+
+    public record RenameFinalSnapshotRequest(@NotNull @Size(max = 120) String name) {}
 }

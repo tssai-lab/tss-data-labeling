@@ -5,7 +5,7 @@ umask 077
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 repo=$(cd -- "$script_dir/../../.." && pwd)
 maven_image=maven:3.9.12-eclipse-temurin-17
-images=("$maven_image" postgres:16.6-alpine minio/minio:RELEASE.2025-09-07T16-13-09Z redis:7.4.11-alpine testcontainers/ryuk:0.12.0 alpine:3.17)
+images=("$maven_image" postgres:16.6-alpine pgsty/silo:RELEASE.2026-11-12T00-00-00Z@sha256:c20d112390b9a9ce8c11b8af95ad35bcaa62f4759663c09c936cd8d2b511f329 redis:7.4.11-alpine testcontainers/ryuk:0.12.0 alpine:3.17)
 
 if [[ ${1:-} == --help || $# -eq 0 ]]; then
   echo "用法：TSS_MAVEN_REPOSITORY=/缓存/repository bash $0 新的绝对证据目录 [--all]"

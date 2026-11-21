@@ -1,0 +1,20 @@
+# Versions verified against this vendored source, not the generated SDK client.
+ujson==5.11.0
+defusedxml==0.7.1
+Pillow==10.4.0
+numpy==1.24.4
+lxml==4.9.1
+nltk==3.8.1
+requests==2.32.3
+appdirs==1.4.4
+jsonschema==4.23.0
+xmljson==0.2.1
+PyYAML==6.0.1
+pandas==2.2.2
+pydantic==2.10.6
+jsf==0.11.2
+Faker==19.13.0
+rstr==3.2.2
+# Optional formats, retained upstream and currently disabled in the adapter:
+# opencv-python-headless (BRUSH_TO_COCO), doclang (DOCLANG).
+# ijson is only required when invoking the upstream JSON-array file API directly.
