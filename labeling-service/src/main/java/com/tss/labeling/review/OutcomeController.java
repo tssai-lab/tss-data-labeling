@@ -68,6 +68,13 @@ public class OutcomeController {
         return response(outcomes.finalSnapshot(actor(auth), finalSnapshotId), req);
     }
 
+    @PatchMapping("/final-snapshots/{finalSnapshotId}")
+    public ApiResponse<JsonNode> renameFinalSnapshot(@RequestHeader(value = "Authorization", required = false) String auth,
+            @PathVariable UUID finalSnapshotId, @RequestHeader("Idempotency-Key") String key,
+            @Valid @RequestBody RenameFinalSnapshotRequest body, HttpServletRequest req) {
+        return response(outcomes.renameFinalSnapshot(actor(auth), finalSnapshotId, body.name(), key), req);
+    }
+
     @GetMapping("/projects/{projectId}/final-snapshots")
     public ApiResponse<JsonNode> finalSnapshots(@RequestHeader(value = "Authorization", required = false) String auth,
             @PathVariable UUID projectId, @RequestParam(defaultValue = "20") int limit,
@@ -80,4 +87,6 @@ public class OutcomeController {
     public record FinalSnapshotRequest(@NotNull @Size(max = 120) String name, UUID specVersionId,
             @Size(max = 10000) List<UUID> sampleIds,
             UUID selectionId, @Valid @Size(max = 10000) List<OutcomeService.FinalSelection> selections) {}
+
+    public record RenameFinalSnapshotRequest(@NotNull @Size(max = 120) String name) {}
 }
