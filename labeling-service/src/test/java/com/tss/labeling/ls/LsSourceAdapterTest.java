@@ -78,7 +78,9 @@ class LsSourceAdapterTest {
     @Test void invalidXmlRejectedWithoutLeakingFiles() throws Exception {
         BusinessException error = assertThrows(BusinessException.class,
                 () -> adapter().inspect("<!DOCTYPE View><View/>"));
-        assertEquals("LS_CONVERSION_REJECTED", error.code());
+        assertEquals("INVALID_LABEL_CONFIG", error.code());
+        assertEquals(org.springframework.http.HttpStatus.UNPROCESSABLE_ENTITY, error.status());
+        assertTrue(error.getMessage().contains("XML_DECLARATION_NOT_ALLOWED"));
         try (var paths = Files.list(temporary)) { assertEquals(0, paths.count()); }
     }
 
