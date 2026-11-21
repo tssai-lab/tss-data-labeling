@@ -1,10 +1,12 @@
 import { history, Link, useLocation, useParams } from '@umijs/max';
 import { PlusOutlined } from '@ant-design/icons';
+import dayjs, { type Dayjs } from 'dayjs';
 import {
   Alert,
   App,
   Button,
   Card,
+  DatePicker,
   Empty,
   Form,
   Input,
@@ -33,7 +35,12 @@ import {
 } from '@/services/nativeLabeling';
 import { formatDisplayDateTime } from '@/utils/formatDateTime';
 import { normalizeWorkspaceProject, projectPanel } from '@/services/projectCompatibility.mjs';
-import { availableProjectTypes, type ProjectTaskType, type RegisteredTaskPlugin } from '@/services/labelingTemplates.mjs';
+import {
+  availableProjectTypes,
+  taskTypeFilterKey,
+  type ProjectTaskType,
+  type RegisteredTaskPlugin,
+} from '@/services/labelingTemplates.mjs';
 import styles from './index.less';
 import NativeDataPreparation from './NativeDataPreparation';
 import NativeOutcome from './NativeOutcome';
@@ -71,8 +78,11 @@ export default function ServerWorkspace() {
     [submissions, setSubmissions] = useState<any[]>([]),
     [snapshots, setSnapshots] = useState<any[]>([]);
   const [aiSession, setAiSession] = useState<{ projectId: string; samples: NativeSample[]; version: NativeProject['specVersions'][number]; config: { modelId: string; instructions: string }; results: DemoResult[] }>();
-  const [projectQuery, setProjectQuery] = useState('');
+  const [projectNameQuery, setProjectNameQuery] = useState('');
+  const [projectDescriptionQuery, setProjectDescriptionQuery] = useState('');
   const [projectStatus, setProjectStatus] = useState('ALL');
+  const [projectTaskType, setProjectTaskType] = useState('ALL');
+  const [createdAtRange, setCreatedAtRange] = useState<[Dayjs | null, Dayjs | null] | null>(null);
   const [taskTypes, setTaskTypes] = useState<ProjectTaskType[]>([]);
   const [reload, setReload] = useState(0),
     [loading, setLoading] = useState(true),
@@ -194,14 +204,16 @@ export default function ServerWorkspace() {
   };
   const current = project?.projectId === projectId ? project : undefined;
   const filteredProjects = projects.filter((value) => {
-    const query = projectQuery.trim().toLocaleLowerCase();
-    const matchesQuery =
-      !query ||
-      `${value.name} ${value.description || ''}`
-        .toLocaleLowerCase()
-        .includes(query);
+    const nameQuery = projectNameQuery.trim().toLocaleLowerCase();
+    const descriptionQuery = projectDescriptionQuery.trim().toLocaleLowerCase();
+    const createdAt = value.createdAt ? dayjs(value.createdAt) : null;
+    const [startDate, endDate] = createdAtRange || [];
     return (
-      matchesQuery &&
+      value.name.toLocaleLowerCase().includes(nameQuery) &&
+      (value.description || '').toLocaleLowerCase().includes(descriptionQuery) &&
+      (projectTaskType === 'ALL' || taskTypeFilterKey(value.taskType) === projectTaskType) &&
+      (!startDate || Boolean(createdAt?.isValid() && !createdAt.isBefore(startDate, 'day'))) &&
+      (!endDate || Boolean(createdAt?.isValid() && !createdAt.isAfter(endDate, 'day'))) &&
       (projectStatus === 'ALL' || value.status === projectStatus)
     );
   });
@@ -275,10 +287,43 @@ export default function ServerWorkspace() {
               <div className={styles.projectListTools}>
                 <Input
                   allowClear
-                  aria-label="搜索项目名称或说明"
-                  placeholder="搜索项目名称或说明"
-                  value={projectQuery}
-                  onChange={(event) => setProjectQuery(event.target.value)}
+                  aria-label="按项目名称搜索"
+                  placeholder="按项目名称搜索"
+                  value={projectNameQuery}
+                  onChange={(event) => setProjectNameQuery(event.target.value)}
+                />
+                <Input
+                  allowClear
+                  aria-label="按项目说明搜索"
+                  placeholder="按项目说明搜索"
+                  value={projectDescriptionQuery}
+                  onChange={(event) => setProjectDescriptionQuery(event.target.value)}
+                />
+                <Select
+                  aria-label="按任务类型筛选"
+                  value={projectTaskType}
+                  onChange={setProjectTaskType}
+                  options={[
+                    { value: 'ALL', label: '全部任务类型' },
+                    ...Array.from(
+                      new Set(projects.map((value) => taskTypeFilterKey(value.taskType))),
+                    ).map((value) => ({
+                      value,
+                      label:
+                        value === 'COMPUTER_VISION'
+                          ? '图像标注'
+                          : value === 'TIME_SERIES'
+                            ? '时序标注'
+                            : taskName[value] || value,
+                    })),
+                  ]}
+                />
+                <DatePicker.RangePicker
+                  aria-label="按创建时间筛选"
+                  value={createdAtRange}
+                  onChange={(value) => setCreatedAtRange(value)}
+                  format="YYYY-MM-DD"
+                  placeholder={['开始日期', '结束日期']}
                 />
                 <Select
                   aria-label="按项目状态筛选"
@@ -401,25 +446,13 @@ export default function ServerWorkspace() {
                   },
                   {
                     title: '项目操作',
-                    width: 220,
+                    width: 100,
                     render: (_, value) => (
-                      <Space size={12} wrap>
-                        <Link to={`/labeling/projects/${value.projectId}`}>
-                          {value.status === 'DRAFT' ? '准备并发布' : '审核结果'}
-                        </Link>
-                        {value.status !== 'DRAFT' && (
-                          <Link
-                            to={`/labeling/projects/${value.projectId}?panel=publish`}
-                          >
-                            任务发布
-                          </Link>
-                        )}
-                        <ProjectManagement
-                          project={value}
-                          onChanged={refresh}
-                          onDeleted={refresh}
-                        />
-                      </Space>
+                      <ProjectManagement
+                        project={value}
+                        onChanged={refresh}
+                        onDeleted={refresh}
+                      />
                     ),
                   },
                 ]}

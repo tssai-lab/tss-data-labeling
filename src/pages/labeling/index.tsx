@@ -3,12 +3,14 @@ import {
   PlusOutlined,
   ReloadOutlined,
 } from '@ant-design/icons';
+import dayjs, { type Dayjs } from 'dayjs';
 import { history, Link, useLocation, useParams } from '@umijs/max';
 import {
   Alert,
   App,
   Button,
   Card,
+  DatePicker,
   Empty,
   Form,
   Image,
@@ -36,6 +38,7 @@ import {
 import { ownerApi, type RegisteredTemplate } from '@/services/labelingOwner';
 import { projectEntryPath } from '@/services/labelingProjectActions';
 import {
+  taskTypeFilterKey,
   resolveTaskTemplate,
   taskTemplates,
 } from '@/services/labelingTemplates.mjs';
@@ -160,15 +163,29 @@ export default function Labeling() {
   const [identityError, setIdentityError] = useState('');
   const [identityRetry, setIdentityRetry] = useState(0);
   const [projects, setProjects] = useState<Project[]>([]);
-  const [projectQuery, setProjectQuery] = useState('');
+  const [projectNameQuery, setProjectNameQuery] = useState('');
+  const [projectDescriptionQuery, setProjectDescriptionQuery] = useState('');
   const [projectStatus, setProjectStatus] = useState('ALL');
-  const filteredProjects = projects.filter(
-    (item) =>
+  const [projectTaskType, setProjectTaskType] = useState('ALL');
+  const [createdAtRange, setCreatedAtRange] = useState<[Dayjs | null, Dayjs | null] | null>(null);
+  const filteredProjects = projects.filter((item) => {
+    const createdAt = item.createdAt ? dayjs(item.createdAt) : null;
+    const [startDate, endDate] = createdAtRange || [];
+    return (
       (projectStatus === 'ALL' || item.status === projectStatus) &&
-      `${item.name} ${item.description || ''}`
+      (projectTaskType === 'ALL' || taskTypeFilterKey(item.taskType) === projectTaskType) &&
+      item.name
         .toLocaleLowerCase()
-        .includes(projectQuery.trim().toLocaleLowerCase()),
-  );
+        .includes(projectNameQuery.trim().toLocaleLowerCase()) &&
+      (item.description || '')
+        .toLocaleLowerCase()
+        .includes(projectDescriptionQuery.trim().toLocaleLowerCase()) &&
+      (!startDate ||
+        Boolean(createdAt?.isValid() && !createdAt.isBefore(startDate, 'day'))) &&
+      (!endDate ||
+        Boolean(createdAt?.isValid() && !createdAt.isAfter(endDate, 'day')))
+    );
+  });
   const [projectCursor, setProjectCursor] = useState<string | null>(null);
   const [project, setProject] = useState<Project>();
   const [loading, setLoading] = useState(false);
@@ -688,10 +705,46 @@ export default function Labeling() {
             <div className={ui.inlineSearch}>
               <Input
                 allowClear
-                aria-label="搜索已加载项目"
-                placeholder="搜索已加载项目名称或说明"
-                value={projectQuery}
-                onChange={(event) => setProjectQuery(event.target.value)}
+                aria-label="按项目名称搜索"
+                placeholder="按项目名称搜索"
+                value={projectNameQuery}
+                onChange={(event) => setProjectNameQuery(event.target.value)}
+              />
+              <Input
+                allowClear
+                aria-label="按项目说明搜索"
+                placeholder="按项目说明搜索"
+                value={projectDescriptionQuery}
+                onChange={(event) => setProjectDescriptionQuery(event.target.value)}
+              />
+              <Select
+                aria-label="按任务类型筛选"
+                value={projectTaskType}
+                onChange={setProjectTaskType}
+                style={{ minWidth: 145 }}
+                options={[
+                  { value: 'ALL', label: '全部任务类型' },
+                  ...Array.from(
+                    new Set(projects.map((item) => taskTypeFilterKey(item.taskType))),
+                  ).map((value) => ({
+                    value,
+                    label:
+                      value === 'COMPUTER_VISION'
+                        ? '图像标注'
+                        : value === 'TIME_SERIES'
+                          ? '时序标注'
+                          : taskTemplates.find(
+                              (template) => taskTypeFilterKey(template.taskType) === value,
+                            )?.name || value,
+                  })),
+                ]}
+              />
+              <DatePicker.RangePicker
+                aria-label="按创建时间筛选"
+                value={createdAtRange}
+                onChange={(value) => setCreatedAtRange(value)}
+                format="YYYY-MM-DD"
+                placeholder={['开始日期', '结束日期']}
               />
               <Select
                 aria-label="筛选已加载项目状态"
@@ -759,23 +812,11 @@ export default function Labeling() {
                   title: '项目操作',
                   key: 'actions',
                   render: (_, item) => (
-                    <Space wrap>
-                      <Link to={projectEntryPath(item)}>
-                        {item.status === 'DRAFT' ? '准备并发布' : '审核结果'}
-                      </Link>
-                      {item.status !== 'DRAFT' && (
-                        <Link
-                          to={`/labeling/projects/${encodeURIComponent(item.projectId)}`}
-                        >
-                          任务发布
-                        </Link>
-                      )}
-                      <ProjectManagement
-                        project={item}
-                        onChanged={() => void listProjects()}
-                        onDeleted={() => void listProjects()}
-                      />
-                    </Space>
+                    <ProjectManagement
+                      project={item}
+                      onChanged={() => void listProjects()}
+                      onDeleted={() => void listProjects()}
+                    />
                   ),
                 },
               ]}

@@ -21,6 +21,7 @@ export type TaskTemplate = {
   resultSchemaId?: string;
 };
 export const taskTemplates: readonly TaskTemplate[];
+export function taskTypeFilterKey(taskType: string): string;
 export function resolveTaskTemplate(
   binding?: TaskBinding,
   options?: { preview?: boolean },

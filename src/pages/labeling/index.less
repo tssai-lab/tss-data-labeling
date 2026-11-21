@@ -169,22 +169,22 @@
 .projectListTools { display:flex; align-items:center; gap:10px; margin-bottom:10px; > :global(.ant-input-affix-wrapper) { flex:1; min-width:180px; } > :global(.ant-select) { width:136px; flex:0 0 136px; } }
 .projectListCount { display:block; margin:0 0 12px; font-size:13px; }
 .projectFlowTabs {
-  margin:0 0 18px; padding:0 12px; border:1px solid var(--label-edge); border-radius:10px; background:#fff;
+  position:relative; margin:0 0 20px; padding:0 12px; border:1px solid #cfdae6; border-radius:10px; background:linear-gradient(180deg,#fff,#f8fafc); box-shadow:0 5px 15px #17334e0a;
   :global(.ant-tabs-nav) { margin:0; }
   :global(.ant-tabs-nav::before) { border-bottom:0; }
   :global(.ant-tabs-nav-list) { display:flex; width:100%; gap:0; }
-  :global(.ant-tabs-tab) { flex:1; justify-content:center; margin:0 !important; padding:13px 10px; transition:background .16s,color .16s; }
-  :global(.ant-tabs-tab:hover) { background:#f5f8fc; }
-  :global(.ant-tabs-tab-active) { background:#f1f5ff; box-shadow:inset 0 -3px 0 #3158bd; }
-  :global(.ant-tabs-tab-btn) { color:#657b96; }
-  :global(.ant-tabs-tab-active .ant-tabs-tab-btn) { color:#2148b5; }
+  :global(.ant-tabs-tab) { position:relative; flex:1; justify-content:center; margin:0 !important; padding:14px 10px; transition:background .16s,color .16s; }
+  :global(.ant-tabs-tab:hover) { background:#f1f6fb; }
+  :global(.ant-tabs-tab-active) { background:#edf3ff; box-shadow:inset 0 -3px 0 #3158bd; }
+  :global(.ant-tabs-tab-btn) { color:#61788e; }
+  :global(.ant-tabs-tab-active .ant-tabs-tab-btn) { color:#173f9d; }
   :global(.ant-tabs-ink-bar) { display:none; }
   :global(.ant-tabs-nav-operations) { display:none; }
 }
 .projectStepLabel { display:inline-flex; align-items:center; justify-content:center; gap:9px; white-space:nowrap; font-size:14px; font-weight:650; }
-.projectStepNumber { display:grid; place-items:center; width:25px; height:25px; border:1px solid #d6e0ec; border-radius:50%; background:#f5f8fc; color:#73869d; font-size:10px; font-variant-numeric:tabular-nums; font-weight:700; }
+.projectStepNumber { display:grid; place-items:center; width:27px; height:27px; border:1px solid #d3dfeb; border-radius:8px; background:#f3f7fb; color:#6d8297; font-size:10px; font-variant-numeric:tabular-nums; font-weight:750; transition:background .16s,color .16s,border-color .16s; }
 .projectStepCount { display:inline-grid; place-items:center; min-width:22px; height:20px; padding:0 6px; border-radius:10px; background:#edf2f8; color:#627894; font-size:11px; font-variant-numeric:tabular-nums; }
-.projectFlowTabs :global(.ant-tabs-tab-active) .projectStepNumber { border-color:#3158bd; background:#3158bd; color:#fff; }
+.projectFlowTabs :global(.ant-tabs-tab-active) .projectStepNumber { border-color:#3158bd; border-radius:50%; background:#3158bd; color:#fff; box-shadow:0 2px 7px #3158bd36; }
 .projectFlowTabs :global(.ant-tabs-tab-active) .projectStepCount { background:#dfe8ff; color:#244bb4; }
 .workspacePage .content :global(.ant-btn):focus-visible, .workspacePage a:focus-visible, .workspacePage button:focus-visible, .workspacePage summary:focus-visible { outline:2px solid var(--label-blue); outline-offset:2px; }
 .workspacePage .navTab:focus-visible { outline-color:#b2cdff; }

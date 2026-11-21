@@ -147,12 +147,6 @@ export default function NativeReview({
   };
   return (
     <div className={ui.nativeReview}>
-      <header className={ui.pageHeader}>
-        <div>
-          <h1>需求方结果与审核</h1>
-          <p>逐个查看标注结果，确认采用、修订答案或标记待修正。</p>
-        </div>
-      </header>
       {Boolean(aiResults?.length) && (
         <Space>
           <Button type={resultSource === 'AI' ? 'primary' : 'default'} onClick={() => { if (guard.current()) setResultSource('AI'); }}>AI 候选结果（演示）</Button>

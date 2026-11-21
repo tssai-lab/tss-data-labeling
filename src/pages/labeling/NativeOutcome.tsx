@@ -2,6 +2,7 @@ import {
   Alert,
   Button,
   Card,
+  Checkbox,
   Input,
   Modal,
   Select,
@@ -65,6 +66,7 @@ export default function NativeOutcome({
     [snapshotId, setSnapshotId] = useState(''),
     [formats, setFormats] = useState<any[]>([]),
     [format, setFormat] = useState('JSON'),
+    [includeOriginals, setIncludeOriginals] = useState(false),
     [jobs, setJobs] = useState<any[]>([]),
     [reload, setReload] = useState(0),
     [error, setError] = useState('');
@@ -128,17 +130,10 @@ export default function NativeOutcome({
   return (
     <div className={styles.workspace}>
       <section className={styles.hero} aria-label="成果交付进度">
-        <div className={styles.heroHeading}>
-          <div>
-            <span className={styles.eyebrow}>RESULTS / DELIVERY</span>
-            <h2>把核查结果，固定为可交付成果</h2>
-            <p>确认样本范围，保存成果版本，再生成导出文件。</p>
-          </div>
+        <div className={styles.deliveryPath}>
           <span className={styles.heroStatus}>
             {selectedSnapshot ? '已选成果版本' : '等待保存成果版本'}
           </span>
-        </div>
-        <div className={styles.deliveryPath}>
           <div>
             <small>核查通过 · 当前规范</small>
             <strong>{confirmed.length}<em>个样本</em></strong>
@@ -155,8 +150,8 @@ export default function NativeOutcome({
           </div>
         </div>
         <div className={styles.heroFoot}>
-          <span>当前规范：第 {version?.versionNo || '—'} 版</span>
-          <span>所选成果：{selectedSnapshot ? displaySnapshotName(selectedSnapshot) : '尚未选择'}</span>
+          <span>标注规范：第 {version?.versionNo || '—'} 版</span>
+          <span>当前成果：{selectedSnapshot ? displaySnapshotName(selectedSnapshot) : '尚未选择'}</span>
           {selectedSnapshot && <span>包含 {selectedSnapshot.sampleCount || 0} 个样本</span>}
         </div>
       </section>
@@ -178,7 +173,7 @@ export default function NativeOutcome({
             }))}
           />
         </label>
-        <Space wrap className={styles.actionRow}>
+        <Space wrap className={`${styles.actionRow} ${styles.saveRow}`}>
           <label className={styles.nameField}>
             <span>成果版本名称</span>
             <Input
@@ -420,6 +415,13 @@ export default function NativeOutcome({
                   disabled: !item.enabled,
                 }))}
               />
+              <Checkbox
+                checked={pluginExport ? includeOriginals : true}
+                disabled={!pluginExport}
+                onChange={(event) => setIncludeOriginals(event.target.checked)}
+              >
+                在导出包中包含原始数据集
+              </Checkbox>
               <Button
                 type="primary"
                 loading={busy}
@@ -430,7 +432,7 @@ export default function NativeOutcome({
                   void run(async () => {
                     await post(
                       pluginExport ? `/projects/${project.projectId}/exports` : `/final-snapshots/${selected}/exports`,
-                      pluginExport ? { format, includeOriginals: false, finalSnapshotIds: [selected] } : { format },
+                      pluginExport ? { format, includeOriginals, finalSnapshotIds: [selected] } : { format },
                       operationKey(),
                     );
                     setReload((value) => value + 1);
@@ -441,7 +443,7 @@ export default function NativeOutcome({
               </Button>
             </Space>
             <Typography.Paragraph type="secondary" style={{ marginTop: 10 }}>
-              {pluginExport ? '下载包包含插件结果文件和冻结规范、来源清单。' : '下载包包含所选格式、标注配置和引用资源。CSV／TSV 每行描述一个标注任务，区间等结构按对应格式保存。'}
+              {pluginExport ? '勾选后，原始样本会一并放入 ZIP 的 originals 目录，并在清单中记录来源路径和文件摘要。' : '当前标注模板会自动将原始资源与标注结果一并打包；JSON 文件中的资源路径对应压缩包内的原始文件。'}
             </Typography.Paragraph>
             <Table
               rowKey="exportId"
