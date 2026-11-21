@@ -89,13 +89,13 @@ export function createTaskPluginRegistry(definitions) {
 const nativeTemplates = [
   {
     id: "computer-vision",
-    name: "通用图像标注",
+    name: "图像标注",
     taskType: "COMPUTER_VISION",
     inputSchemaId: "computer-vision-input@1.0.0",
   },
   {
     id: "time-series",
-    name: "通用时序标注",
+    name: "时序标注",
     taskType: "TIME_SERIES",
     inputSchemaId: "time-series-input@1.0.0",
   },
@@ -132,7 +132,9 @@ export function availableTaskPlugins(catalogue) {
       "completion",
       "exporter",
     ].every((key) => registered.capabilities?.[key] === true);
-    if (!reason && (!registered.enabled || !ready))
+    if (!reason && !registered.capabilities)
+      reason = "后端插件目录缺少能力信息，请更新标注后端后重试";
+    else if (!reason && (!registered.enabled || !ready))
       reason = "插件未启用或必要能力未就绪";
     return {
       ...registered,
@@ -141,6 +143,31 @@ export function availableTaskPlugins(catalogue) {
       installed,
       enabled: registered.enabled === true && ready && installed,
       unavailableReason: reason,
+    };
+  });
+}
+
+// 新项目按通用能力创建；细分格式仅用于历史项目，不回退为新项目入口。
+export function availableProjectTypes(catalogue) {
+  const plugins = availableTaskPlugins(catalogue);
+  return nativeTemplates.map((template) => {
+    const plugin = plugins.find(
+      (item) => item.taskType === template.taskType && item.defaultVersion !== false,
+    );
+    const enabled = !!plugin?.enabled && plugin.creationAvailable !== false;
+    return {
+      templateId: template.id,
+      templateVersion: template.version,
+      taskType: template.taskType,
+      key: `${template.id}@${template.version}`,
+      installed: false,
+      ...plugin,
+      name: template.name,
+      enabled,
+      unavailableReason: enabled ? '' : plugin?.unavailableReason || '服务器尚未开放此任务类型，请检查标注服务版本和启用状态',
+      description: template.taskType === 'COMPUTER_VISION'
+        ? '创建后选择分类、画框、多边形等标注模板。'
+        : '创建后配置曲线、标签以及时间点或区间；能耗、温度等数据共用时序标注。',
     };
   });
 }

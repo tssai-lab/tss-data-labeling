@@ -62,21 +62,44 @@ test('switching AI back to human removes the AI step and clears candidates; retu
 });
 
 
-test('project creation uses available server plugins and sends the exact frozen plugin version', async () => {
+test('project creation exposes only image and time-series families and binds their shared editors', async () => {
   const capabilities = { importer: true, inputReader: true, resultValidator: true, completion: true, exporter: true };
-  const plugin = { templateId: 'energy-station-day', templateVersion: '1.0.0', name: '能耗插件', taskType: 'TIMESERIES_ANNOTATION', editorKey: 'energy-station-day-editor', enabled: true, capabilities };
-  const { runtime: r, requested } = workspace('IMAGE_CLASSIFICATION', { root: true, catalogue: [plugin, { ...plugin, templateVersion: '2.0.0' }] });
+  const catalogue = [
+    { templateId: 'energy-station-day', taskType: 'TIMESERIES_ANNOTATION', editorKey: 'energy-station-day-editor' },
+    { templateId: 'image-classification', taskType: 'IMAGE_CLASSIFICATION', editorKey: 'image-classification-editor' },
+    { templateId: 'computer-vision', taskType: 'COMPUTER_VISION', editorKey: 'label-studio-editor' },
+    { templateId: 'time-series', taskType: 'TIME_SERIES', editorKey: 'label-studio-editor' },
+  ].map((item) => ({ ...item, templateVersion: '1.0.0', enabled: true, capabilities }));
+  for (const plugin of catalogue.slice(2)) {
+  const { runtime: r, requested } = workspace('IMAGE_CLASSIFICATION', { root: true, catalogue });
   r.render(); await flushHooks(); r.render();
   const select = r.nodes('Select').find((node) => node.props['aria-label'] === '任务类别');
-  assert.equal(select.props.options[0].disabled, false);
-  assert.equal(select.props.options[1].disabled, true);
-  select.props.onChange('energy-station-day@1.0.0');
+  assert.deepEqual(Array.from(select.props.options, (option) => option.label), ['图像标注', '时序标注']);
+  assert.equal(select.props.value, undefined);
+  select.props.onChange(plugin.taskType);
   r.nodes('Input').find((node) => node.props['aria-label'] === '项目名称').props.onChange({ target: { value: '插件项目' } });
   r.render();
   r.nodes('Modal')[0].props.onOk(); await flushHooks();
   const call = requested.find((item) => item?.path === '/projects');
-  assert.equal(call.body.taskType, 'TIMESERIES_ANNOTATION');
-  assert.equal(call.body.templateId, 'energy-station-day');
+  assert.equal(call.body.taskType, plugin.taskType);
+  assert.equal(call.body.templateId, plugin.templateId);
   assert.equal(call.body.templateVersion, '1.0.0');
+  r.dispose();
+  }
+});
+
+test('project creation opens and explains missing backend capabilities without submitting an unavailable plugin', async () => {
+  const plugin = { templateId: 'computer-vision', templateVersion: '1.0.0', name: '通用图像标注', taskType: 'COMPUTER_VISION', editorKey: 'label-studio-editor', enabled: true };
+  const { runtime: r, requested } = workspace('IMAGE_CLASSIFICATION', { root: true, catalogue: [plugin] });
+  r.render(); await flushHooks(); r.render();
+  const button = r.nodes('Button').find((node) => node.props.children?.includes('创建项目'));
+  assert.equal(button.props.disabled, false);
+  button.props.onClick(); r.render();
+  assert.equal(r.nodes('Modal')[0].props.open, true);
+  assert.ok(r.nodes('Alert').some((node) => node.props.message === '暂时没有可用的任务类型'));
+  assert.equal(r.nodes('Select').find((node) => node.props['aria-label'] === '任务类别').props.options[0].disabled, true);
+  assert.equal(r.nodes('Modal')[0].props.okButtonProps.disabled, true);
+  r.nodes('Modal')[0].props.onOk(); await flushHooks(); r.render();
+  assert.equal(requested.some((item) => item?.path === '/projects'), false);
   r.dispose();
 });
