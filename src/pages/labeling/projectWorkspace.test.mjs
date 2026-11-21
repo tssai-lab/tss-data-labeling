@@ -10,6 +10,7 @@ function workspace(taskType = 'IMAGE_CLASSIFICATION', { root = false, catalogue 
   const sample = { sampleId: 'sample-1', metadata: {}, sourcePath: 'normal.jpg', mediaType: 'image/jpeg' };
   const requested = [];
   const ui = Object.fromEntries(['Alert', 'Button', 'Card', 'Empty', 'Input', 'Modal', 'Select', 'Space', 'Spin', 'Table', 'Tabs', 'Tag'].map((name) => [name, name]));
+  ui.DatePicker = { RangePicker: 'RangePicker' };
   ui.App = { useApp: () => ({ message: { success() {} } }) };
   ui.Form = Object.assign(() => {}, { Item: 'FormItem' });
   ui.Typography = { Text: 'Text', Title: 'Title', Paragraph: 'Paragraph' };

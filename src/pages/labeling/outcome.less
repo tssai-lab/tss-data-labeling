@@ -6,38 +6,6 @@
   color: #122c46;
 }
 
-.hero {
-  position: relative;
-  overflow: hidden;
-  border-bottom: 1px solid #d9e3ec;
-  color: #122c46;
-}
-
-.heroStatus { flex-shrink: 0; padding: 6px 10px; border: 1px solid #d3dfeb; border-radius: 6px; background: #f2f6fa; color: #42617c; font-size: 12px; }
-
-.deliveryPath {
-  position: relative;
-  z-index: 1;
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) 22px minmax(0, 1fr) 22px minmax(0, 1fr);
-  align-items: center;
-  gap: 14px;
-  margin: 0;
-  padding: 12px 14px;
-  border: 1px solid #d5e1eb;
-  border-left: 3px solid #42b7a5;
-  border-radius: 9px;
-  background: linear-gradient(100deg, #fff, #f4f8fb);
-
-  > div { min-width: 0; display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
-  small { color: #657c91; font-size: 12px; }
-  strong { color: #173954; font: 700 25px/1 ui-monospace, SFMono-Regular, Consolas, monospace; font-variant-numeric: tabular-nums; white-space: nowrap; }
-  em { margin-left: 5px; color: #71879a; font: normal 11px/1.3 -apple-system, BlinkMacSystemFont, 'Microsoft YaHei', sans-serif; }
-}
-
-.pathArrow { color: #2b9f91; text-align: center; font-size: 18px; }
-.heroFoot { position: relative; z-index: 1; display: flex; flex-wrap: wrap; gap: 8px 28px; padding: 0 2px; color: #687f94; font-size: 12px; }
-
 .columns { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, .95fr); gap: 18px; align-items: start; }
 .panel { min-width: 0; overflow: hidden; border-color: #cbd9e5; border-radius: 10px; background: #fff; box-shadow: 0 2px 3px #112d4808; }
 .panel :global(.ant-card-head) { min-height: 47px; border-bottom-color: #dfe7ef; background: #fff; }
@@ -50,6 +18,7 @@
 .actionRow { display: flex; align-items: center; margin: 3px 0 7px; }
 .saveRow { align-items: flex-end; }
 .saveRow :global(.ant-btn) { height: 40px; margin-bottom: 0; }
+.snapshotNameInput { height: 40px; }
 .actionRow :global(.ant-input) { width: min(245px, 100%); }
 .nameField { display: flex; flex-direction: column; gap: 5px; color: #38546d; font-size: 12px; font-weight: 600; }
 .specSelect { width: min(320px, 100%); margin-bottom: 10px; }
@@ -66,9 +35,5 @@
 }
 
 @media (max-width: 720px) {
-  .deliveryPath { grid-template-columns: minmax(0, 1fr); gap: 10px; }
-  .deliveryPath > div { padding: 3px 0; }
-  .pathArrow { display: none; }
-  .heroStatus { width: fit-content; }
   .selectedSnapshot small { margin-left: 0; }
 }
