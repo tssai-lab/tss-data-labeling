@@ -59,8 +59,10 @@ public class ResultSelectionService {
         if (!items.isEmpty() && rows.size() != items.size()) throw invalid("选择清单包含项目外或不存在的样本");
         var candidateIds = items.values().stream().map(ExplicitItem::resultId).filter(Objects::nonNull).toList();
         Map<UUID, UUID> candidates = results.candidateSamples(scope, candidateIds);
+        var explicitConfidence = results.candidateConfidence(scope, candidateIds);
 
         var chosen = new ArrayList<FrozenItem>(rows.size());
+        var confidenceRows = new ArrayList<Map<String, Object>>(rows.size());
         for (var row : rows) {
             UUID sample = (UUID) row.get("sampleId");
             long revision = ((Number) row.get("reviewRevision")).longValue();
@@ -72,6 +74,18 @@ public class ResultSelectionService {
             }
             validateSelectionItem(request, row, result);
             chosen.add(new FrozenItem(sample, result, revision));
+            var confidenceRow = new LinkedHashMap<>(row);
+            if (item != null) {
+                confidenceRow.put("resultId", result);
+                confidenceRow.put("sourceKind", null);
+                confidenceRow.put("confidence", null);
+                confidenceRow.put("band", null);
+                if (result != null) {
+                    confidenceRow.putAll(explicitConfidence.get(result));
+                    confidenceRow.put("requiresResultSelection", false);
+                }
+            }
+            confidenceRows.add(confidenceRow);
         }
 
         UUID id = UUID.randomUUID();
@@ -84,7 +98,7 @@ public class ResultSelectionService {
                 """, (rs, row) -> rs.getObject(1, OffsetDateTime.class), id, project, request.specVersionId(),
                 actor.actorId(), request.purpose(), request.reviewAction(),
                 request.filter() == null ? null : write(Map.of("filter", filter, "excludeSampleIds", excluded)),
-                scope.policy(), write(summarize(rows)), digest, chosen.size());
+                scope.policy(), write(summarize(rows, confidenceRows, scope.policy())), digest, chosen.size());
         List<Object[]> values = new ArrayList<>(chosen.size());
         for (int i = 0; i < chosen.size(); i++) {
             FrozenItem item = chosen.get(i);
@@ -197,7 +211,8 @@ public class ResultSelectionService {
         return result;
     }
 
-    private static Map<String, Long> summarize(List<Map<String, Object>> rows) {
+    private static Map<String, Object> summarize(List<Map<String, Object>> rows,
+            List<Map<String, Object>> confidenceRows, UUID policyId) {
         long hasResult = 0, needsRevision = 0, accepted = 0, active = 0;
         for (var row : rows) {
             if (Boolean.TRUE.equals(row.get("hasResult"))) hasResult++;
@@ -205,8 +220,15 @@ public class ResultSelectionService {
             if ("ACCEPTED".equals(row.get("reviewStatus"))) accepted++;
             if (Boolean.TRUE.equals(row.get("activeProcessing"))) active++;
         }
-        return Map.of("total", (long) rows.size(), "hasResultCount", hasResult, "noResultCount", rows.size() - hasResult,
-                "needsRevisionCount", needsRevision, "acceptedCount", accepted, "activeCount", active);
+        var summary = new LinkedHashMap<String, Object>();
+        summary.put("total", (long) rows.size());
+        summary.put("hasResultCount", hasResult);
+        summary.put("noResultCount", rows.size() - hasResult);
+        summary.put("needsRevisionCount", needsRevision);
+        summary.put("acceptedCount", accepted);
+        summary.put("activeCount", active);
+        summary.put("confidenceStatistics", ConfidenceStatistics.fromRows(confidenceRows, policyId));
+        return summary;
     }
 
     private String write(Object value) {

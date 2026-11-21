@@ -641,6 +641,166 @@ class ImportIntegrationTest {
         assertEquals(1, explicit.path("count").asInt());
     }
 
+    @Test void confidenceStatisticsRespectBoundariesFiltersPermissionsAndFrozenSelections() throws Exception {
+        var f = confidenceFixture(0.0, 0.099, 0.1, 0.2, 0.3, 0.399, 0.4, 0.5,
+                0.6, 0.7, 0.799, 0.8, 0.9, 1.0, null);
+        String base = "/projects/" + f.project();
+        String filter = "?executionId=" + f.execution() + "&confidencePolicyId=" + f.policy();
+        JsonNode statistics = resultGet(base + "/result-statistics" + filter, "owner", 200);
+        assertEquals(16, statistics.path("total").asInt());
+        assertEquals(15, statistics.path("hasResultCount").asInt());
+        assertEquals(1, statistics.path("noResultCount").asInt());
+        JsonNode confidence = statistics.path("confidenceStatistics");
+        assertEquals(15, confidence.path("aiResultCount").asInt());
+        assertEquals(14, confidence.path("scoredCount").asInt());
+        assertEquals(1, confidence.path("unknownCount").asInt());
+        assertEquals(0, confidence.path("unresolvedSampleCount").asInt());
+        assertEquals(f.policy(), confidence.path("confidencePolicyId").asText());
+        assertEquals(6, confidence.path("bandCounts").path("LOW").asInt());
+        assertEquals(5, confidence.path("bandCounts").path("MEDIUM").asInt());
+        assertEquals(3, confidence.path("bandCounts").path("HIGH").asInt());
+        assertEquals(1, confidence.path("bandCounts").path("UNKNOWN").asInt());
+        int[] expected = {2, 1, 1, 2, 1, 1, 1, 2, 1, 2};
+        assertEquals(10, confidence.path("histogram").size());
+        for (int i = 0; i < 10; i++) {
+            JsonNode bin = confidence.path("histogram").get(i);
+            assertEquals(expected[i], bin.path("count").asInt(), "histogram bin " + i);
+            assertEquals(i / 10.0, bin.path("lower").asDouble());
+            assertEquals((i + 1) / 10.0, bin.path("upper").asDouble());
+            assertEquals(i == 9, bin.path("upperInclusive").asBoolean());
+        }
+        for (String band : java.util.List.of("LOW", "MEDIUM", "HIGH", "UNKNOWN")) {
+            String selected = filter + "&band=" + band;
+            int count = confidence.path("bandCounts").path(band).asInt();
+            int listed = 0;
+            String cursor = "";
+            do {
+                var page = resultGet(base + "/results" + selected + "&limit=2" + cursor, "owner", 200);
+                listed += page.path("items").size();
+                cursor = page.path("nextCursor").isNull() ? "" : "&cursor=" + page.path("nextCursor").asText();
+            } while (!cursor.isEmpty());
+            assertEquals(count, listed);
+            assertEquals(count, resultGet(base + "/result-statistics" + selected, "owner", 200).path("total").asInt());
+        }
+        var selectionRequest = Map.of("purpose", "PUBLISH", "specVersionId", f.spec(),
+                "filter", Map.of("executionId", f.execution(), "confidencePolicyId", f.policy()));
+        var selection = taskPost(base + "/result-selections", "owner", UUID.randomUUID().toString(), selectionRequest, 201);
+        String frozenPath = "/result-selections/" + selection.path("selectionId").asText() + "/statistics";
+        JsonNode frozen = resultGet(frozenPath, "owner", 200);
+        assertEquals(statistics, frozen);
+        var excluded = taskPost(base + "/result-selections", "owner", UUID.randomUUID().toString(),
+                Map.of("purpose", "PUBLISH", "specVersionId", f.spec(), "filter", selectionRequest.get("filter"),
+                        "excludeSampleIds", java.util.List.of(f.samples().get(12))), 201);
+        var excludedStats = resultGet("/result-selections/" + excluded.path("selectionId").asText() + "/statistics", "owner", 200);
+        assertEquals(15, excludedStats.path("total").asInt());
+        assertEquals(2, excludedStats.path("confidenceStatistics").path("bandCounts").path("HIGH").asInt());
+        taskPost(base + "/sample-reviews", "owner", UUID.randomUUID().toString(),
+                Map.of("items", java.util.List.of(Map.of("sampleId", f.samples().get(0), "specVersionId", f.spec(),
+                        "action", "NEEDS_REVISION", "reason", "confidence snapshot regression"))), 200);
+        assertEquals(1, resultGet(base + "/result-statistics" + filter, "owner", 200).path("needsRevisionCount").asInt());
+        assertEquals(frozen, resultGet(frozenPath, "owner", 200));
+        resultGet(base + "/result-statistics" + filter, "statistics-stranger", 404);
+        resultGet(frozenPath, "statistics-stranger", 404);
+        resultGet(base + "/result-statistics?confidencePolicyId=" + f.policy(), "owner", 422);
+        resultGet(base + "/result-statistics?band=HIGH", "owner", 422);
+        var missing = resultGet(base + "/result-statistics" + filter + "&hasResult=false", "owner", 200);
+        assertEquals(1, missing.path("total").asInt());
+        assertEquals(0, missing.path("confidenceStatistics").path("unknownCount").asInt());
+        var unclassified = resultGet(base + "/result-statistics?executionId=" + f.execution(), "owner", 200);
+        assertTrue(unclassified.path("confidenceStatistics").path("bandCounts").isNull());
+        assertEquals(confidence.path("histogram"), unclassified.path("confidenceStatistics").path("histogram"));
+    }
+
+    @Test void confidenceStatisticsDoNotChooseAmbiguousOrHumanAnswersAndExplicitSelectionsUseChosenIds() throws Exception {
+        var f = confidenceFixture(0.9, 0.1);
+        var plan = taskPost("/projects/" + f.project() + "/package-plans", "owner", UUID.randomUUID().toString(),
+                Map.of("batchId", f.batch(), "specVersionId", f.spec(), "packageSize", 10, "annotatorsPerSample", 1), 201);
+        complete(new Fixture(f.project(), f.spec(), f.batch(), publishTask(plan)), "confidence-human-" + UUID.randomUUID(), "normal");
+        String base = "/projects/" + f.project();
+        var live = resultGet(base + "/result-statistics", "owner", 200).path("confidenceStatistics");
+        assertEquals(2, live.path("unresolvedSampleCount").asInt());
+        assertEquals(0, live.path("aiResultCount").asInt());
+        assertEquals(0, live.path("unknownCount").asInt());
+        var explicit = new java.util.ArrayList<Map<String, Object>>();
+        for (var row : resultGet("/ai-executions/" + f.execution() + "/results", "owner", 200).path("items")) {
+            if (!row.path("resultId").isNull()) explicit.add(Map.of("sampleId", row.path("sampleId").asText(),
+                    "resultId", row.path("resultId").asText(), "reviewRevision", 0));
+        }
+        assertEquals(2, explicit.size());
+        var selection = taskPost(base + "/result-selections", "owner", UUID.randomUUID().toString(),
+                Map.of("purpose", "REVIEW", "reviewAction", "ACCEPT", "specVersionId", f.spec(), "items", explicit), 201);
+        var frozen = resultGet("/result-selections/" + selection.path("selectionId").asText() + "/statistics", "owner", 200)
+                .path("confidenceStatistics");
+        assertEquals(2, frozen.path("aiResultCount").asInt());
+        assertEquals(2, frozen.path("scoredCount").asInt());
+        assertEquals(0, frozen.path("unresolvedSampleCount").asInt());
+        assertEquals(1, frozen.path("histogram").get(1).path("count").asInt());
+        assertEquals(1, frozen.path("histogram").get(9).path("count").asInt());
+        assertTrue(frozen.path("bandCounts").isNull());
+        var humanOnly = resultGet(base + "/result-statistics?sourceKind=HUMAN", "owner", 200).path("confidenceStatistics");
+        assertEquals(0, humanOnly.path("aiResultCount").asInt());
+        assertEquals(0, humanOnly.path("unknownCount").asInt());
+        var filtered = resultGet(base + "/result-statistics?executionId=" + f.execution(), "owner", 200).path("confidenceStatistics");
+        assertEquals(2, filtered.path("aiResultCount").asInt());
+        assertEquals(0, filtered.path("unresolvedSampleCount").asInt());
+    }
+
+    @Test void confidenceStatisticsReturnAnEmptyDistributionForAProjectWithoutResults() throws Exception {
+        var statistics = resultGet("/projects/" + project() + "/result-statistics", "owner", 200);
+        assertEquals(0, statistics.path("total").asInt());
+        var confidence = statistics.path("confidenceStatistics");
+        assertEquals(0, confidence.path("aiResultCount").asInt());
+        assertEquals(0, confidence.path("scoredCount").asInt());
+        assertEquals(0, confidence.path("unknownCount").asInt());
+        assertTrue(confidence.path("confidencePolicyId").isNull());
+        assertTrue(confidence.path("bandCounts").isNull());
+        assertEquals(10, confidence.path("histogram").size());
+        for (var bin : confidence.path("histogram")) assertEquals(0, bin.path("count").asInt());
+    }
+
+    record ConfidenceFixture(String project, String spec, String batch, String execution, String policy,
+            java.util.List<String> samples) {}
+
+    ConfidenceFixture confidenceFixture(Double... scores) throws Exception {
+        String project = project();
+        var files = new LinkedHashMap<String, byte[]>();
+        for (int i = 0; i < scores.length + 2; i++) files.put("score-" + i + ".png", image("png"));
+        String batch = uploaded(project, zip(files));
+        command(batch, "complete", UUID.randomUUID().toString()).andExpect(status().isAccepted());
+        processQueue();
+        var samples = new java.util.ArrayList<String>();
+        for (var row : resultGet("/imports/" + batch + "/samples", "owner", 200).path("items")) {
+            samples.add(row.path("sampleId").asText());
+        }
+        assertEquals(scores.length + 2, samples.size());
+        String spec = taskPost("/projects/" + project + "/spec-versions", "owner", UUID.randomUUID().toString(),
+                Map.of("taskType", "IMAGE_CLASSIFICATION", "schemaVersion", "1",
+                        "labels", java.util.List.of(Map.of("id", "normal", "name", "正常"))), 201)
+                .path("specVersionId").asText();
+        String credential = UUID.randomUUID().toString(), agent = agent("IMAGE_CLASSIFICATION", credential);
+        var refs = new java.util.ArrayList<Map<String, Object>>();
+        for (int i = 0; i < scores.length + 1; i++) refs.add(Map.of("sampleId", samples.get(i)));
+        String execution = taskPost("/projects/" + project + "/ai-executions", "owner", UUID.randomUUID().toString(),
+                Map.of("specVersionId", spec, "agentId", agent, "samples", refs), 202).path("executionId").asText();
+        long generation = worker("POST", "/executions/claim", credential, null, 200).path("generation").asLong();
+        for (int i = 0; i < scores.length; i++) {
+            var output = new LinkedHashMap<String, Object>();
+            output.put("generation", generation);
+            output.put("status", "SUCCEEDED");
+            output.put("result", Map.of("labelId", "normal"));
+            output.put("confidence", scores[i]);
+            worker("PUT", "/executions/" + execution + "/outputs/" + samples.get(i), credential, output, 200);
+        }
+        worker("PUT", "/executions/" + execution + "/outputs/" + samples.get(scores.length), credential,
+                Map.of("generation", generation, "status", "FAILED", "errorCode", "MODEL_ERROR"), 200);
+        worker("POST", "/executions/" + execution + "/finish", credential, Map.of("generation", generation), 200);
+        var terminal = resultGet("/ai-executions/" + execution, "owner", 200);
+        String policy = taskPost("/rounds/" + terminal.path("roundId").asText() + "/confidence-policies", "owner",
+                UUID.randomUUID().toString(), Map.of("snapshotId", terminal.path("resultSnapshotId").asText(),
+                        "lowerThreshold", 0.4, "upperThreshold", 0.8), 201).path("policyId").asText();
+        return new ConfidenceFixture(project, spec, batch, execution, policy, samples);
+    }
+
     @Test void concurrentDraftSavesUseCompareAndSet() throws Exception {
         JsonNode published = publishTask(taskPlan(1));
         String pkg = published.path("packages").get(0).path("packageId").asText();
