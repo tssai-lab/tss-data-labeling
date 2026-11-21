@@ -117,15 +117,16 @@ WITH scope AS (
     public JsonNode statistics(ActorContext actor, UUID project, Map<String, String> filter) {
         requireOwner(actor, project, false);
         Scope scope = scope(project, null, filter);
-        return json.valueToTree(db.queryForMap(RESULT_SCOPE + """
+        var totals = db.queryForMap(RESULT_SCOPE + """
 SELECT count(*) AS total,
        count(*) FILTER (WHERE "candidateCount">0) AS "hasResultCount",
        count(*) FILTER (WHERE "candidateCount"=0) AS "noResultCount",
        count(*) FILTER (WHERE "reviewStatus"='NEEDS_REVISION') AS "needsRevisionCount",
        count(*) FILTER (WHERE "reviewStatus"='ACCEPTED') AS "acceptedCount",
        count(*) FILTER (WHERE "activeProcessing") AS "activeCount"
-FROM filtered
-""", arguments(scope, null, null)));
+""" + ConfidenceStatistics.sqlProjection() + "\nFROM filtered", arguments(scope, null, null));
+        totals.put("confidenceStatistics", ConfidenceStatistics.extractSql(totals, scope.policy()));
+        return json.valueToTree(totals);
     }
 
     @Transactional
@@ -203,6 +204,20 @@ ORDER BY c.result_id LIMIT :limit
             while (rs.next()) found.put(rs.getObject(1, UUID.class), rs.getObject(2, UUID.class));
             return found;
         });
+    }
+
+    Map<UUID, Map<String, Object>> candidateConfidence(Scope scope, Collection<UUID> ids) {
+        if (ids.isEmpty()) return Map.of();
+        var rows = db.queryForList("""
+                SELECT result_id AS "resultId", source_kind AS "sourceKind", confidence
+                FROM project_result_candidate
+                WHERE project_id=:project AND spec_version_id=:spec AND current_version
+                  AND result_id=ANY(CAST(string_to_array(:ids, ',') AS uuid[]))
+                """, new MapSqlParameterSource("project", scope.project()).addValue("spec", scope.spec())
+                .addValue("ids", joined(ids)));
+        var result = new HashMap<UUID, Map<String, Object>>();
+        for (var row : rows) result.put((UUID) row.get("resultId"), row);
+        return result;
     }
 
     Scope scope(UUID project, UUID requestedSpec, Map<String, String> filter) {

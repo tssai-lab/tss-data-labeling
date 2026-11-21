@@ -444,9 +444,61 @@ GET /projects/{id}/results：owner，筛选 specVersionId、packageId（可选�
 
 结果列表每行对应一个样本，增加selectedResultId、candidateCount、requiresResultSelection。hasResult表示当前筛选范围内存在可审核候选，不等于已确认；无候选时resultId=null、candidateCount=0。存在明确executionId等来源筛选时，只在该范围内选展示候选；否则优先展示当前selectedResultId。未选定且只有一份候选可展示该候选，但不自动改变审核指针；多份且无法确定时resultId=null、requiresResultSelection=true，调用方必须从样本历史中明确选择resultId，不能按时间猜测。reviewStatus/reviewRevision描述样本在该规范下的当前审核状态；仅当展示resultId等于selectedResultId且状态ACCEPTED时才能给该答案显示“已确认”。
 
-GET /projects/{id}/result-statistics 使用相同筛选，返回 `total`、`hasResultCount`、`noResultCount`、`needsRevisionCount`、`acceptedCount`、`activeCount`。AI 执行的成功、失败、等待和取消数量由执行详情接口返回。结果列表支持按指定执行和策略筛选置信度分档，分档汇总及分数直方图待开发。
+GET /projects/{id}/result-statistics 使用与结果列表相同的筛选，保留 `total`、`hasResultCount`、`noResultCount`、`needsRevisionCount`、`acceptedCount`、`activeCount`，增加 `confidenceStatistics`。AI 执行的成功、失败、等待和取消数量仍由执行详情接口返回。
+
+`confidenceStatistics` 的统计单元为筛选范围内每个样本当前可明确展示的 AI 候选，与结果列表的候选选择规则一致，不累计同一样本的全部历史答案。
+
+| 字段 | 含义 |
+|---|---|
+| `aiResultCount` | 当前展示答案明确且来源为 AI 的样本数，含未知分数 |
+| `scoredCount` | 上述答案中有有效 0—1 分数的数量，包含分数恰为 0 或 1 |
+| `unknownCount` | 上述答案中分数未知的数量；人工/owner/集成答案和没有答案的样本不计入未知 AI 分数 |
+| `unresolvedSampleCount` | 多份候选尚未明确选择展示答案的样本数；这些样本不参与分档或直方图，调用样本历史后显式选择 |
+| `confidencePolicyId` | 本次使用的策略 ID，未指定时为 null |
+| `bandCounts` | 指定策略时返回 `HIGH`、`MEDIUM`、`LOW`、`UNKNOWN` 四个计数；未指定策略时为 null，不套用默认阈值 |
+| `histogram` | 固定 10 个等宽区间，每项含 `lower`、`upper`、`upperInclusive`、`count`；区间左闭右开，最后一档 `[0.9,1.0]` 右闭；空档仍返回 0 |
+
+- 策略筛选必须同时传 `executionId` 和属于该执行的 `confidencePolicyId`。分档使用已有策略阈值 `L`、`H`：`LOW=[0,L)`、`MEDIUM=[L,H)`、`HIGH=[H,1]`，未知分数为 `UNKNOWN`。不提供策略也可读取数值直方图。
+- `band`、`hasResult`、审核状态和其他来源/规范/范围筛选同时约束基础统计、分档和直方图。例如带 `band=HIGH` 时只统计高分档当前结果，不返回未经该筛选的全执行分布。
+- `aiResultCount = scoredCount + unknownCount`；直方图的 count 之和等于 `scoredCount`；指定策略时四档数量之和等于 `aiResultCount`。统计不修改审核状态，不为模型生成或推断分数。
+
+调用示例（UUID 为占位符，阈值来自已保存策略）：
+
+```http
+GET /api/labeling/v1/projects/<projectId>/result-statistics?executionId=<executionId>&confidencePolicyId=<policyId>
+Authorization: Bearer <token>
+```
+
+以下是测试数据示例的 `data.confidenceStatistics`，`L=0.4`、`H=0.8`，不是生产模型的执行报告：
+
+```json
+{
+  "aiResultCount": 15,
+  "scoredCount": 14,
+  "unknownCount": 1,
+  "unresolvedSampleCount": 0,
+  "confidencePolicyId": "<policyId>",
+  "bandCounts": {"HIGH": 3, "MEDIUM": 5, "LOW": 6, "UNKNOWN": 1},
+  "histogram": [
+    {"lower": 0.0, "upper": 0.1, "upperInclusive": false, "count": 2},
+    {"lower": 0.1, "upper": 0.2, "upperInclusive": false, "count": 1},
+    {"lower": 0.2, "upper": 0.3, "upperInclusive": false, "count": 1},
+    {"lower": 0.3, "upper": 0.4, "upperInclusive": false, "count": 2},
+    {"lower": 0.4, "upper": 0.5, "upperInclusive": false, "count": 1},
+    {"lower": 0.5, "upper": 0.6, "upperInclusive": false, "count": 1},
+    {"lower": 0.6, "upper": 0.7, "upperInclusive": false, "count": 1},
+    {"lower": 0.7, "upper": 0.8, "upperInclusive": false, "count": 2},
+    {"lower": 0.8, "upper": 0.9, "upperInclusive": false, "count": 1},
+    {"lower": 0.9, "upper": 1.0, "upperInclusive": true, "count": 2}
+  ]
+}
+```
 
 普通分页和统计为实时视图，不承诺跨请求一致。生成selection后，GET /result-selections/{id}/items分页及GET /result-selections/{id}/statistics只读固定清单和创建时统计；C必须用它们做最终预览，不再用实时统计冒充确认数量。审核消费时A重新校验当前状态和revision。
+
+新建选择快照的 statistics 同时冻结 `confidenceStatistics`，筛选排除的样本不计入；显式 items 指定 resultId 时按实际选中的答案统计，即使实时列表当时有多份候选。之后的审核或新增策略不重算旧快照。升级前已创建的快照保留原 statistics 结构，可能没有 `confidenceStatistics`，前端应显示统计不可用，需要新统计时新建选择快照，不把缺字段当作全零。
+
+前端请求示例和展示注意事项见 [置信度统计交接说明](confidence-statistics-handoff.md)。
 
 POST /projects/{id}/result-selections，owner＋幂等键：
 
