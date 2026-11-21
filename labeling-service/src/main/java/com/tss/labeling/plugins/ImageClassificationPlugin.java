@@ -32,8 +32,14 @@ public class ImageClassificationPlugin implements TaskPlugin {
         if (!result.path("labelId").isTextual() || !labels.contains(result.path("labelId").asText()))
             throw error(422,"INVALID_RESULT","标签不属于冻结规范");
     }
-    public Set<String> exportFormats() { return Set.of("classification-csv-zip"); }
+    public Set<String> exportFormats() {
+        var formats = new HashSet<>(GenericTaskExport.formats());
+        formats.add("classification-csv-zip");
+        return Set.copyOf(formats);
+    }
     public ExportData export(String format, List<Map<String,Object>> rows) {
+        var generic = GenericTaskExport.export(format, rows);
+        if (generic != null) return generic;
         if (!exportFormats().contains(format)) throw error(422,"UNSUPPORTED_EXPORT_FORMAT","图片插件不支持该导出格式");
         var csv = new StringBuilder("\uFEFFsampleId,sourcePath,specVersionId,resultId,labelId,reviewRevision,sourceKind,submissionId,executionId,inputHash\r\n");
         for (var row : rows) {
