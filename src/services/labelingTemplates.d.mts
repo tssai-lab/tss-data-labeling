@@ -36,7 +36,11 @@ export type RegisteredTaskPlugin = TaskBinding & {
   taskType: string;
   name?: string;
   enabled: boolean;
+  defaultVersion?: boolean;
+  creationAvailable?: boolean;
   capabilities?: { importer: boolean; inputReader: boolean; resultValidator: boolean; completion: boolean; exporter: boolean };
 };
 export type AvailableTaskPlugin = RegisteredTaskPlugin & { key: string; name: string; installed: boolean; unavailableReason: string };
 export function availableTaskPlugins(catalogue: RegisteredTaskPlugin[]): AvailableTaskPlugin[];
+export type ProjectTaskType = AvailableTaskPlugin & { description: string };
+export function availableProjectTypes(catalogue: RegisteredTaskPlugin[]): ProjectTaskType[];

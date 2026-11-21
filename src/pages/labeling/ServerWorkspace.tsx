@@ -33,7 +33,7 @@ import {
 } from '@/services/nativeLabeling';
 import { formatDisplayDateTime } from '@/utils/formatDateTime';
 import { normalizeWorkspaceProject, projectPanel } from '@/services/projectCompatibility.mjs';
-import { availableTaskPlugins, type AvailableTaskPlugin, type RegisteredTaskPlugin } from '@/services/labelingTemplates.mjs';
+import { availableProjectTypes, type ProjectTaskType, type RegisteredTaskPlugin } from '@/services/labelingTemplates.mjs';
 import styles from './index.less';
 import NativeDataPreparation from './NativeDataPreparation';
 import NativeOutcome from './NativeOutcome';
@@ -54,10 +54,10 @@ const statusName: Record<string, string> = {
   COMPLETED: '已完成',
 };
 const taskName: Record<string, string> = {
-  TIME_SERIES: '时序分析',
+  TIME_SERIES: '时序标注',
   TIMESERIES_ANNOTATION: '时序标注',
-  COMPUTER_VISION: '计算机视觉',
-  IMAGE_CLASSIFICATION: '图片分类',
+  COMPUTER_VISION: '图像标注',
+  IMAGE_CLASSIFICATION: '图像标注',
 };
 export default function ServerWorkspace() {
   const { projectId } = useParams<{ projectId?: string }>(),
@@ -73,7 +73,7 @@ export default function ServerWorkspace() {
   const [aiSession, setAiSession] = useState<{ projectId: string; samples: NativeSample[]; version: NativeProject['specVersions'][number]; config: { modelId: string; instructions: string }; results: DemoResult[] }>();
   const [projectQuery, setProjectQuery] = useState('');
   const [projectStatus, setProjectStatus] = useState('ALL');
-  const [taskTypes, setTaskTypes] = useState<AvailableTaskPlugin[]>([]);
+  const [taskTypes, setTaskTypes] = useState<ProjectTaskType[]>([]);
   const [reload, setReload] = useState(0),
     [loading, setLoading] = useState(true),
     [busy, setBusy] = useState(false),
@@ -133,7 +133,7 @@ export default function ServerWorkspace() {
         ]);
         if (!abort.signal.aborted) {
           setProjects(values);
-          setTaskTypes(availableTaskPlugins(types));
+          setTaskTypes(availableProjectTypes(types));
           setProject(undefined);
         }
         return;
@@ -226,13 +226,13 @@ export default function ServerWorkspace() {
               <ProjectBreadcrumbs current="我的项目" />
               <h1>数据标注工作空间</h1>
               <p className={styles.headingHint}>
-                创建项目，选择任务模板；准备规范与数据后发布任务，完成标注后审核并导出成果。
+                创建图像或时序项目，再配置标注模板和数据；发布任务后核查并导出成果。
               </p>
             </div>
             <Button
               type="primary"
               icon={<PlusOutlined />}
-              disabled={loading || !taskTypes.some((plugin) => plugin.enabled)}
+              disabled={loading}
               onClick={() => {
                 setName('');
                 setDescription('');
@@ -431,12 +431,12 @@ export default function ServerWorkspace() {
               onCancel={() => setCreating(false)}
               okText="创建"
               confirmLoading={busy}
-              okButtonProps={{ disabled: !name.trim() || !taskTypes.some((plugin) => plugin.key === type && plugin.enabled) }}
+              okButtonProps={{ disabled: !name.trim() || !taskTypes.some((plugin) => plugin.taskType === type && plugin.enabled) }}
               onOk={() =>
                 void run(async () => {
                   if (!name.trim()) throw Error('请输入项目名称');
-                  const selectedPlugin = taskTypes.find((plugin) => plugin.key === type && plugin.enabled);
-                  if (!selectedPlugin) throw Error('请选择已启用且已安装的任务模板');
+                  const selectedPlugin = taskTypes.find((plugin) => plugin.taskType === type && plugin.enabled);
+                  if (!selectedPlugin) throw Error('请选择可用的图像标注或时序标注');
                   const created = await post<NativeProject>(
                     '/projects',
                     {
@@ -457,6 +457,22 @@ export default function ServerWorkspace() {
             >
               <Form layout="vertical" requiredMark style={{ width: '100%' }}>
                 {error && <Alert type="error" message={error} />}
+                {!taskTypes.some((plugin) => plugin.enabled) && (
+                  <Alert
+                    type="warning"
+                    showIcon
+                    style={{ marginBottom: 16 }}
+                    message="暂时没有可用的任务类型"
+                    description={taskTypes.length ? (
+                      <div>
+                        {taskTypes.map((plugin) => (
+                          <div key={plugin.key}>{plugin.name}：{plugin.unavailableReason}</div>
+                        ))}
+                      </div>
+                    ) : '未取得任务类型，请刷新重试；若仍不可用，请检查标注后端是否正常运行。'}
+                    action={<Button size="small" loading={loading} onClick={refresh}>刷新任务类型</Button>}
+                  />
+                )}
                 <Form.Item label="项目名称" required>
                   <Input
                     aria-label="项目名称"
@@ -477,7 +493,11 @@ export default function ServerWorkspace() {
                     onChange={(e) => setDescription(e.target.value)}
                   />
                 </Form.Item>
-                <Form.Item label="任务类型" required>
+                <Form.Item
+                  label="任务类型"
+                  required
+                  extra={taskTypes.find((value) => value.taskType === type)?.description || '只需选择数据类型，具体标注方式在创建后的“标注设置”中配置。'}
+                >
                   <Select
                     aria-label="任务类别"
                     style={{ width: '100%' }}
@@ -485,8 +505,8 @@ export default function ServerWorkspace() {
                     placeholder="请选择任务类型"
                     onChange={setType}
                     options={taskTypes.map((value) => ({
-                      value: value.key,
-                      label: `${value.name} · v${value.templateVersion}${value.enabled ? '' : '（暂不可用）'}`,
+                      value: value.taskType,
+                      label: `${value.name}${value.enabled ? '' : '（暂不可用）'}`,
                       disabled: !value.enabled,
                       title: value.unavailableReason,
                     }))}

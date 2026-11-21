@@ -80,4 +80,23 @@ test('server availability and installed frontend versions jointly control select
   assert.equal(availableTaskPlugins([{ ...registered, enabled: false }])[0].enabled, false);
   assert.equal(availableTaskPlugins([{ ...registered, templateVersion: '2.0.0' }])[0].installed, false);
   assert.equal(availableTaskPlugins([{ ...registered, editorKey: 'https://untrusted.example/editor.js' }])[0].enabled, false);
+  const legacy = availableTaskPlugins([{ ...registered, capabilities: undefined }])[0];
+  assert.equal(legacy.enabled, false);
+  assert.match(legacy.unavailableReason, /后端插件目录缺少能力信息/);
+});
+
+test('business formats remain readable but new projects only use the two generic families', async () => {
+  const { availableProjectTypes } = await import('./labelingTemplates.mjs');
+  const capabilities = { importer: true, inputReader: true, resultValidator: true, completion: true, exporter: true };
+  const catalogue = taskTemplates.map(({ id, version, ...template }) => ({
+    ...template, templateId: id, templateVersion: version, capabilities,
+  }));
+  const types = availableProjectTypes(catalogue);
+  assert.deepEqual(types.map((item) => item.name), ['图像标注', '时序标注']);
+  assert.deepEqual(types.map((item) => item.templateId), ['computer-vision', 'time-series']);
+  assert.ok(types.every((item) => item.enabled));
+  assert.equal(resolveTaskTemplate(catalogue.find((item) => item.templateId === 'energy-station-day')).editorKey, 'energy-station-day-editor');
+  assert.ok(availableProjectTypes(catalogue.filter((item) => item.taskType !== 'COMPUTER_VISION' && item.taskType !== 'TIME_SERIES')).every((item) => !item.enabled));
+  assert.ok(availableProjectTypes(catalogue.map((item) => ({ ...item, creationAvailable: false }))).every((item) => !item.enabled));
+  assert.ok(availableProjectTypes(catalogue.map((item) => ({ ...item, templateVersion: '9.0.0' }))).every((item) => !item.enabled));
 });
