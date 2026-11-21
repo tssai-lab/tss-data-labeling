@@ -635,6 +635,8 @@ GET `/task-templates`：启用身份，data 为内置模板数组；字段 templ
 
 `GET /task-templates` 现在由后端 `TaskPluginRegistry` 产生，包含已登记插件的 `name`、五项 `capabilities`、有效 `enabled`、`defaultVersion`、`schemaDigest` 与 `exportFormats`，并保留已有模板标识和格式字段。前端创建项目必须同时检查后端能力及本地组件版本；未知版本不能回退。
 
+2026-11-21 新增 `creationAvailable`，表示当前项目创建界面是否开放此契约。新项目仅选择 `COMPUTER_VISION`（图像标注）或 `TIME_SERIES`（时序标注），分别绑定 `computer-vision@1.0.0`、`time-series@1.0.0`。`IMAGE_CLASSIFICATION` 和 `TIMESERIES_ANNOTATION` 目录项保留且 `creationAvailable=false`，用于历史项目及旧客户端兼容；不改其冻结格式。具体分类、框选、时间点/区间由后续规范中的模板/XML 配置，业务细分不注册为独立项目类型。`GET /label-configs/task-types` 返回两个通用类别。
+
 项目详情新增 `templateId`、`templateVersion`；创建项目传入这两个字段后，由 V24 持久绑定。导入批次也在创建时固定版本。历史规范和成果继续按其冻结版本读取与校验，修改规范不覆盖旧版本。不兼容输入 schema 的升级返回 `PLUGIN_INPUT_MIGRATION_REQUIRED`。
 
 开发说明、接口边界与新增插件步骤见 [24-task-plugins.md](08-task-plugins.md)。此机制只运行随平台发布的可信代码，不提供上传后执行任意代码的接口。

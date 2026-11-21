@@ -17,9 +17,9 @@ public class BuiltInPlugins {
                 true, true, new TaskPlugin.Capabilities(true, true, true, true, true));
     }
     @Bean TaskPlugin computerVisionPlugin(ArchiveParser parser, WorkflowStore store, ImportStorage storage, NativeResultValidator validator) {
-        return new NativeTaskPlugin(descriptor("COMPUTER_VISION", "通用图像标注"), parser, store, storage, validator);
+        return new NativeTaskPlugin(descriptor("COMPUTER_VISION", "图像标注"), parser, store, storage, validator);
     }
     @Bean TaskPlugin timeSeriesPlugin(ArchiveParser parser, WorkflowStore store, ImportStorage storage, NativeResultValidator validator) {
-        return new NativeTaskPlugin(descriptor("TIME_SERIES", "通用时序标注"), parser, store, storage, validator);
+        return new NativeTaskPlugin(descriptor("TIME_SERIES", "时序标注"), parser, store, storage, validator);
     }
 }

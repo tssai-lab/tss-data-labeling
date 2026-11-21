@@ -2483,6 +2483,8 @@ class ImportIntegrationTest {
         var catalogue=json.readTree(mvc.perform(get(API+"/task-templates").header("Authorization","Bearer owner"))
                 .andExpect(status().isOk()).andReturn().getResponse().getContentAsString()).path("data");
         assertEquals(4,catalogue.size());
+        assertEquals(2,java.util.stream.StreamSupport.stream(catalogue.spliterator(),false)
+                .filter(item->item.path("creationAvailable").asBoolean()).count());
         for(var plugin:catalogue) {
             assertTrue(plugin.path("enabled").asBoolean());
             assertTrue(plugin.path("capabilities").path("importer").asBoolean());

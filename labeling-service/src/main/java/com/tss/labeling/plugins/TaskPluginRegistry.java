@@ -27,6 +27,9 @@ public class TaskPluginRegistry {
             view.put("name", d.name()); view.put("enabled", d.enabled() && d.capabilities().ready());
             view.put("capabilities", d.capabilities()); view.put("schemaDigest", d.digest());
             view.put("defaultVersion", d.defaultVersion()); view.put("exportFormats", plugin.exportFormats());
+            // 保留旧契约以处理历史项目，新界面仅开放通用数据类型入口。
+            view.put("creationAvailable", d.enabled() && d.capabilities().ready()
+                    && !Set.of("IMAGE_CLASSIFICATION", "TIMESERIES_ANNOTATION").contains(d.taskType()));
             return (Map<String, Object>) view;
         }).toList();
     }

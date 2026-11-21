@@ -1,24 +1,32 @@
 # 可信任务插件注册机制（第一版）
 
-更新：2026-11-20。
+更新：2026-11-21。
 
 插件是随平台源码构建、随服务发布的可信代码。前端和后端分别登记实现，后端目录决定哪些模板可以创建项目。此版本没有用户上传 JAR、JavaScript 或 ZIP 后直接执行的能力。
 
-## 已接入的插件
+## 通用类型与业务模板
 
-| 插件 ID | 版本 | 任务类型 | 编辑器键 | 默认结果格式 |
-|---|---|---|---|---|
-| image-classification | 1.0.0 | IMAGE_CLASSIFICATION | image-classification-editor | image-classification-v1 |
-| energy-station-day | 1.0.0 | TIMESERIES_ANNOTATION | energy-station-day-editor | annotation-record-v1 |
-| computer-vision | 1.0.0 | COMPUTER_VISION | label-studio-editor | label-studio-v1 |
-| time-series | 1.0.0 | TIME_SERIES | label-studio-editor | label-studio-v1 |
+创建项目只提供 **图像标注**（`COMPUTER_VISION`）和 **时序标注**（`TIME_SERIES`）两个入口。它们分别使用已注册的 `computer-vision@1.0.0`、`time-series@1.0.0`，共用原生编辑器及 `label-studio-v1` 结果契约。
+
+整图分类、画框、多边形、异常点、异常区间等通过项目的“标注设置”选择模板或配置控件。能耗、温度、电流是时序业务内容，不再各占一个创建入口。标签、说明、数据字段和坐标/时间单位属于模板与数据映射；新业务优先复用现有控件、CSV/JSON 输入、校验和导出，只有通用能力无法表达的新交互或数据结构才考虑扩展插件。
+
+数据适配不等于新的任务插件。当前通用入口支持原生 JSON、CSV 文件引用、CSV 按行/长表分组及图片资源生成样本；不会自动把任意宽表解释为曲线。旧站点日宽表专用导入器和业务校验仍随历史插件保留，不能将其任意载入一个新时序项目或静默修改历史输入格式。
+
+## 已安装契约与历史兼容
+
+| 插件 ID | 版本 | 任务类型 | 编辑器键 | 默认结果格式 | 用途 |
+|---|---|---|---|---|---|
+| computer-vision | 1.0.0 | COMPUTER_VISION | label-studio-editor | label-studio-v1 | 新建图像项目 |
+| time-series | 1.0.0 | TIME_SERIES | label-studio-editor | label-studio-v1 | 新建时序项目 |
+| image-classification | 1.0.0 | IMAGE_CLASSIFICATION | image-classification-editor | image-classification-v1 | 历史分类项目及旧客户端兼容 |
+| energy-station-day | 1.0.0 | TIMESERIES_ANNOTATION | energy-station-day-editor | annotation-record-v1 | 历史能耗项目及旧客户端兼容 |
 
 通用 LS 能力继续使用平台现有配置、原生资源、结果与导出适配。图片和站点日插件复用已有解析器与校验规则，未改变历史结果格式。
 
 ## 使用流程
 
-1. 需求方创建项目，选择后端已启用且前端已安装对应版本的任务模板。
-2. 平台保存项目的插件 ID 和版本，使用该插件导入未标注数据。能耗插件当前读取 ZIP 内的 `manifest.json` 和 `sample/station_day_tasks_2k.csv`。
+1. 需求方创建项目，选择图像或时序类型；平台匹配后端已启用且前端已安装的通用插件。
+2. 平台保存项目的插件 ID 和版本，使用通用输入适配导入未标注数据；需要时配置 CSV 字段和分组。
 3. 需求方配置标签和说明，保存规范版本；规范固定插件版本、输入/结果 schema 和摘要。
 4. 发布时选择人工或 AI。人工按包领取，宿主按 `editorKey` 打开编辑器；AI 按范围执行，通过已有 Worker 接口读取输入并回报结果。
 5. 插件校验单样本草稿与完成条件，平台校验整包是否齐全、版本是否一致及操作者权限。
@@ -70,6 +78,7 @@
   "inputSchemaId": "energy-station-day-input@1.0.0",
   "resultSchemaId": "energy-station-day-result@1.0.0",
   "enabled": true,
+  "creationAvailable": false,
   "defaultVersion": true,
   "capabilities": {
     "importer": true,
@@ -83,6 +92,8 @@
 ```
 
 实际响应还包含 `schemaDigest`。`enabled` 只有在插件启用且五项必要能力全部就绪时才为真。前端同时检查本地是否安装对应版本和编辑器，不认识的版本保留为不可选项，不能拿别的编辑器回退。
+
+`creationAvailable` 独立表达当前创建界面是否开放该契约：两个通用类型在能力就绪时为 true；历史分类和能耗为 false，但其 `enabled` 仍可为 true，以继续编辑和导出已有任务。旧客户端明确指定原 ID/版本的创建请求继续兼容；目录仍返回四项，不等于界面展示四个类型。`GET /label-configs/task-types` 也只列出两个通用类别。无需新增数据库迁移，不改历史 schemaDigest 或项目绑定。
 
 前端可信描述在 `src/services/labelingTemplates.mjs`，组件映射在 `TaskEditorHost.tsx`，领取工作区按可信 `editorKey` 选择。服务返回的键不作为远程 URL 或动态 import 表达式。
 
@@ -109,6 +120,8 @@
 图片分类使用 `classification-csv-zip`，站点日能耗使用 `energy-jsonl-zip`。现有原生 LS 成果继续沿用其源格式导出链路。
 
 ## 接入一个新插件
+
+先检查是否能用现有图像/时序模板和输入映射完成；新增行业、标签集或阈值规则不直接等于新增插件。以下步骤仅用于确实需要扩展通用能力的情况。
 
 1. 在后端增加一个 `TaskPlugin` 实现，声明完整描述与能力状态；以 `@Component` 或 `@Bean` 注册。尚未具备的能力应明确为 false。
 2. 实现自己的解析、输入、结果/完成校验和导出；不要增加到平台服务里的任务类型 `if/switch`。
