@@ -1780,7 +1780,8 @@ class ImportIntegrationTest {
                                 revisions.stream().map(x -> x.get("sampleId")).toList()),
                         201);
         var pluginFormats=resultGet("/final-snapshots/"+finalSnapshot.path("finalSnapshotId").asText()+"/plugin-export-formats","owner",200);
-        assertEquals("energy-jsonl-zip",pluginFormats.path("formats").get(0).path("name").asText());
+        assertTrue(pluginFormats.path("formats").toString().contains("energy-jsonl-zip"));
+        assertTrue(pluginFormats.path("formats").toString().contains("JSON_MIN"));
         resultGet("/final-snapshots/"+finalSnapshot.path("finalSnapshotId").asText()+"/plugin-export-formats","other",404);
         var export =
                 taskPost(
