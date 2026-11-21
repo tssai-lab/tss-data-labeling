@@ -8,6 +8,8 @@
 
 CI 下载锁定 wheels，在独立环境执行源码运行检查，运行 Maven verify，再生成 `target/labeling-release.tar.gz`。包内包含 JAR、Python 源码、原版模板资源、wheelhouse、哈希锁、运行检查和清单。清单绑定本次 Git 提交及逐文件摘要。再次解包、离线安装并验证后才上传；原始 ZIP、图片、数据库和已有结果不在发布包内。
 
+上传与远端部署在 Actions 中分为两个步骤。上传前检查 SSH 和磁盘空间，记录包大小；发布包每次限时 300 秒、校验工具每次 60 秒，失败最多尝试两次，保留详细 SCP 日志。SSH 使用 20 秒连接超时与 15 秒保活，连续三次无回应断开。远端依次记录锁等待、解包、离线依赖、运行检查、备份、切换、重启和就绪检查。整个 deploy 作业仍限时 25 分钟；单看 SSH 算法警告不能判断失败原因，应结合步骤与最后阶段日志定位。
+
 ## 部署前置条件
 
 目标须为 Linux x86_64，提供 Python3.11（含 venv）、psql、systemd、curl，以及兼容的 pg_dump。支持系统 Python 或 `/opt/tss-labeling-service/runtimes/python3.11/bin/python3.11` 的私有 Python。备份前先查询数据库主版本；优先匹配宿主客户端，版本太旧时仅允许使用端口映射与标注库一致的 `tss-labeling-postgres` 容器客户端。远程数据库或端口不匹配时拒绝容器回退。wheelhouse 使用 manylinux wheels，须满足其系统 ABI。服务仍为 `tss-labeling.service`，JAR 入口 `/opt/tss-labeling-service/tss-labeling-service.jar`，现有健康端口8083。服务必须通过环境变量声明实际 PostgreSQL JDBC URL，迁移账号具备 labeling schema 的备份权限。单独的 Flyway 与应用数据库配置会被拒绝，须先明确备份范围。

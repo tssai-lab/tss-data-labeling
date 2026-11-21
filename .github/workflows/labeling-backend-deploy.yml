@@ -104,6 +104,10 @@ jobs:
             IdentitiesOnly yes
             BatchMode yes
             StrictHostKeyChecking yes
+            ConnectTimeout 20
+            ConnectionAttempts 2
+            ServerAliveInterval 15
+            ServerAliveCountMax 3
           EOF
       - name: 确认部署版本仍是分支最新提交
         shell: bash
@@ -111,7 +115,7 @@ jobs:
           set -Eeuo pipefail
           current_sha="$(git ls-remote origin "refs/heads/$GITHUB_REF_NAME" | cut -f1)"
           test "$current_sha" = "$GITHUB_SHA"
-      - name: 上传并部署标注服务
+      - name: 上传标注服务发布包
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -119,9 +123,34 @@ jobs:
           test -s "$artifact"
           remote_bundle="/var/tmp/tss-labeling-${GITHUB_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.tar.gz"
           remote_tool="${remote_bundle%.tar.gz}-tool.py"
+          echo "发布包大小：$(stat -c %s "$artifact") 字节，提交：$GITHUB_SHA"
+          echo '检查 SSH 连接和服务器磁盘空间'
+          timeout --kill-after=10s 60s ssh labeling-target 'df -h /var/tmp /opt/tss-labeling-service'
+          upload_file() {
+            local source=$1 destination=$2 duration=$3 status
+            for attempt in 1 2; do
+              echo "开始上传 $(basename "$source")，第 $attempt/2 次，单次限时 $duration"
+              if timeout --kill-after=10s "$duration" scp -v "$source" "labeling-target:$destination"; then
+                echo "上传完成：$(basename "$source")"
+                return 0
+              else
+                status=$?
+                echo "::warning::上传失败，退出码 $status（124 表示超时）"
+              fi
+            done
+            return "$status"
+          }
+          upload_file "$artifact" "$remote_bundle" 300s
+          upload_file labeling-service/scripts/release_bundle.py "$remote_tool" 60s
+      - name: 校验并部署标注服务
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          artifact=labeling-service/target/labeling-release.tar.gz
+          remote_bundle="/var/tmp/tss-labeling-${GITHUB_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.tar.gz"
+          remote_tool="${remote_bundle%.tar.gz}-tool.py"
           digest="$(sha256sum "$artifact" | cut -d ' ' -f1)"
-          scp "$artifact" "labeling-target:$remote_bundle"
-          scp labeling-service/scripts/release_bundle.py "labeling-target:$remote_tool"
+          echo "上传已完成，开始远端校验和部署：$GITHUB_SHA"
           ssh labeling-target bash -s -- "$remote_bundle" "$digest" "$GITHUB_SHA" "$remote_tool" \
             < labeling-service/deploy-release.sh
           echo "已部署标注后端提交：$GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
