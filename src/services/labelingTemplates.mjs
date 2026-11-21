@@ -115,6 +115,14 @@ const registry = createTaskPluginRegistry([
 export const taskTemplates = registry.templates;
 export const resolveTaskTemplate = registry.resolve;
 
+export function taskTypeFilterKey(taskType) {
+  if (taskType === "COMPUTER_VISION" || taskType === "IMAGE_CLASSIFICATION")
+    return "COMPUTER_VISION";
+  if (taskType === "TIME_SERIES" || taskType === "TIMESERIES_ANNOTATION")
+    return "TIME_SERIES";
+  return taskType;
+}
+
 export function availableTaskPlugins(catalogue) {
   return catalogue.map((registered) => {
     let installed = false;

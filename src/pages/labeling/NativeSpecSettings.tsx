@@ -194,7 +194,7 @@ function NativeConfigurationSettings({
   const selected =
     samples.find((sample) => sample.sampleId === sampleId) || samples[0];
   return (
-    <Card title="标注设置" className={styles.specSettings}>
+    <Card className={styles.specSettings}>
       <Space direction="vertical" size="large" style={{ width: '100%' }}>
         {locked ? (
           <Alert

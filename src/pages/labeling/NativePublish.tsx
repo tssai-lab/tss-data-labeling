@@ -127,9 +127,7 @@ export default function NativePublish({
       <div className={ui.aiConsole}>
         <header className={ui.aiPageHeader}>
           <div>
-            <span>发布本轮任务 / AI 标注</span>
-            <h2>配置 AI 标注</h2>
-            <p>{project.name} · 规范 v{version?.versionNo} · 已选 {selectedSamples.length} 个样本</p>
+            <span>AI 标注 · 规范 v{version?.versionNo} · 已选 {selectedSamples.length} 个样本</span>
           </div>
           <Button onClick={() => setAiPage(false)}>返回选择范围</Button>
         </header>
@@ -145,7 +143,7 @@ export default function NativePublish({
     );
   }
   return (
-    <Card title="发布本轮任务">
+    <Card>
       <Space direction="vertical" size="middle" style={{ width: '100%' }}>
         {!version && <Alert type="warning" message="请先保存标注设置。" />}
         {publishedPlan && (
