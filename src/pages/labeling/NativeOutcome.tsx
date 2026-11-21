@@ -89,7 +89,6 @@ export default function NativeOutcome({
       review.status === 'ACCEPTED',
   );
   const pending = jobs.some((job) => job.status === 'QUEUED');
-  const readyFiles = jobs.filter((job) => job.status === 'READY').length;
   useEffect(() => {
     if (!selected) {
       setFormats([]);
@@ -129,32 +128,6 @@ export default function NativeOutcome({
   }, [pending]);
   return (
     <div className={styles.workspace}>
-      <section className={styles.hero} aria-label="成果交付进度">
-        <div className={styles.deliveryPath}>
-          <span className={styles.heroStatus}>
-            {selectedSnapshot ? '已选成果版本' : '等待保存成果版本'}
-          </span>
-          <div>
-            <small>核查通过 · 当前规范</small>
-            <strong>{confirmed.length}<em>个样本</em></strong>
-          </div>
-          <span className={styles.pathArrow} aria-hidden="true">→</span>
-          <div>
-            <small>已保存成果版本</small>
-            <strong>{snapshots.length}<em>个版本</em></strong>
-          </div>
-          <span className={styles.pathArrow} aria-hidden="true">→</span>
-          <div>
-            <small>所选成果可下载文件</small>
-            <strong>{readyFiles}<em>个文件</em></strong>
-          </div>
-        </div>
-        <div className={styles.heroFoot}>
-          <span>标注规范：第 {version?.versionNo || '—'} 版</span>
-          <span>当前成果：{selectedSnapshot ? displaySnapshotName(selectedSnapshot) : '尚未选择'}</span>
-          {selectedSnapshot && <span>包含 {selectedSnapshot.sampleCount || 0} 个样本</span>}
-        </div>
-      </section>
       <div className={styles.columns}>
       <Card className={styles.panel} title="固定成果版本">
         <Typography.Paragraph>
@@ -177,6 +150,7 @@ export default function NativeOutcome({
           <label className={styles.nameField}>
             <span>成果版本名称</span>
             <Input
+              className={styles.snapshotNameInput}
               placeholder="例如：第一批质检结果"
               value={name}
               maxLength={120}
@@ -319,6 +293,35 @@ export default function NativeOutcome({
                     setRenameId(row.finalSnapshotId);
                     setRenameName(row.name === '确认成果' ? '' : row.name || '');
                   }}>改名</Button>
+                  <Button
+                    danger
+                    disabled={project.status === 'COMPLETED'}
+                    onClick={() =>
+                      Modal.confirm({
+                        title: '删除成果版本？',
+                        content: '删除后无法恢复；已有导出记录的成果版本不能删除。',
+                        okText: '删除',
+                        cancelText: '取消',
+                        okButtonProps: { danger: true },
+                        onOk: () =>
+                          run(async () => {
+                            await labelingJson(`/final-snapshots/${row.finalSnapshotId}`, {
+                              method: 'DELETE',
+                            });
+                            if (selected === row.finalSnapshotId) {
+                              setSnapshotId(
+                                orderedSnapshots.find(
+                                  (snapshot) => snapshot.finalSnapshotId !== row.finalSnapshotId,
+                                )?.finalSnapshotId || '',
+                              );
+                            }
+                            refresh();
+                          }),
+                      })
+                    }
+                  >
+                    删除
+                  </Button>
                 </Space>
               ),
             },
