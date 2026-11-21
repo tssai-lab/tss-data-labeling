@@ -75,6 +75,13 @@ public class OutcomeController {
         return response(outcomes.renameFinalSnapshot(actor(auth), finalSnapshotId, body.name(), key), req);
     }
 
+    @DeleteMapping("/final-snapshots/{finalSnapshotId}")
+    public ApiResponse<JsonNode> deleteFinalSnapshot(
+            @RequestHeader(value = "Authorization", required = false) String auth,
+            @PathVariable UUID finalSnapshotId, HttpServletRequest req) {
+        return response(outcomes.deleteFinalSnapshot(actor(auth), finalSnapshotId), req);
+    }
+
     @GetMapping("/projects/{projectId}/final-snapshots")
     public ApiResponse<JsonNode> finalSnapshots(@RequestHeader(value = "Authorization", required = false) String auth,
             @PathVariable UUID projectId, @RequestParam(defaultValue = "20") int limit,

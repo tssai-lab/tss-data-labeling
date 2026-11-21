@@ -296,6 +296,32 @@ VALUES (?,?,?,?,?,'REPUBLISHED',?,?,?,?,?,?)
     }
 
     @Transactional
+    public JsonNode deleteFinalSnapshot(ActorContext actor, UUID id) {
+        enabled(actor.actorId());
+        UUID project = (UUID) one(
+                "SELECT s.project_id FROM final_snapshot s JOIN project p ON p.id=s.project_id"
+                        + " WHERE s.id=? AND p.owner_actor_id=? AND p.deleted_at IS NULL",
+                id, actor.actorId()).get("project_id");
+        lockOwner(actor, project);
+        mutable(project);
+        one("SELECT id FROM final_snapshot WHERE id=? AND project_id=? FOR UPDATE", id, project);
+        boolean isCompletedSnapshot = Boolean.TRUE.equals(db.queryForObject(
+                "SELECT EXISTS(SELECT 1 FROM project WHERE completed_snapshot_id=?)",
+                Boolean.class, id));
+        if (isCompletedSnapshot)
+            throw error(409, "SNAPSHOT_IN_USE", "项目完成时固定的成果版本不能删除");
+        boolean hasExports = Boolean.TRUE.equals(db.queryForObject(
+                "SELECT EXISTS(SELECT 1 FROM source_export_job WHERE snapshot_id=?)"
+                        + " OR EXISTS(SELECT 1 FROM export_job WHERE jsonb_exists(snapshot_ids, ?))",
+                Boolean.class, id, id.toString()));
+        if (hasExports)
+            throw error(409, "SNAPSHOT_HAS_EXPORTS", "已有导出记录的成果版本不能删除");
+        db.update("DELETE FROM final_snapshot_item WHERE snapshot_id=? AND project_id=?", id, project);
+        db.update("DELETE FROM final_snapshot WHERE id=? AND project_id=?", id, project);
+        return json.valueToTree(Map.of("finalSnapshotId", id, "deleted", true));
+    }
+
+    @Transactional
     public JsonNode finalSnapshots(ActorContext actor, UUID project, int limit, String cursor) {
         owner(actor, project);
         if (limit < 1 || limit > 100) throw error(400,"INVALID_REQUEST","分页大小应为1至100");
