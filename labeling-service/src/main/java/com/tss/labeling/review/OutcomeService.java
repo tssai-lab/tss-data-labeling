@@ -214,6 +214,23 @@ VALUES (?,?,?,?,?,?,?,?::jsonb,?,?,?,?)
                     sample.get("source_path"), sample.get("content_sha256"),
                     resultId);
         }
+        UUID duplicate = db.query("""
+SELECT previous.id FROM final_snapshot previous
+WHERE previous.project_id=? AND previous.id<>? AND previous.scope_hash=?
+  AND (SELECT count(*) FROM final_snapshot_item WHERE snapshot_id=previous.id)=?
+  AND NOT EXISTS (
+    SELECT 1 FROM final_snapshot_item current_item
+    LEFT JOIN final_snapshot_item previous_item
+      ON previous_item.snapshot_id=previous.id AND previous_item.sample_id=current_item.sample_id
+    WHERE current_item.snapshot_id=? AND
+      (previous_item.sample_id IS NULL OR previous_item.spec_version_id<>current_item.spec_version_id
+       OR previous_item.result<>current_item.result)
+  )
+LIMIT 1
+""", rs -> rs.next() ? rs.getObject(1, UUID.class) : null,
+                project, snapshotId, hash(write(bindings)), ids.size(), snapshotId);
+        if (duplicate != null)
+            throw error(409, "DUPLICATE_FINAL_SNAPSHOT", "相同标注内容的成果版本已存在，请修改已有版本名称");
         JsonNode response = finalSnapshotView(snapshotId);
         remember(actor.actorId(), op, key, hash, snapshotId, response);
         return response;
@@ -261,6 +278,21 @@ VALUES (?,?,?,?,?,'REPUBLISHED',?,?,?,?,?,?)
                             + " p.id=s.project_id WHERE s.id=?", id);
         if (!actor.actorId().equals(s.get("owner_actor_id"))) throw error(404,"RESOURCE_NOT_FOUND","资源不存在");
         return finalSnapshotView(id);
+    }
+
+    @Transactional
+    public JsonNode renameFinalSnapshot(ActorContext actor, UUID id, String name, String key) {
+        UUID project = (UUID) one("SELECT project_id FROM final_snapshot WHERE id=?", id).get("project_id");
+        lockOwner(actor, project);
+        String op = "PATCH:/final-snapshots/" + id, requestHash = hash(write(name));
+        JsonNode previous = replay(actor.actorId(), op, key, requestHash);
+        if (previous != null) return previous;
+        if (name == null || name.isBlank() || name.trim().length() > 120)
+            throw error(422, "INVALID_REQUEST", "成果名称应为1至120个字符");
+        db.update("UPDATE final_snapshot SET name=? WHERE id=?", name.trim(), id);
+        JsonNode response = finalSnapshotView(id);
+        remember(actor.actorId(), op, key, requestHash, id, response);
+        return response;
     }
 
     @Transactional

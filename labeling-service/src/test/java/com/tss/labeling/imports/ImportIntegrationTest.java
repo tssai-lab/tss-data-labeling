@@ -2346,11 +2346,31 @@ class ImportIntegrationTest {
                         .path("finalSnapshotId")
                         .asText());
         taskPost(
-                "/projects/" + f.project + "/reviews",
+                "/projects/" + f.project + "/final-snapshots",
                 "owner",
                 UUID.randomUUID().toString(),
-                Map.of("specVersionId", f.spec, "action", "ACCEPT", "items", exact(sub, 1)),
-                200);
+                Map.of("name", "same content with another name", "specVersionId", f.spec, "sampleIds", ids),
+                409);
+        mvc.perform(patch(API + "/final-snapshots/" + snapshots.get(0))
+                        .header("Authorization", "Bearer owner")
+                        .header("Idempotency-Key", UUID.randomUUID().toString())
+                        .contentType("application/json")
+                        .content(json.writeValueAsString(Map.of("name", "renamed"))))
+                .andExpect(status().isOk());
+        assertEquals("renamed", resultGet("/final-snapshots/" + snapshots.get(0), "owner", 200).path("name").asText());
+        mvc.perform(patch(API + "/final-snapshots/" + snapshots.get(0))
+                        .header("Authorization", "Bearer other")
+                        .header("Idempotency-Key", UUID.randomUUID().toString())
+                        .contentType("application/json")
+                        .content(json.writeValueAsString(Map.of("name", "forbidden"))))
+                .andExpect(status().isNotFound());
+        mvc.perform(put(API + "/submissions/" + sub.path("submissionId").asText() + "/review/items")
+                        .header("Authorization", "Bearer owner")
+                        .header("Idempotency-Key", UUID.randomUUID().toString())
+                        .contentType("application/json")
+                        .content(json.writeValueAsString(Map.of("items", java.util.List.of(
+                                Map.of("sampleId", ids.get(0), "action", "MODIFY", "result", Map.of("labelId", "other"), "reason", "修正"))))))
+                .andExpect(status().isOk());
         snapshots.add(
                 taskPost(
                                 "/projects/" + f.project + "/final-snapshots",
