@@ -55,4 +55,13 @@ class TaskPluginRegistryTest {
         for(String type:List.of("IMAGE_CLASSIFICATION","TIMESERIES_ANNOTATION","COMPUTER_VISION","TIME_SERIES"))
             assertEquals(TaskTemplates.digest(type),BuiltInPlugins.descriptor(type,"显示名不改变契约").digest());
     }
+    @Test void creationCatalogueUsesGenericFamiliesAndRetainsHistoricalBindings() {
+        var types=List.of("IMAGE_CLASSIFICATION","TIMESERIES_ANNOTATION","COMPUTER_VISION","TIME_SERIES");
+        var registry=new TaskPluginRegistry(types.stream().map(type->plugin(BuiltInPlugins.descriptor(type,type))).toList());
+        assertEquals(4,registry.templates().size());
+        var available=registry.templates().stream().filter(item->Boolean.TRUE.equals(item.get("creationAvailable"))).toList();
+        assertEquals(Set.of("COMPUTER_VISION","TIME_SERIES"),available.stream().map(item->item.get("taskType")).collect(java.util.stream.Collectors.toSet()));
+        assertEquals("image-classification-v1",registry.resolve("IMAGE_CLASSIFICATION","image-classification","1.0.0").descriptor().resultFormat());
+        assertEquals("annotation-record-v1",registry.resolve("TIMESERIES_ANNOTATION","energy-station-day","1.0.0").descriptor().resultFormat());
+    }
 }
