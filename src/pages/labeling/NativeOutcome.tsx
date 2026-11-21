@@ -27,12 +27,25 @@ import { formatDisplayDateTime } from '@/utils/formatDateTime';
 import OutcomeDetails from './OutcomeDetails';
 import { isLegacyProjectSpec } from '@/services/projectCompatibility.mjs';
 import { fileSizeName, sampleName } from './resultDisplay';
+import styles from './outcome.less';
+
+function displaySnapshotName(snapshot: {
+  name?: string;
+  createdAt?: string;
+  finalSnapshotId?: string;
+}): string {
+  const name = snapshot.name?.trim();
+  if (name && name !== '确认成果') return name;
+  const createdAt = formatDisplayDateTime(snapshot.createdAt);
+  return `成果版本 · ${createdAt !== '-' ? createdAt : snapshot.finalSnapshotId?.slice(0, 8) || '未命名'}`;
+}
 
 export default function NativeOutcome({
   project,
   version,
   reviews,
   snapshots,
+  onVersionChange,
   run,
   refresh,
   busy,
@@ -41,18 +54,25 @@ export default function NativeOutcome({
   version?: NativeSpec;
   reviews: any[];
   snapshots: any[];
+  onVersionChange: (id: string) => void;
   run: (action: () => Promise<void>) => Promise<void>;
   refresh: () => void;
   busy: boolean;
 }) {
-  const [name, setName] = useState('确认成果'),
+  const [name, setName] = useState(''),
+    [renameId, setRenameId] = useState(''),
+    [renameName, setRenameName] = useState(''),
     [snapshotId, setSnapshotId] = useState(''),
     [formats, setFormats] = useState<any[]>([]),
     [format, setFormat] = useState('JSON'),
     [jobs, setJobs] = useState<any[]>([]),
     [reload, setReload] = useState(0),
     [error, setError] = useState('');
-  const selected = snapshotId || snapshots[0]?.finalSnapshotId;
+  const orderedSnapshots = [...snapshots].sort((a, b) =>
+    String(b.createdAt || '').localeCompare(String(a.createdAt || '')) ||
+    String(b.finalSnapshotId).localeCompare(String(a.finalSnapshotId)),
+  );
+  const selected = snapshotId || orderedSnapshots[0]?.finalSnapshotId;
   const selectedSnapshot = snapshots.find((snapshot) => snapshot.finalSnapshotId === selected);
   const selectedSpec = project.specVersions.find((spec) => spec.specVersionId === selectedSnapshot?.specVersionId);
   const pluginExport = selectedSpec ? isLegacyProjectSpec(selectedSpec, project.taskType)
@@ -67,6 +87,7 @@ export default function NativeOutcome({
       review.status === 'ACCEPTED',
   );
   const pending = jobs.some((job) => job.status === 'QUEUED');
+  const readyFiles = jobs.filter((job) => job.status === 'READY').length;
   useEffect(() => {
     if (!selected) {
       setFormats([]);
@@ -105,23 +126,70 @@ export default function NativeOutcome({
     return () => clearInterval(timer);
   }, [pending]);
   return (
-    <Space direction="vertical" size="large" style={{ width: '100%' }}>
-      <Card title="确认成果与项目完成">
+    <div className={styles.workspace}>
+      <section className={styles.hero} aria-label="成果交付进度">
+        <div className={styles.heroHeading}>
+          <div>
+            <span className={styles.eyebrow}>RESULTS / DELIVERY</span>
+            <h2>把核查结果，固定为可交付成果</h2>
+            <p>确认样本范围，保存成果版本，再生成导出文件。</p>
+          </div>
+          <span className={styles.heroStatus}>
+            {selectedSnapshot ? '已选成果版本' : '等待保存成果版本'}
+          </span>
+        </div>
+        <div className={styles.deliveryPath}>
+          <div>
+            <small>核查通过 · 当前规范</small>
+            <strong>{confirmed.length}<em>个样本</em></strong>
+          </div>
+          <span className={styles.pathArrow} aria-hidden="true">→</span>
+          <div>
+            <small>已保存成果版本</small>
+            <strong>{snapshots.length}<em>个版本</em></strong>
+          </div>
+          <span className={styles.pathArrow} aria-hidden="true">→</span>
+          <div>
+            <small>所选成果可下载文件</small>
+            <strong>{readyFiles}<em>个文件</em></strong>
+          </div>
+        </div>
+        <div className={styles.heroFoot}>
+          <span>当前规范：第 {version?.versionNo || '—'} 版</span>
+          <span>所选成果：{selectedSnapshot ? displaySnapshotName(selectedSnapshot) : '尚未选择'}</span>
+          {selectedSnapshot && <span>包含 {selectedSnapshot.sampleCount || 0} 个样本</span>}
+        </div>
+      </section>
+      <div className={styles.columns}>
+      <Card className={styles.panel} title="固定成果版本">
         <Typography.Paragraph>
-          将已确认结果保存为成果版本，即可导出。完成项目后只读。
+          选择标注规范版本，保存该版本中已确认的样本。相同样本和标注内容只保存一份成果，已有成果可直接改名。
         </Typography.Paragraph>
-        <p>
-          当前选择规范：{version?.versionNo || '—'} · 已确认 {confirmed.length}{' '}
-          个样本
-        </p>
-        <Space wrap>
-          <Input
-            aria-label="成果名称"
-            value={name}
-            maxLength={120}
-            onChange={(e) => setName(e.target.value)}
+        <label className={styles.nameField}>
+          <span>标注规范版本</span>
+          <Select
+            aria-label="选择标注规范版本"
+            className={styles.specSelect}
+            value={version?.specVersionId}
+            onChange={onVersionChange}
+            options={project.specVersions.map((spec) => ({
+              value: spec.specVersionId,
+              label: `第 ${spec.versionNo} 版 · ${reviews.filter((review) => review.specVersionId === spec.specVersionId && review.status === 'ACCEPTED').length} 个已确认样本`,
+            }))}
           />
+        </label>
+        <Space wrap className={styles.actionRow}>
+          <label className={styles.nameField}>
+            <span>成果版本名称</span>
+            <Input
+              placeholder="例如：第一批质检结果"
+              value={name}
+              maxLength={120}
+              onChange={(e) => setName(e.target.value)}
+            />
+          </label>
           <Button
+            type="primary"
             disabled={
               project.status === 'COMPLETED' ||
               !confirmed.length ||
@@ -148,6 +216,7 @@ export default function NativeOutcome({
             保存成果版本
           </Button>
         </Space>
+        <p className={styles.fieldHelp}>结果内容相同的成果不能重复保存。如需调整名称，请使用列表中的“改名”。</p>
         <details style={{ marginTop: 16 }}>
           <summary>汇总不同规范的成果</summary>
           <Typography.Paragraph type="secondary">
@@ -221,10 +290,13 @@ export default function NativeOutcome({
         <Table
           rowKey="finalSnapshotId"
           size="small"
-          dataSource={snapshots}
+          dataSource={orderedSnapshots}
+          scroll={{ x: 690 }}
+          pagination={{ pageSize: 5, showSizeChanger: false }}
           style={{ marginTop: 16 }}
+          rowClassName={(row) => row.finalSnapshotId === selected ? styles.selectedRow : ''}
           columns={[
-            { title: '成果版本', dataIndex: 'name' },
+            { title: '成果版本', render: (_, row) => displaySnapshotName(row) },
             { title: '样本数', dataIndex: 'sampleCount' },
             {
               title: '规范范围',
@@ -241,15 +313,48 @@ export default function NativeOutcome({
             {
               title: '操作',
               render: (_, row) => (
-                <Button onClick={() => setSnapshotId(row.finalSnapshotId)}>
-                  选择此成果
-                </Button>
+                <Space size={6}>
+                  <Button
+                    type={row.finalSnapshotId === selected ? 'primary' : 'default'}
+                    onClick={() => setSnapshotId(row.finalSnapshotId)}
+                  >
+                    {row.finalSnapshotId === selected ? '当前成果' : '选择成果'}
+                  </Button>
+                  <Button onClick={() => {
+                    setRenameId(row.finalSnapshotId);
+                    setRenameName(row.name === '确认成果' ? '' : row.name || '');
+                  }}>改名</Button>
+                </Space>
               ),
             },
           ]}
         />
+        <Modal
+          title="修改成果版本名称"
+          open={Boolean(renameId)}
+          okText="保存名称"
+          okButtonProps={{ disabled: !renameName.trim(), loading: busy }}
+          onCancel={() => setRenameId('')}
+          onOk={() => void run(async () => {
+            await labelingJson(`/final-snapshots/${renameId}`, {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json', 'Idempotency-Key': operationKey() },
+              body: JSON.stringify({ name: renameName.trim() }),
+            });
+            setRenameId('');
+            refresh();
+          })}
+        >
+          <Input
+            aria-label="新的成果版本名称"
+            value={renameName}
+            maxLength={120}
+            placeholder="输入新的成果版本名称"
+            onChange={(event) => setRenameName(event.target.value)}
+          />
+        </Modal>
         <Button
-          type="primary"
+          className={styles.completeButton}
           disabled={!selected || project.status === 'COMPLETED'}
           loading={busy}
           onClick={() =>
@@ -275,24 +380,23 @@ export default function NativeOutcome({
           完成项目
         </Button>
       </Card>
-      <Card title="成果导出">
+      <Card className={styles.panel} title="生成交付文件">
         {error && <Alert type="error" message={error} />}
         {!selected ? (
           <Alert message="请先保存成果版本。" />
         ) : (
           <>
-            <p>
-              所选成果：
-              {snapshots.find(
-                (snapshot) => snapshot.finalSnapshotId === selected,
-              )?.name || selected}
-            </p>
+            <div className={styles.selectedSnapshot}>
+              <span>当前导出范围</span>
+              <strong>{selectedSnapshot ? displaySnapshotName(selectedSnapshot) : selected}</strong>
+              <small>{selectedSnapshot?.sampleCount || 0} 个样本 · 固定成果版本</small>
+            </div>
             <OutcomeDetails
               key={selected}
               snapshotId={selected}
               versions={project.specVersions}
             />
-            <Space wrap>
+            <Space wrap className={styles.actionRow}>
               <Select
                 aria-label="导出格式"
                 style={{ minWidth: 280 }}
@@ -317,6 +421,7 @@ export default function NativeOutcome({
                 }))}
               />
               <Button
+                type="primary"
                 loading={busy}
                 disabled={
                   !formats.some((item) => item.name === format && item.enabled)
@@ -342,6 +447,7 @@ export default function NativeOutcome({
               rowKey="exportId"
               size="small"
               dataSource={jobs}
+              pagination={{ pageSize: 5, showSizeChanger: false }}
               scroll={{ x: 650 }}
               columns={[
                 {
@@ -358,7 +464,7 @@ export default function NativeOutcome({
                 {
                   title: '状态',
                   render: (_, row) => (
-                    <Tag>
+                    <Tag color={row.status === 'READY' ? 'success' : row.status === 'QUEUED' ? 'processing' : 'error'}>
                       {row.status === 'QUEUED'
                         ? '排队／生成中'
                         : row.status === 'EXPIRED'
@@ -400,6 +506,7 @@ export default function NativeOutcome({
           </>
         )}
       </Card>
-    </Space>
+      </div>
+    </div>
   );
 }

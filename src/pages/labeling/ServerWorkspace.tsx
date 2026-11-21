@@ -697,6 +697,7 @@ export default function ServerWorkspace() {
               <NativeOutcome
                 project={current}
                 version={version}
+                onVersionChange={setSpecId}
                 reviews={reviews}
                 snapshots={snapshots}
                 run={run}
