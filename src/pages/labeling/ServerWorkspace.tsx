@@ -1,6 +1,5 @@
-import { history, Link, useLocation, useParams } from '@umijs/max';
 import { PlusOutlined } from '@ant-design/icons';
-import dayjs, { type Dayjs } from 'dayjs';
+import { history, Link, useLocation, useParams } from '@umijs/max';
 import {
   Alert,
   App,
@@ -19,6 +18,7 @@ import {
   Tag,
   Typography,
 } from 'antd';
+import dayjs, { type Dayjs } from 'dayjs';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   describeLabelingError,
@@ -27,31 +27,85 @@ import {
   type Project,
   post,
 } from '@/services/labeling';
+import { type LiveExecution, ownerApi } from '@/services/labelingOwner';
+import {
+  availableProjectTypes,
+  type ProjectTaskType,
+  type RegisteredTaskPlugin,
+  taskTypeFilterKey,
+} from '@/services/labelingTemplates.mjs';
 import {
   collectPages,
   type InputResource,
   type NativeProject,
   type NativeSample,
 } from '@/services/nativeLabeling';
-import { formatDisplayDateTime } from '@/utils/formatDateTime';
-import { normalizeWorkspaceProject, projectPanel } from '@/services/projectCompatibility.mjs';
 import {
-  availableProjectTypes,
-  taskTypeFilterKey,
-  type ProjectTaskType,
-  type RegisteredTaskPlugin,
-} from '@/services/labelingTemplates.mjs';
+  normalizeWorkspaceProject,
+  projectPanel,
+} from '@/services/projectCompatibility.mjs';
+import { formatDisplayDateTime } from '@/utils/formatDateTime';
 import styles from './index.less';
+import NativeAi, { type DemoResult } from './NativeAi';
 import NativeDataPreparation from './NativeDataPreparation';
 import NativeOutcome from './NativeOutcome';
 import NativePublish, { type ReworkScope } from './NativePublish';
 import NativeReview from './NativeReview';
-import NativeAi, { type DemoResult } from './NativeAi';
 import NativeSpecSettings from './NativeSpecSettings';
+import ProjectBreadcrumbs from './ProjectBreadcrumbs';
+import ProjectManagement from './ProjectManagement';
 import StatusBadge from './StatusBadge';
 import WorkspaceLayout from './WorkspaceLayout';
-import ProjectManagement from './ProjectManagement';
-import ProjectBreadcrumbs from './ProjectBreadcrumbs';
+
+type PrelabelOutput = {
+  sampleId: string;
+  status: string;
+  result: { result?: { value?: Record<string, unknown> }[] } | null;
+  confidence: number | null;
+  errorMessage?: string;
+  errorCode?: string;
+  reviewable: boolean;
+};
+
+type PrelabelReceipt = {
+  executionId: string;
+  specVersionId: string;
+  sampleIds: string[];
+  config: { modelId: string; instructions: string };
+};
+
+const receiptKey = (projectId: string) => `labeling-prelabel:${projectId}`;
+
+const finishedExecutions = new Set([
+  'SUCCEEDED',
+  'PARTIAL',
+  'FAILED',
+  'CANCELLED',
+]);
+
+function candidateLabel(output: PrelabelOutput) {
+  const names = (output.result?.result || []).flatMap(({ value }) =>
+    Object.entries(value || {}).flatMap(([key, entries]) => {
+      if (
+        !(key === 'choices' || key.endsWith('labels')) ||
+        !Array.isArray(entries)
+      )
+        return [];
+      return entries
+        .filter((entry): entry is string => typeof entry === 'string')
+        .map((label) => {
+          if (
+            key === 'timeserieslabels' &&
+            typeof value?.start === 'number' &&
+            typeof value.end === 'number'
+          )
+            return `${label}（${value.start}–${value.end}）`;
+          return label;
+        });
+    }),
+  );
+  return [...new Set(names)].join('、') || '未生成标注区域';
+}
 
 const statusName: Record<string, string> = {
   DRAFT: '草稿',
@@ -77,12 +131,21 @@ export default function ServerWorkspace() {
     [reviews, setReviews] = useState<any[]>([]),
     [submissions, setSubmissions] = useState<any[]>([]),
     [snapshots, setSnapshots] = useState<any[]>([]);
-  const [aiSession, setAiSession] = useState<{ projectId: string; samples: NativeSample[]; version: NativeProject['specVersions'][number]; config: { modelId: string; instructions: string }; results: DemoResult[] }>();
+  const [aiSession, setAiSession] = useState<{
+    projectId: string;
+    samples: NativeSample[];
+    version: NativeProject['specVersions'][number];
+    config: { modelId: string; instructions: string };
+    execution: LiveExecution;
+    results: DemoResult[];
+  }>();
   const [projectNameQuery, setProjectNameQuery] = useState('');
   const [projectDescriptionQuery, setProjectDescriptionQuery] = useState('');
   const [projectStatus, setProjectStatus] = useState('ALL');
   const [projectTaskType, setProjectTaskType] = useState('ALL');
-  const [createdAtRange, setCreatedAtRange] = useState<[Dayjs | null, Dayjs | null] | null>(null);
+  const [createdAtRange, setCreatedAtRange] = useState<
+    [Dayjs | null, Dayjs | null] | null
+  >(null);
   const [taskTypes, setTaskTypes] = useState<ProjectTaskType[]>([]);
   const [reload, setReload] = useState(0),
     [loading, setLoading] = useState(true),
@@ -136,10 +199,9 @@ export default function ServerWorkspace() {
       if (!projectId) {
         const [values, types] = await Promise.all([
           collectPages<Project>('/projects?scope=owned', abort.signal),
-          labelingJson<RegisteredTaskPlugin[]>(
-            '/task-templates',
-            { signal: abort.signal },
-          ),
+          labelingJson<RegisteredTaskPlugin[]>('/task-templates', {
+            signal: abort.signal,
+          }),
         ]);
         if (!abort.signal.aborted) {
           setProjects(values);
@@ -202,6 +264,142 @@ export default function ServerWorkspace() {
       setBusy(false);
     }
   };
+  useEffect(() => {
+    if (
+      !projectId ||
+      project?.projectId !== projectId ||
+      !samples.length ||
+      aiSession
+    )
+      return;
+    const abort = new AbortController();
+    const restoringProjectId = projectId;
+    async function restore() {
+      try {
+        const stored = sessionStorage.getItem(receiptKey(restoringProjectId));
+        if (!stored) return;
+        const receipt: PrelabelReceipt = JSON.parse(stored);
+        const version = project?.specVersions.find(
+          (item) => item.specVersionId === receipt.specVersionId,
+        );
+        if (!version) return;
+        const selected = new Set(receipt.sampleIds);
+        const chosen = samples.filter(({ sampleId }) => selected.has(sampleId));
+        const execution = await labelingJson<LiveExecution>(
+          `/ai-executions/${encodeURIComponent(receipt.executionId)}`,
+          { signal: abort.signal },
+        );
+        if (
+          abort.signal.aborted ||
+          execution.projectId !== projectId ||
+          execution.specVersionId !== version.specVersionId
+        )
+          return;
+        setAiSession(
+          (previous) =>
+            previous || {
+              projectId: restoringProjectId,
+              samples: chosen,
+              version,
+              config: receipt.config,
+              execution,
+              results: [],
+            },
+        );
+      } catch (e) {
+        if (!abort.signal.aborted) setError(describeLabelingError(e));
+      }
+    }
+    void restore();
+    return () => abort.abort();
+  }, [projectId, project, samples, aiSession]);
+
+  const activeExecutionId =
+    aiSession && aiSession.projectId === projectId
+      ? aiSession.execution.executionId
+      : undefined;
+  const activeSamples = aiSession?.samples;
+  useEffect(() => {
+    if (!activeExecutionId || !activeSamples) return;
+    const abort = new AbortController();
+    const samplesById = new Map(
+      activeSamples.map((sample) => [sample.sampleId, sample]),
+    );
+    const path = `/ai-executions/${encodeURIComponent(activeExecutionId)}`;
+    let timer: ReturnType<typeof setTimeout>;
+    async function poll() {
+      try {
+        const execution = await labelingJson<LiveExecution>(path, {
+          signal: abort.signal,
+        });
+        const records = await collectPages<PrelabelOutput>(
+          `${path}/results`,
+          abort.signal,
+        );
+        if (abort.signal.aborted) return;
+        const terminal = finishedExecutions.has(execution.status);
+        const saved = terminal
+          ? await collectPages<{
+              sampleId: string;
+              specVersionId: string;
+              executionId: string | null;
+              status: string;
+              reason?: string;
+            }>(
+              `/projects/${encodeURIComponent(execution.projectId)}/sample-reviews`,
+              abort.signal,
+            )
+          : [];
+        if (abort.signal.aborted) return;
+        const accepted = new Map(
+          saved
+            .filter(
+              (row) =>
+                row.specVersionId === execution.specVersionId &&
+                row.executionId === execution.executionId &&
+                row.status === 'ACCEPTED',
+            )
+            .map((row) => [row.sampleId, row]),
+        );
+        const results = records.flatMap<DemoResult>((output) => {
+          const sample = samplesById.get(output.sampleId);
+          if (!sample || output.status === 'PENDING') return [];
+          const succeeded = output.status === 'SUCCEEDED';
+          return [
+            {
+              sample,
+              label: succeeded ? candidateLabel(output) : '—',
+              confidence: output.confidence,
+              status: succeeded
+                ? accepted.has(output.sampleId)
+                  ? '已确认'
+                  : '待核查'
+                : '执行失败',
+              reviewable: output.reviewable,
+              reason: output.errorMessage || output.errorCode,
+            },
+          ];
+        });
+        setAiSession((session) =>
+          session && session.execution.executionId === activeExecutionId
+            ? { ...session, execution, results }
+            : session,
+        );
+        if (!terminal) timer = setTimeout(poll, 2500);
+      } catch (e) {
+        if (!abort.signal.aborted) {
+          setError(describeLabelingError(e));
+          timer = setTimeout(poll, 5000);
+        }
+      }
+    }
+    void poll();
+    return () => {
+      abort.abort();
+      clearTimeout(timer);
+    };
+  }, [activeExecutionId, activeSamples]);
+
   const current = project?.projectId === projectId ? project : undefined;
   const filteredProjects = projects.filter((value) => {
     const nameQuery = projectNameQuery.trim().toLocaleLowerCase();
@@ -210,10 +408,17 @@ export default function ServerWorkspace() {
     const [startDate, endDate] = createdAtRange || [];
     return (
       value.name.toLocaleLowerCase().includes(nameQuery) &&
-      (value.description || '').toLocaleLowerCase().includes(descriptionQuery) &&
-      (projectTaskType === 'ALL' || taskTypeFilterKey(value.taskType) === projectTaskType) &&
-      (!startDate || Boolean(createdAt?.isValid() && !createdAt.isBefore(startDate, 'day'))) &&
-      (!endDate || Boolean(createdAt?.isValid() && !createdAt.isAfter(endDate, 'day'))) &&
+      (value.description || '')
+        .toLocaleLowerCase()
+        .includes(descriptionQuery) &&
+      (projectTaskType === 'ALL' ||
+        taskTypeFilterKey(value.taskType) === projectTaskType) &&
+      (!startDate ||
+        Boolean(
+          createdAt?.isValid() && !createdAt.isBefore(startDate, 'day'),
+        )) &&
+      (!endDate ||
+        Boolean(createdAt?.isValid() && !createdAt.isAfter(endDate, 'day'))) &&
       (projectStatus === 'ALL' || value.status === projectStatus)
     );
   });
@@ -282,7 +487,11 @@ export default function ServerWorkspace() {
           <>
             <Card
               title="我创建的项目"
-              extra={<Button loading={loading} onClick={refresh}>刷新</Button>}
+              extra={
+                <Button loading={loading} onClick={refresh}>
+                  刷新
+                </Button>
+              }
             >
               <div className={styles.projectListTools}>
                 <Input
@@ -297,7 +506,9 @@ export default function ServerWorkspace() {
                   aria-label="按项目说明搜索"
                   placeholder="按项目说明搜索"
                   value={projectDescriptionQuery}
-                  onChange={(event) => setProjectDescriptionQuery(event.target.value)}
+                  onChange={(event) =>
+                    setProjectDescriptionQuery(event.target.value)
+                  }
                 />
                 <Select
                   aria-label="按任务类型筛选"
@@ -306,7 +517,11 @@ export default function ServerWorkspace() {
                   options={[
                     { value: 'ALL', label: '全部任务类型' },
                     ...Array.from(
-                      new Set(projects.map((value) => taskTypeFilterKey(value.taskType))),
+                      new Set(
+                        projects.map((value) =>
+                          taskTypeFilterKey(value.taskType),
+                        ),
+                      ),
                     ).map((value) => ({
                       value,
                       label:
@@ -338,8 +553,12 @@ export default function ServerWorkspace() {
                   ]}
                 />
               </div>
-              <Typography.Text type="secondary" className={styles.projectListCount}>
-                已加载 {projects.length} 个项目 · 当前匹配 {filteredProjects.length} 个
+              <Typography.Text
+                type="secondary"
+                className={styles.projectListCount}
+              >
+                已加载 {projects.length} 个项目 · 当前匹配{' '}
+                {filteredProjects.length} 个
               </Typography.Text>
               <Table
                 rowKey="projectId"
@@ -416,7 +635,9 @@ export default function ServerWorkspace() {
                         <Space direction="vertical" size={2}>
                           <Tag
                             color={importing ? 'processing' : undefined}
-                            className={imported ? styles.datasetImportedTag : undefined}
+                            className={
+                              imported ? styles.datasetImportedTag : undefined
+                            }
                           >
                             {importStatus}
                           </Tag>
@@ -464,12 +685,21 @@ export default function ServerWorkspace() {
               onCancel={() => setCreating(false)}
               okText="创建"
               confirmLoading={busy}
-              okButtonProps={{ disabled: !name.trim() || !taskTypes.some((plugin) => plugin.taskType === type && plugin.enabled) }}
+              okButtonProps={{
+                disabled:
+                  !name.trim() ||
+                  !taskTypes.some(
+                    (plugin) => plugin.taskType === type && plugin.enabled,
+                  ),
+              }}
               onOk={() =>
                 void run(async () => {
                   if (!name.trim()) throw Error('请输入项目名称');
-                  const selectedPlugin = taskTypes.find((plugin) => plugin.taskType === type && plugin.enabled);
-                  if (!selectedPlugin) throw Error('请选择可用的图像标注或时序标注');
+                  const selectedPlugin = taskTypes.find(
+                    (plugin) => plugin.taskType === type && plugin.enabled,
+                  );
+                  if (!selectedPlugin)
+                    throw Error('请选择可用的图像标注或时序标注');
                   const created = await post<NativeProject>(
                     '/projects',
                     {
@@ -496,14 +726,24 @@ export default function ServerWorkspace() {
                     showIcon
                     style={{ marginBottom: 16 }}
                     message="暂时没有可用的任务类型"
-                    description={taskTypes.length ? (
-                      <div>
-                        {taskTypes.map((plugin) => (
-                          <div key={plugin.key}>{plugin.name}：{plugin.unavailableReason}</div>
-                        ))}
-                      </div>
-                    ) : '未取得任务类型，请刷新重试；若仍不可用，请检查标注后端是否正常运行。'}
-                    action={<Button size="small" loading={loading} onClick={refresh}>刷新任务类型</Button>}
+                    description={
+                      taskTypes.length ? (
+                        <div>
+                          {taskTypes.map((plugin) => (
+                            <div key={plugin.key}>
+                              {plugin.name}：{plugin.unavailableReason}
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        '未取得任务类型，请刷新重试；若仍不可用，请检查标注后端是否正常运行。'
+                      )
+                    }
+                    action={
+                      <Button size="small" loading={loading} onClick={refresh}>
+                        刷新任务类型
+                      </Button>
+                    }
                   />
                 )}
                 <Form.Item label="项目名称" required>
@@ -529,7 +769,11 @@ export default function ServerWorkspace() {
                 <Form.Item
                   label="任务类型"
                   required
-                  extra={taskTypes.find((value) => value.taskType === type)?.description || '只需选择数据类型，具体标注方式在创建后的“标注设置”中配置。'}
+                  extra={
+                    taskTypes.find((value) => value.taskType === type)
+                      ?.description ||
+                    '只需选择数据类型，具体标注方式在创建后的“标注设置”中配置。'
+                  }
                 >
                   <Select
                     aria-label="任务类别"
@@ -594,7 +838,9 @@ export default function ServerWorkspace() {
                     </span>
                   ),
                 },
-                ...(publishMode === 'AI' ? [{ key: 'ai', label: 'AI 执行' }] : []),
+                ...(publishMode === 'AI'
+                  ? [{ key: 'ai', label: 'AI 执行' }]
+                  : []),
                 {
                   key: 'review',
                   label: (
@@ -669,29 +915,93 @@ export default function ServerWorkspace() {
             {aiSession?.projectId === projectId && (
               <div hidden={tab !== 'ai'}>
                 <NativeAi
-                  key={aiSession.config.modelId + aiSession.samples.map((sample) => sample.sampleId).join('|')}
+                  key={
+                    aiSession.config.modelId +
+                    aiSession.samples.map((sample) => sample.sampleId).join('|')
+                  }
                   project={current}
                   selectedSamples={aiSession.samples}
                   version={aiSession.version}
                   execution={aiSession.config}
-                  onComplete={(results) => setAiSession((session) => session ? { ...session, results } : session)}
-                  onReview={() => navigate(`/labeling/projects/${projectId}?panel=review`)}
+                  results={aiSession.results}
+                  progress={
+                    finishedExecutions.has(aiSession.execution.status)
+                      ? 100
+                      : Math.floor(
+                          (100 *
+                            (aiSession.execution.sampleCount -
+                              aiSession.execution.pendingCount)) /
+                            Math.max(aiSession.execution.sampleCount, 1),
+                        )
+                  }
+                  running={!finishedExecutions.has(aiSession.execution.status)}
+                  onReview={() =>
+                    navigate(`/labeling/projects/${projectId}?panel=review`)
+                  }
                 />
               </div>
             )}
             {tab === 'ai' && !aiSession && (
-              <Alert type="info" message="暂无 AI 执行任务，请从发布任务选择 AI 标注并完成配置。" action={<Button onClick={() => navigate(`/labeling/projects/${projectId}?panel=publish`)}>前往发布任务</Button>} />
+              <Alert
+                type="info"
+                message="暂无 AI 执行任务，请从发布任务选择 AI 标注并完成配置。"
+                action={
+                  <Button
+                    onClick={() =>
+                      navigate(`/labeling/projects/${projectId}?panel=publish`)
+                    }
+                  >
+                    前往发布任务
+                  </Button>
+                }
+              />
             )}
             {tab === 'publish' && (
               <NativePublish
                 mode={publishMode}
                 onModeChange={(mode) => {
                   setPublishMode(mode);
-                  if (mode === 'HUMAN') setAiSession(undefined);
                 }}
                 onPublishAi={(selectedSamples, selectedVersion, config) => {
-                  setAiSession({ projectId: current.projectId, samples: selectedSamples, version: selectedVersion, config, results: [] });
-                  navigate(`/labeling/projects/${projectId}?panel=ai`);
+                  void run(async () => {
+                    const execution = await post<LiveExecution>(
+                      `/projects/${encodeURIComponent(current.projectId)}/prelabel-runs`,
+                      {
+                        specVersionId: selectedVersion.specVersionId,
+                        modelId: config.modelId,
+                        instructions: config.instructions,
+                        samples: selectedSamples.map(({ sampleId }) => ({
+                          sampleId,
+                        })),
+                      },
+                      operationKey(),
+                    );
+                    setAiSession({
+                      projectId: current.projectId,
+                      samples: selectedSamples,
+                      version: selectedVersion,
+                      config,
+                      execution,
+                      results: [],
+                    });
+                    try {
+                      const receipt: PrelabelReceipt = {
+                        executionId: execution.executionId,
+                        specVersionId: selectedVersion.specVersionId,
+                        sampleIds: selectedSamples.map(
+                          ({ sampleId }) => sampleId,
+                        ),
+                        config,
+                      };
+                      sessionStorage.setItem(
+                        receiptKey(current.projectId),
+                        JSON.stringify(receipt),
+                      );
+                    } catch {
+                      // Storage may be disabled; the active run still works.
+                    }
+                    navigate(`/labeling/projects/${projectId}?panel=ai`);
+                  });
                 }}
                 initialSelection={publishSelection}
                 project={current}
@@ -708,8 +1018,51 @@ export default function ServerWorkspace() {
             )}
             {tab === 'review' && (
               <NativeReview
-                aiResults={aiSession?.projectId === projectId ? aiSession.results : undefined}
-                onAiResultsChange={(results) => setAiSession((session) => session ? { ...session, results } : session)}
+                aiResults={
+                  aiSession?.projectId === projectId
+                    ? aiSession.results
+                    : undefined
+                }
+                onAiResultsChange={async (results) => {
+                  if (!aiSession || aiSession.projectId !== current.projectId)
+                    return;
+                  const before = new Map(
+                    aiSession.results.map((row) => [
+                      row.sample.sampleId,
+                      row.status,
+                    ]),
+                  );
+                  const items = results
+                    .filter(
+                      (row) =>
+                        row.reviewable &&
+                        before.get(row.sample.sampleId) === '待核查' &&
+                        (row.status === '已确认' || row.status === '需重标'),
+                    )
+                    .map((row) => ({
+                      sampleId: row.sample.sampleId,
+                      specVersionId: aiSession.version.specVersionId,
+                      action:
+                        row.status === '已确认'
+                          ? ('ACCEPT' as const)
+                          : ('NEEDS_REVISION' as const),
+                      sourceKind: 'AI' as const,
+                      executionId: aiSession.execution.executionId,
+                      reason: row.reason,
+                    }));
+                  if (!items.length) return;
+                  await ownerApi.review(
+                    current.projectId,
+                    items,
+                    operationKey(),
+                  );
+                  setAiSession((session) =>
+                    session?.execution.executionId ===
+                    aiSession.execution.executionId
+                      ? { ...session, results }
+                      : session,
+                  );
+                }}
                 project={current}
                 submissions={submissions}
                 run={run}
