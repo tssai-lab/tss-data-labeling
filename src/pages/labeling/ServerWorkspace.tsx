@@ -353,13 +353,13 @@ export default function ServerWorkspace() {
             )
           : [];
         if (abort.signal.aborted) return;
-        const accepted = new Map(
+        const savedReviews = new Map(
           saved
             .filter(
               (row) =>
                 row.specVersionId === execution.specVersionId &&
                 row.executionId === execution.executionId &&
-                row.status === 'ACCEPTED',
+                ['ACCEPTED', 'NEEDS_REVISION'].includes(row.status),
             )
             .map((row) => [row.sampleId, row]),
         );
@@ -381,12 +381,18 @@ export default function ServerWorkspace() {
                 : undefined,
               confidence: output.confidence,
               status: succeeded
-                ? accepted.has(output.sampleId)
+                ? savedReviews.get(output.sampleId)?.status === 'ACCEPTED'
                   ? '已确认'
-                  : '待核查'
+                  : savedReviews.get(output.sampleId)?.status ===
+                      'NEEDS_REVISION'
+                    ? '需重标'
+                    : '待核查'
                 : '执行失败',
               reviewable: output.reviewable,
-              reason: output.errorMessage || output.errorCode,
+              reason:
+                savedReviews.get(output.sampleId)?.reason ||
+                output.errorMessage ||
+                output.errorCode,
             },
           ];
         });
@@ -934,17 +940,20 @@ export default function ServerWorkspace() {
                   version={aiSession.version}
                   execution={aiSession.config}
                   results={aiSession.results}
-                  progress={
-                    finishedExecutions.has(aiSession.execution.status)
-                      ? 100
-                      : Math.floor(
-                          (100 *
-                            (aiSession.execution.sampleCount -
-                              aiSession.execution.pendingCount)) /
-                            Math.max(aiSession.execution.sampleCount, 1),
-                        )
-                  }
+                  progress={Math.max(
+                    0,
+                    Math.min(
+                      100,
+                      Math.floor(
+                        (100 *
+                          (aiSession.execution.sampleCount -
+                            aiSession.execution.pendingCount)) /
+                          Math.max(aiSession.execution.sampleCount, 1),
+                      ),
+                    ),
+                  )}
                   running={!finishedExecutions.has(aiSession.execution.status)}
+                  executionStatus={aiSession.execution.status}
                   onReview={() =>
                     navigate(`/labeling/projects/${projectId}?panel=review`)
                   }
@@ -980,6 +989,7 @@ export default function ServerWorkspace() {
                         specVersionId: selectedVersion.specVersionId,
                         modelId: config.modelId,
                         instructions: config.instructions,
+                        reopenAccepted: config.reopenAccepted,
                         samples: selectedSamples.map(({ sampleId }) => ({
                           sampleId,
                         })),
@@ -1028,6 +1038,7 @@ export default function ServerWorkspace() {
             )}
             {tab === 'review' && (
               <NativeReview
+                samples={samples}
                 aiResults={
                   aiSession?.projectId === projectId
                     ? aiSession.results
@@ -1072,6 +1083,7 @@ export default function ServerWorkspace() {
                       ? { ...session, results }
                       : session,
                   );
+                  refresh();
                 }}
                 project={current}
                 submissions={submissions}

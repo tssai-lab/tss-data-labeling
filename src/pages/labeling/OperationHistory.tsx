@@ -3,8 +3,13 @@ import { Alert, Button, Table, Typography } from 'antd';
 import { useEffect, useState } from 'react';
 import { describeLabelingError } from '@/services/labeling';
 import { type OperationReceipt, ownerApi } from '@/services/labelingOwner';
+import { formatDisplayDateTime } from '@/utils/formatDateTime';
 
-export default function OperationHistory({ global = false }: { global?: boolean }) {
+export default function OperationHistory({
+  global = false,
+}: {
+  global?: boolean;
+}) {
   const [rows, setRows] = useState<OperationReceipt[]>([]),
     [cursor, setCursor] = useState<string | null>(null);
   const [error, setError] = useState(''),
@@ -56,8 +61,13 @@ export default function OperationHistory({ global = false }: { global?: boolean 
                 {
                   title: '操作人',
                   render: (_: unknown, r: OperationReceipt) => (
-                    <span title={`账号：${r.identityUserId || '未知'}；身份编号：${r.actorId || '未知'}`}>
-                      {r.actorName || r.identityUserId || r.actorId || '未知用户'}
+                    <span
+                      title={`账号：${r.identityUserId || '未知'}；身份编号：${r.actorId || '未知'}`}
+                    >
+                      {r.actorName ||
+                        r.identityUserId ||
+                        r.actorId ||
+                        '未知用户'}
                     </span>
                   ),
                 },
@@ -70,7 +80,11 @@ export default function OperationHistory({ global = false }: { global?: boolean 
               <Typography.Text copyable>{r.resourceId}</Typography.Text>
             ),
           },
-          { title: '时间', dataIndex: 'createdAt' },
+          {
+            title: '时间',
+            dataIndex: 'createdAt',
+            render: formatDisplayDateTime,
+          },
           {
             title: '查看',
             render: (_, r) =>

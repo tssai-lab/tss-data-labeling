@@ -11,7 +11,7 @@ import {
   Table,
   Typography,
 } from 'antd';
-import { useEffect, useId, useMemo, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { operationKey, post } from '@/services/labeling';
 import type {
   NativeProject,
@@ -48,7 +48,7 @@ export default function NativePublish({
   onPublishAi: (
     samples: NativeSample[],
     version: NativeSpec,
-    config: { modelId: string; instructions: string },
+    config: { modelId: string; instructions: string; reopenAccepted: boolean },
   ) => void;
   project: NativeProject;
   samples: NativeSample[];
@@ -69,6 +69,9 @@ export default function NativePublish({
     [plan, setPlan] = useState<any>(),
     [publishedPlan, setPublishedPlan] = useState<any>();
   const [reopen, setReopen] = useState(false);
+  const planAttempt = useRef<{ signature: string; key: string } | undefined>(
+    undefined,
+  );
   const [aiPage, setAiPage] = useState(false);
   const [search, setSearch] = useState('');
   const visible = samples.filter((sample) =>
@@ -90,6 +93,9 @@ export default function NativePublish({
   const selectionWithVisible = [
     ...new Set([...selected.map(String), ...selectableIds]),
   ];
+  const allVisibleSelected =
+    selectableIds.length > 0 &&
+    selectableIds.every((id) => selected.includes(id));
   function selectVisible(checked: boolean): void {
     const visibleKeys = new Set(selectableIds);
     setSelected(
@@ -148,7 +154,11 @@ export default function NativePublish({
           version={version}
           submitting={busy}
           onPublish={(config) => {
-            if (version) onPublishAi(selectedSamples, version, config);
+            if (version)
+              onPublishAi(selectedSamples, version, {
+                ...config,
+                reopenAccepted: reopen,
+              });
           }}
         />
       </div>
@@ -231,19 +241,14 @@ export default function NativePublish({
             disabled={
               locked ||
               !selectableIds.length ||
-              selectionWithVisible.length > 10000
+              (!allVisibleSelected && selectionWithVisible.length > 10000) ||
+              busy ||
+              !!plan
             }
-            onClick={() => selectVisible(true)}
+            onClick={() => selectVisible(!allVisibleSelected)}
           >
-            全选筛选结果（共 {selectableIds.length} 个）
-          </Button>
-          <Button
-            onClick={() => {
-              setSelected([]);
-              setPlan(undefined);
-            }}
-          >
-            清空选择
+            {allVisibleSelected ? '取消全选筛选结果' : '全选筛选结果'}（共{' '}
+            {selectableIds.length} 个）
           </Button>
           <span>
             已选择 {selected.length} 个样本；每次发布最多 10000 个，可分批发布。
@@ -315,6 +320,45 @@ export default function NativePublish({
                 onChange={(v) => setPeople(v || 1)}
               />
             </label>
+            <Button
+              disabled={
+                locked ||
+                !version ||
+                !selected.length ||
+                selected.length > 10000 ||
+                !!plan
+              }
+              loading={busy}
+              onClick={() =>
+                void run(async () => {
+                  if (!version) return;
+                  const body = {
+                    specVersionId: version.specVersionId,
+                    packageSize: size,
+                    annotatorsPerSample: people,
+                    reopenAccepted: reopen,
+                    samples: selected.map((id) => ({
+                      sampleId: id,
+                      ...(rework?.references[String(id)]
+                        ? { referenceResultId: rework.references[String(id)] }
+                        : {}),
+                    })),
+                  };
+                  const signature = JSON.stringify([project.projectId, body]);
+                  if (planAttempt.current?.signature !== signature) {
+                    planAttempt.current = { signature, key: operationKey() };
+                  }
+                  const result = await post(
+                    `/projects/${project.projectId}/package-plans`,
+                    body,
+                    planAttempt.current.key,
+                  );
+                  setPlan(result);
+                })
+              }
+            >
+              生成发布计划
+            </Button>
           </Space>
         )}
         {mode === 'HUMAN' && selected.length > 0 && (
@@ -325,41 +369,6 @@ export default function NativePublish({
               ? `，最后一包 ${selected.length % size} 个样本。剩余样本会单独成包。`
               : '。'}
           </Typography.Text>
-        )}
-        {mode === 'HUMAN' && (
-          <Button
-            disabled={
-              locked ||
-              !version ||
-              !selected.length ||
-              selected.length > 10000 ||
-              !!plan
-            }
-            loading={busy}
-            onClick={() =>
-              void run(async () => {
-                if (!version) return;
-                const result = await post(
-                  `/projects/${project.projectId}/package-plans`,
-                  {
-                    specVersionId: version.specVersionId,
-                    packageSize: size,
-                    annotatorsPerSample: people,
-                    samples: selected.map((id) => ({
-                      sampleId: id,
-                      ...(rework?.references[String(id)]
-                        ? { referenceResultId: rework.references[String(id)] }
-                        : {}),
-                    })),
-                  },
-                  operationKey(),
-                );
-                setPlan(result);
-              })
-            }
-          >
-            生成发布计划
-          </Button>
         )}
         {mode === 'AI' && (
           <div className={ui.aiNextStep}>
@@ -423,6 +432,9 @@ export default function NativePublish({
                 .join('；')}
             </Typography.Paragraph>
             <Typography.Title level={5}>本轮样本范围</Typography.Title>
+            <Typography.Paragraph type="secondary">
+              当前可核对全部选中样本及上方各包数量；服务尚未提供预览中每包的样本明细。
+            </Typography.Paragraph>
             <Table
               size="small"
               rowKey="sampleId"
@@ -498,13 +510,21 @@ export default function NativePublish({
                     );
                     setPublishedPlan(published);
                     setPlan(undefined);
+                    planAttempt.current = undefined;
                     refresh();
                   })
                 }
               >
                 确认发布到任务广场
               </Button>
-              <Button onClick={() => setPlan(undefined)}>重新选择</Button>
+              <Button
+                onClick={() => {
+                  planAttempt.current = undefined;
+                  setPlan(undefined);
+                }}
+              >
+                重新选择
+              </Button>
             </Space>
           </Card>
         )}

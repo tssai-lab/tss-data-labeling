@@ -9,6 +9,7 @@ function workspace(taskType = 'IMAGE_CLASSIFICATION', { root = false, catalogue 
   const project = { projectId: 'historical', name: '历史项目', taskType, status: 'OPEN', specVersions: [spec] };
   const sample = { sampleId: 'sample-1', metadata: {}, sourcePath: 'normal.jpg', mediaType: 'image/jpeg' };
   const requested = [];
+  const execution = { executionId: 'run-1', projectId: project.projectId, specVersionId: spec.specVersionId, status: 'SUCCEEDED', sampleCount: 1, pendingCount: 0 };
   const ui = Object.fromEntries(['Alert', 'Button', 'Card', 'Empty', 'Input', 'Modal', 'Select', 'Space', 'Spin', 'Table', 'Tabs', 'Tag'].map((name) => [name, name]));
   ui.DatePicker = { RangePicker: 'RangePicker' };
   ui.App = { useApp: () => ({ message: { success() {} } }) };
@@ -20,11 +21,11 @@ function workspace(taskType = 'IMAGE_CLASSIFICATION', { root = false, catalogue 
     '@ant-design/icons': { PlusOutlined: 'PlusIcon' },
     '@umijs/max': { Link: 'Link', useLocation: () => location, useParams: () => ({ projectId: root ? undefined : project.projectId }), history: { block: () => () => {}, push(path) { location.search = path.slice(path.indexOf('?')); } } },
     './index.less': { default: {} },
-    '@/services/labeling': { labelingJson: async (path) => { requested.push(path); return path === '/task-templates' ? catalogue : project; }, describeLabelingError: (error) => error.message, operationKey: () => 'fixture-key', post: async (path, body) => { requested.push({ path, body }); return project; } },
+    '@/services/labeling': { labelingJson: async (path) => { requested.push(path); return path === '/task-templates' ? catalogue : path.startsWith('/ai-executions/') ? execution : project; }, describeLabelingError: (error) => error.message, operationKey: () => 'fixture-key', post: async (path, body) => { requested.push({ path, body }); return path.endsWith('/prelabel-runs') ? execution : project; } },
     '@/services/nativeLabeling': { collectPages: async (path) => { requested.push(path); return path.endsWith('/input-samples') ? [sample] : []; } },
   };
   for (const name of ['NativeDataPreparation', 'NativeOutcome', 'NativePublish', 'NativeReview', 'NativeAi', 'NativeSpecSettings', 'StatusBadge', 'WorkspaceLayout', 'ProjectManagement', 'ProjectBreadcrumbs']) dependencies[`./${name}`] = { default: name };
-  const runtime = renderHooks(new URL('./ServerWorkspace.tsx', import.meta.url), {}, dependencies);
+  const runtime = renderHooks(new URL('./ServerWorkspace.tsx', import.meta.url), {}, dependencies, { setTimeout, clearTimeout });
   return { runtime, requested, project, spec, sample, location };
 }
 
@@ -42,23 +43,27 @@ test('historical and native projects use the same five project panels and load e
   }
 });
 
-test('switching AI back to human removes the AI step and clears candidates; returning to publish preserves AI selection', async () => {
-  const { runtime: r, spec, sample, location } = workspace();
+test('live AI publishing sends the frozen selection and preserves execution records when switching publication mode', async () => {
+  const { runtime: r, spec, sample, location, requested } = workspace();
   r.render(); await flushHooks(); r.render();
   r.nodes('NativePublish')[0].props.onModeChange('AI'); r.render();
   assert.ok(r.nodes('Tabs')[0].props.items.some((item) => item.key === 'ai'));
-  r.nodes('NativePublish')[0].props.onPublishAi([sample], spec, { modelId: 'demo-cv-1', instructions: '' });
-  r.render(); r.render();
+  r.nodes('NativePublish')[0].props.onPublishAi([sample], spec, { modelId: 'qwen-image', instructions: '', reopenAccepted: false });
+  await flushHooks(); r.render(); await flushHooks(); r.render();
   assert.equal(r.nodes('Tabs')[0].props.activeKey, 'ai');
   assert.equal(r.nodes('NativeAi').length, 1);
-  r.nodes('NativeAi')[0].props.onComplete([{ sample, label: '正常', confidence: .97, status: '待核查' }]);
+  const call = requested.find((item) => item?.path?.endsWith('/prelabel-runs'));
+  assert.deepEqual(call.body.samples.map((item) => item.sampleId), ['sample-1']);
+  assert.equal(call.body.specVersionId, spec.specVersionId);
+  assert.equal(call.body.modelId, 'qwen-image');
+  assert.equal(call.body.reopenAccepted, false);
   location.search = '?panel=publish'; r.render(); r.render();
   assert.equal(r.nodes('NativePublish')[0].props.mode, 'AI');
   r.nodes('NativePublish')[0].props.onModeChange('HUMAN'); r.render();
   assert.equal(r.nodes('Tabs')[0].props.items.some((item) => item.key === 'ai'), false);
-  assert.equal(r.nodes('NativeAi').length, 0);
+  assert.equal(r.nodes('NativeAi').length, 1);
   location.search = '?panel=review'; r.render(); r.render();
-  assert.equal(r.nodes('NativeReview')[0].props.aiResults, undefined);
+  assert.ok(Array.isArray(r.nodes('NativeReview')[0].props.aiResults));
   r.dispose();
 });
 

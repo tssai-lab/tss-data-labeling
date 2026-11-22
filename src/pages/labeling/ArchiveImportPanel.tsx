@@ -28,6 +28,7 @@ export default function ArchiveImportPanel({
   adapter,
   locked = false,
   onReady,
+  previewExpanded,
   nativeTasks = false,
 }: {
   scope: string;
@@ -36,6 +37,7 @@ export default function ArchiveImportPanel({
   adapter?: ImportAdapter;
   locked?: boolean;
   onReady?: (batch: Batch) => void;
+  previewExpanded?: boolean;
 }) {
   const engine = useRef<ArchiveImportSession | null>(null),
     mounted = useRef(false),
@@ -145,7 +147,7 @@ export default function ArchiveImportPanel({
         </span>
         <span className={styles.archiveDropHint}>
           {file
-            ? `${(file.size / 1024 / 1024).toFixed(2)} MiB · 已选择，尚未上传`
+            ? `${(file.size / 1024 / 1024).toFixed(2)} MiB · 已选择文件`
             : `ZIP 格式，最大 ${archivePolicy.maxArchiveBytes / 1024 / 1024 / 1024} GiB`}
         </span>
         <span className={styles.archiveChooseButton}>选择文件</span>
@@ -238,8 +240,17 @@ export default function ArchiveImportPanel({
           {batch.status === 'READY' && (
             <Space>
               <Tag color="green">数据可用</Tag>
-              <Button disabled={!onReady} onClick={() => onReady?.(batch)}>
-                查看解析样本
+              <Button
+                disabled={!onReady}
+                aria-expanded={previewExpanded}
+                aria-controls={
+                  previewExpanded === undefined
+                    ? undefined
+                    : 'parsed-files-preview'
+                }
+                onClick={() => onReady?.(batch)}
+              >
+                {previewExpanded ? '收起解析样本' : '查看解析样本'}
               </Button>
             </Space>
           )}

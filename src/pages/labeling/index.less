@@ -217,3 +217,62 @@
   .projectFlowTabs { overflow-x:auto; padding:0 4px; :global(.ant-tabs-nav-list) { width:max-content; min-width:100%; } :global(.ant-tabs-tab) { flex:none; min-width:132px; } }
   .projectStepLabel { gap:6px; font-size:13px; }
 }
+
+// Workspace surfaces and interactions share the existing navy and blue palette.
+.workspacePage .content {
+  :global(.ant-card) {
+    border-radius: 12px;
+    box-shadow: 0 2px 5px #10284208, 0 8px 24px #10284208;
+    transition: border-color .2s ease, box-shadow .2s ease;
+  }
+  :global(.ant-card-head) {
+    border-bottom-color: var(--label-edge);
+    background: #fff;
+    border-radius: 11px 11px 0 0;
+  }
+  :global(.ant-card-head-title) { letter-spacing: .01em; }
+  :global(.ant-table-wrapper) { border-radius: 9px; }
+  :global(.ant-table-thead > tr > th) { border-bottom: 1px solid var(--label-edge); }
+  :global(.ant-table-tbody > tr > td) { transition: background-color .18s ease; }
+  :global(.ant-input), :global(.ant-input-affix-wrapper),
+  :global(.ant-input-number), :global(.ant-select-selector) {
+    transition: border-color .18s ease, box-shadow .18s ease, background-color .18s ease;
+  }
+  :global(.ant-btn) { border-radius: 8px; transition: background-color .18s ease, border-color .18s ease, box-shadow .18s ease, transform .18s ease; }
+  :global(.ant-btn:active:not(:disabled)) { transform: translateY(0); }
+  :global(.ant-tag) { font-weight: 500; }
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .workspacePage .content {
+    > :global(.ant-card:hover), :global(.ant-card-hoverable:hover) { border-color: #c6d5e5; box-shadow: 0 4px 12px #1028420d, 0 12px 28px #1028420c; }
+    :global(.ant-btn-default:not(:disabled):hover) { box-shadow: 0 4px 12px #10284214; transform: translateY(-1px); }
+    :global(.ant-btn-primary:not(:disabled):hover) { box-shadow: 0 5px 14px #1e40af38; transform: translateY(-1px); }
+    :global(.ant-btn:active:not(:disabled)) { transform: translateY(0); }
+  }
+  .workspacePage .navTab { transition: background-color .18s ease, color .18s ease, box-shadow .18s ease; }
+  .workspacePage .navTab:not(.navTabActive):hover { box-shadow: inset 3px 0 #9fbfff80; }
+  .projectFlowTabs :global(.ant-tabs-tab:not(.ant-tabs-tab-disabled):hover) .projectStepNumber { border-color: #aabfe3; box-shadow: 0 2px 7px #10284214; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .workspacePage .content :global(.ant-btn:not(:disabled):hover) { transform: none; }
+}
+
+// Keep focus, selection and disabled states distinct from hover decoration.
+.workspacePage .content {
+  :global(.ant-tabs-tab-btn:focus-visible), :global(.ant-table-row:focus-visible) {
+    outline: 2px solid var(--label-blue);
+    outline-offset: -2px;
+    border-radius: 4px;
+  }
+  :global(.ant-table-tbody > tr.ant-table-row-selected > td) { background: var(--label-pale); }
+  :global(.ant-btn[disabled]) { box-shadow: none; transform: none; }
+}
+.workspacePage .footerAccount:focus-visible { outline: 2px solid #b2cdff; outline-offset: 2px; }
+@media (hover: hover) and (pointer: fine) {
+  .workspacePage .content :global(.ant-table-tbody > tr.ant-table-row-selected:hover > td) { background: #dfeaff; }
+}
+@media (max-width: 730px) {
+  .workspacePage .content :global(.ant-card-head-wrapper) { align-items: flex-start; }
+  .workspacePage .content :global(.ant-card-extra) { margin-left: auto; }
+}

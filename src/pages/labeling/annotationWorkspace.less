@@ -11,6 +11,9 @@
 .sampleButton { width: 100%; display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 12px; border: 1px solid #e3e8ef; border-radius: 5px; background: #fff; text-align: left; cursor: pointer; color: #172b45; margin-bottom: 8px; }
 .sampleButton span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sampleButton[aria-current='true'] { background: #edf3ff; border-color: #3765d9; }
+.sampleButton { transition: border-color .18s ease, background-color .18s ease, box-shadow .18s ease; }
+@media (hover: hover) and (pointer: fine) { .sampleButton:not(:disabled):hover { border-color: #93b0d5; background: #f6f9fd; box-shadow: 0 3px 10px #10284212; } .sampleButton[aria-current='true']:hover { background: #edf3ff; border-color: #3765d9; } }
+@media (prefers-reduced-motion: reduce) { .sampleButton { transition: none; } }
 .sampleButton:focus-visible { outline: 2px solid #3765d9; outline-offset: 2px; }
 .instructions { white-space: pre-wrap; overflow-wrap: anywhere; }
 .specSettings { min-width: 0; }

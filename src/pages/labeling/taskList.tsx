@@ -9,8 +9,8 @@ import {
   Modal,
   Select,
   Space,
-  Tabs,
   Table,
+  Tabs,
   Typography,
 } from 'antd';
 import { useEffect, useRef, useState } from 'react';
@@ -62,9 +62,7 @@ export default function TaskList() {
   useEffect(() => {
     ++version.current;
     const requestedView = new URLSearchParams(search).get('view');
-    setMineView(
-      requestedView === 'submissions' ? requestedView : 'tasks',
-    );
+    setMineView(requestedView === 'submissions' ? requestedView : 'tasks');
     const current = version.current;
     setRows([]);
     setCursor(null);
@@ -112,7 +110,12 @@ export default function TaskList() {
 
   async function releaseAssignment(): Promise<void> {
     const row = releaseTarget;
-    if (!row?.assignmentId || typeof row.revision !== 'number' || !releaseReason.trim()) return;
+    if (
+      !row?.assignmentId ||
+      typeof row.revision !== 'number' ||
+      !releaseReason.trim()
+    )
+      return;
     const current = version.current;
     const assignmentId = row.assignmentId;
     const body = { baseRevision: row.revision, reason: releaseReason.trim() };
@@ -161,210 +164,226 @@ export default function TaskList() {
           style={{ marginBottom: 20 }}
         />
       )}
-      {(!mine || mineView === 'tasks') && <Card
-        title={mine ? '已领取任务' : '可领取任务'}
-        extra={
-          <Button loading={busy} onClick={() => void load()}>
-            刷新
-          </Button>
-        }
-      >
-        {mine && (
-          <Space className={ui.taskListToolbar} wrap>
-            <Select
-              aria-label="本人任务状态筛选"
-              allowClear
-              value={filter}
-              onChange={setFilter}
-              placeholder="全部任务状态"
-              style={{ width: 180 }}
-              options={[
-                'CLAIMED',
-                'IN_PROGRESS',
-                'SUBMITTED',
-                'RELEASED',
-                'REVOKED',
-              ].map((value) => ({
-                value,
-                label: (
-                  {
-                    CLAIMED: '已领取',
-                    IN_PROGRESS: '标注中',
-                    SUBMITTED: '已交回',
-                    RELEASED: '已放弃',
-                    REVOKED: '已撤销',
-                  } as Record<string, string>
-                )[value],
-              }))}
-            />
-            <Input.Search
-              aria-label="已知提交编号"
-              placeholder="输入提交编号查看结果"
-              value={submissionId}
-              onChange={(event) => setSubmissionId(event.target.value)}
-              onSearch={(value) => {
-                if (value.trim()) history.push(`/labeling/submissions/${encodeURIComponent(value.trim())}`);
-              }}
-              enterButton="查看提交"
-              style={{ width: 380, maxWidth: '100%' }}
-            />
-            <Typography.Text type="secondary">
-              状态筛选只作用于当前已加载的任务
-            </Typography.Text>
-          </Space>
-        )}
-        <Table<Row>
-          rowKey={(row) =>
-            row.assignmentId || row.roundId || row.packageId || ''
+      {(!mine || mineView === 'tasks') && (
+        <Card
+          title={mine ? '已领取任务' : '可领取任务'}
+          extra={
+            <Button loading={busy} onClick={() => void load()}>
+              刷新
+            </Button>
           }
-          dataSource={
-            mine && filter ? rows.filter((r) => r.status === filter) : rows
-          }
-          loading={busy}
-          pagination={false}
-          locale={{
-            emptyText: (
-              <Empty
-                description={
-                  mine
-                    ? '尚未领取任务，可前往任务广场'
-                    : '暂无可领取任务，请先在项目内发布任务包'
-                }
-              >
-                <Button
-                  type="primary"
-                  onClick={() =>
-                    history.push(mine ? '/labeling/tasks' : '/labeling')
+        >
+          {mine && (
+            <Space className={ui.taskListToolbar} wrap>
+              <Select
+                aria-label="本人任务状态筛选"
+                allowClear
+                value={filter}
+                onChange={setFilter}
+                placeholder="全部任务状态"
+                style={{ width: 180 }}
+                options={[
+                  'CLAIMED',
+                  'IN_PROGRESS',
+                  'SUBMITTED',
+                  'RELEASED',
+                  'REVOKED',
+                ].map((value) => ({
+                  value,
+                  label: (
+                    {
+                      CLAIMED: '已领取',
+                      IN_PROGRESS: '标注中',
+                      SUBMITTED: '已交回',
+                      RELEASED: '已放弃',
+                      REVOKED: '已撤销',
+                    } as Record<string, string>
+                  )[value],
+                }))}
+              />
+              <Input.Search
+                aria-label="已知提交编号"
+                placeholder="输入提交编号查看结果"
+                value={submissionId}
+                onChange={(event) => setSubmissionId(event.target.value)}
+                onSearch={(value) => {
+                  if (value.trim())
+                    history.push(
+                      `/labeling/submissions/${encodeURIComponent(value.trim())}`,
+                    );
+                }}
+                enterButton="查看提交"
+                style={{ width: 380, maxWidth: '100%' }}
+              />
+              <Typography.Text type="secondary">
+                状态筛选只作用于当前已加载的任务
+              </Typography.Text>
+            </Space>
+          )}
+          <Table<Row>
+            rowKey={(row) =>
+              row.assignmentId || row.roundId || row.packageId || ''
+            }
+            dataSource={
+              mine && filter ? rows.filter((r) => r.status === filter) : rows
+            }
+            loading={busy}
+            pagination={false}
+            locale={{
+              emptyText: (
+                <Empty
+                  description={
+                    mine
+                      ? filter
+                        ? '当前已加载任务中没有符合该状态的任务'
+                        : '尚未领取任务，可前往任务广场'
+                      : '暂无可领取任务，请先在项目内发布任务包'
                   }
                 >
-                  {mine ? '前往任务广场' : '创建或发布项目'}
-                </Button>
-              </Empty>
-            ),
-          }}
-          scroll={{ x: 700 }}
-          columns={
-            mine
-              ? [
-                  {
-                    title: '任务名称',
-                    dataIndex: 'projectName',
-                    ellipsis: true,
-                    render: (value: string | undefined) => value || '未命名任务',
-                  },
-                  {
-                    title: '领取时间',
-                    dataIndex: 'claimedAt',
-                    width: 180,
-                    render: formatDisplayDateTime,
-                  },
-                  {
-                    title: '领取编号',
-                    dataIndex: 'assignmentId',
-                    ellipsis: true,
-                  },
-                  {
-                    title: '任务包编号',
-                    dataIndex: 'packageId',
-                    ellipsis: true,
-                  },
-                  { title: '轮次', dataIndex: 'roundId', ellipsis: true },
-                  { title: '席位', dataIndex: 'slotNo' },
-                  {
-                    title: '状态',
-                    dataIndex: 'status',
-                    render: (value: string) => (
-                      <StatusBadge status={value}>
-                        {(
-                          {
-                            CLAIMED: '已领取',
-                            IN_PROGRESS: '标注中',
-                            SUBMITTED: '已交回 · 待需求方审核',
-                          } as Record<string, string>
-                        )[value] || value}
-                      </StatusBadge>
-                    ),
-                  },
-                  {
-                    title: '操作',
-                    render: (_, row) => (
-                      <Space wrap>
-                        <Button
-                          type="link"
-                          disabled={
-                            releaseAction.busy ||
-                            ['RELEASED', 'REVOKED'].includes(row.status || '')
-                          }
-                          onClick={() =>
-                            history.push(
-                              `/labeling/assignments/${encodeURIComponent(row.assignmentId || '')}`,
-                            )
-                          }
-                        >
-                          {row.status === 'SUBMITTED'
-                            ? '查看已交回包'
-                            : '进入标注'}
-                        </Button>
-                        {['CLAIMED', 'IN_PROGRESS'].includes(
-                          row.status || '',
-                        ) && (
+                  {mine && filter ? (
+                    <Button onClick={() => setFilter(undefined)}>
+                      清除状态筛选
+                    </Button>
+                  ) : (
+                    <Button
+                      type="primary"
+                      onClick={() =>
+                        history.push(mine ? '/labeling/tasks' : '/labeling')
+                      }
+                    >
+                      {mine ? '前往任务广场' : '创建或发布项目'}
+                    </Button>
+                  )}
+                </Empty>
+              ),
+            }}
+            scroll={{ x: 700 }}
+            columns={
+              mine
+                ? [
+                    {
+                      title: '任务名称',
+                      dataIndex: 'projectName',
+                      ellipsis: true,
+                      render: (value: string | undefined) =>
+                        value || '未命名任务',
+                    },
+                    {
+                      title: '领取时间',
+                      dataIndex: 'claimedAt',
+                      width: 180,
+                      render: formatDisplayDateTime,
+                    },
+                    {
+                      title: '领取编号',
+                      dataIndex: 'assignmentId',
+                      ellipsis: true,
+                    },
+                    {
+                      title: '任务包编号',
+                      dataIndex: 'packageId',
+                      ellipsis: true,
+                    },
+                    { title: '轮次', dataIndex: 'roundId', ellipsis: true },
+                    { title: '席位', dataIndex: 'slotNo' },
+                    {
+                      title: '状态',
+                      dataIndex: 'status',
+                      render: (value: string) => (
+                        <StatusBadge status={value}>
+                          {(
+                            {
+                              CLAIMED: '已领取',
+                              IN_PROGRESS: '标注中',
+                              SUBMITTED: '已交回 · 待需求方审核',
+                            } as Record<string, string>
+                          )[value] || value}
+                        </StatusBadge>
+                      ),
+                    },
+                    {
+                      title: '操作',
+                      render: (_, row) => (
+                        <Space wrap>
                           <Button
-                            danger
                             type="link"
-                            disabled={releaseAction.busy || busy}
-                            onClick={() => {
-                              setReleaseReason('');
-                              setReleaseTarget(row);
-                            }}
+                            disabled={
+                              releaseAction.busy ||
+                              ['RELEASED', 'REVOKED'].includes(row.status || '')
+                            }
+                            onClick={() =>
+                              history.push(
+                                `/labeling/assignments/${encodeURIComponent(row.assignmentId || '')}`,
+                              )
+                            }
                           >
-                            放弃领取
+                            {row.status === 'SUBMITTED'
+                              ? '查看已交回包'
+                              : '进入标注'}
                           </Button>
-                        )}
-                      </Space>
-                    ),
-                  },
-                ]
-              : [
-                  { title: '项目', dataIndex: 'projectName' },
-                  {
-                    title: '发布时间',
-                    dataIndex: 'publishedAt',
-                    width: 180,
-                    render: formatDisplayDateTime,
-                  },
-                  { title: '图片数', dataIndex: 'sampleCount' },
-                  { title: '所需人数', dataIndex: 'requiredCount' },
-                  { title: '剩余席位', dataIndex: 'remainingSlots' },
-                  {
-                    title: '操作',
-                    render: (_, row) => (
-                      <Button
-                        type="primary"
-                        loading={claiming === (row.roundId || row.packageId)}
-                        disabled={
-                          !canAnnotate ||
-                          Boolean(claiming) ||
-                          !row.remainingSlots
-                        }
-                        onClick={() => void claim(row)}
-                      >
-                        领取任务包
-                      </Button>
-                    ),
-                  },
-                ]
-          }
-        />
-        {cursor && (
-          <Space style={{ marginTop: 16 }}>
-            <Button loading={busy} onClick={() => void load(cursor)}>
-              加载更多
-            </Button>
-          </Space>
-        )}
-      </Card>}
+                          {['CLAIMED', 'IN_PROGRESS'].includes(
+                            row.status || '',
+                          ) && (
+                            <Button
+                              danger
+                              type="link"
+                              disabled={releaseAction.busy || busy}
+                              onClick={() => {
+                                setReleaseReason('');
+                                setReleaseTarget(row);
+                              }}
+                            >
+                              放弃领取
+                            </Button>
+                          )}
+                        </Space>
+                      ),
+                    },
+                  ]
+                : [
+                    { title: '项目', dataIndex: 'projectName' },
+                    {
+                      title: '发布时间',
+                      dataIndex: 'publishedAt',
+                      width: 180,
+                      render: formatDisplayDateTime,
+                    },
+                    { title: '图片数', dataIndex: 'sampleCount' },
+                    { title: '所需人数', dataIndex: 'requiredCount' },
+                    { title: '剩余席位', dataIndex: 'remainingSlots' },
+                    {
+                      title: '操作',
+                      render: (_, row) => (
+                        <Button
+                          type="primary"
+                          loading={claiming === (row.roundId || row.packageId)}
+                          disabled={
+                            !canAnnotate ||
+                            Boolean(claiming) ||
+                            !row.remainingSlots
+                          }
+                          onClick={() => void claim(row)}
+                        >
+                          领取任务包
+                        </Button>
+                      ),
+                    },
+                  ]
+            }
+          />
+          {cursor && (
+            <Space style={{ marginTop: 16 }}>
+              <Button loading={busy} onClick={() => void load(cursor)}>
+                加载更多
+              </Button>
+            </Space>
+          )}
+        </Card>
+      )}
       {mine && mineView === 'submissions' && (
-        <Card><MySubmissions /></Card>
+        <Card>
+          <MySubmissions />
+        </Card>
       )}
       <Modal
         title="放弃领取"
