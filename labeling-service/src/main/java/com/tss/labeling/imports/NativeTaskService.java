@@ -99,6 +99,11 @@ public class NativeTaskService {
     @Transactional
     public ImportService.SampleFile resource(ActorContext actor,UUID scope,UUID sample,UUID resource,UUID spec,boolean assignment) {
         JsonNode context=assignment?assignmentTask(actor,scope,sample):ownerTask(actor,scope,sample,spec);
+        return inputResource(context, resource);
+    }
+
+    /** The supplied context must come from the authorized sample. */
+    public ImportService.SampleFile inputResource(JsonNode context, UUID resource) {
         boolean permitted=false;
         for(JsonNode item:context.path("resources")) if(resource.toString().equals(item.path("resourceId").asText())) permitted=true;
         if(!permitted) throw error(404,"RESOURCE_NOT_FOUND","输入资源不存在");
@@ -126,6 +131,11 @@ public class NativeTaskService {
     @Transactional
     public JsonNode ownerInput(ActorContext actor,UUID project,UUID sample) {
         ownerDataAccess(actor,project);
+        return inputWithResources(project, sample);
+    }
+
+    /** Caller must authorize the project and sample before reading. */
+    public JsonNode inputWithResources(UUID project, UUID sample) {
         var row=one("SELECT * FROM sample WHERE id=? AND project_id=?",sample,project);
         ObjectNode task=(ObjectNode)rawTask(sample).deepCopy();task.put("id",sample.toString());
         JsonNode data=task.path("data");
