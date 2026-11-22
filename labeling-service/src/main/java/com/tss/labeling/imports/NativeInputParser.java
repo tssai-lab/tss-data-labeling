@@ -71,7 +71,30 @@ public class NativeInputParser {
         Map<String,Object> metadata=new LinkedHashMap<>();metadata.put("inputFormat","label-studio-task-v1");metadata.put("sizeBytes",bytes);
         List<String> fields=new ArrayList<>();task.path("data").fieldNames().forEachRemaining(fields::add);metadata.put("inputFields",fields);
         String name=task.path("meta").path("displayName").asText(task.path("id").asText(""));
+        if(name.isBlank()) name = singleSourceFileName(task);
         if(!name.isBlank())metadata.put("displayName",name);
         return metadata;
     }
+
+    String singleSourceFileName(JsonNode task) {
+        Set<String> files = new LinkedHashSet<>();
+        collectFileReferences(task.path("data"), files);
+        if (files.size() != 1) return "";
+        String path = files.iterator().next();
+        return path.substring(path.lastIndexOf('/') + 1);
+    }
+
+    private void collectFileReferences(JsonNode value, Set<String> files) {
+        if (files.size() > 1) return;
+        if (value.isContainerNode()) {
+            for (JsonNode child : value) collectFileReferences(child, files);
+        } else if (value.isTextual()) {
+            String path = value.asText();
+            if (!path.startsWith("/") && !path.contains(":") && !path.contains("\\")
+                    && path.toLowerCase(Locale.ROOT).matches(".*[.](png|jpe?g|csv)$")) {
+                files.add(path);
+            }
+        }
+    }
+
 }
