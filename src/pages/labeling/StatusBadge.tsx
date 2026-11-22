@@ -4,6 +4,8 @@ import ui from './workspaceUi.less';
 
 const tones: Record<string, string> = {
   OPEN: 'success',
+  ENABLED: 'success',
+  DISABLED: 'neutral',
   ACCEPTED: 'success',
   SUCCEEDED: 'success',
   PUBLISHED: 'success',

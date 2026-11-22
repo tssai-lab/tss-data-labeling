@@ -153,3 +153,41 @@
 @media (max-width: 730px) { .aiMetrics { grid-template-columns: repeat(2,minmax(0,1fr)); } .aiFlow { flex-wrap: wrap; row-gap: 8px; } .aiFlow i { width: 13px; } .aiDemoPill { margin-left: 0; } }
 @media (max-width: 900px) { .nativeAiGrid { grid-template-columns: minmax(0,1fr); } .aiExecutionSummary { grid-template-columns: repeat(2,minmax(0,1fr)); } }
 @media (prefers-reduced-motion: reduce) { .metric, .workbenchTabs :global(.ant-tabs-tab) { transition: none; } }
+
+.metric {
+  border-radius: 11px;
+  background: #fff;
+  box-shadow: 0 2px 5px #10284208, 0 8px 20px #10284208;
+  transition: background-color .18s ease, border-color .18s ease, box-shadow .18s ease, transform .18s ease;
+  :global(.anticon) { display: grid; place-items: center; width: 29px; height: 29px; top: 10px; right: 10px; border-radius: 9px; background: var(--label-pale); font-size: 14px; }
+  &[aria-pressed='true'] { background: var(--label-pale); }
+  &:focus-visible { outline: 2px solid var(--label-blue); outline-offset: 2px; }
+}
+.aiHero { background: #173c63; box-shadow: none; }
+.aiHero:after { display: none; }
+.aiDemoPill i { box-shadow: none; }
+.section, .selectionBar, .reviewSubmission, .advancedFilters {
+  box-shadow: 0 2px 5px #10284208, 0 8px 20px #10284208;
+  transition: border-color .18s ease, box-shadow .18s ease;
+}
+.workbenchTabs :global(.ant-tabs-tab) { transition: background-color .18s ease, color .18s ease, box-shadow .18s ease; }
+.reviewSample { transition: background-color .18s ease, box-shadow .18s ease; }
+.imageZoom { transition: background-color .18s ease; }
+@media (hover: hover) and (pointer: fine) {
+  .metric:not(:disabled):hover { transform: translateY(-2px); border-color: #8caad7; box-shadow: 0 6px 16px #1028421c; }
+  .metric:not(:disabled):active { transform: translateY(0); }
+  .section:hover, .reviewSubmission:hover, .advancedFilters:hover { border-color: #c6d5e5; box-shadow: 0 5px 16px #10284212; }
+  .workbenchTabs :global(.ant-tabs-tab:not(.ant-tabs-tab-disabled):hover) { box-shadow: inset 0 0 0 1px #d4e2f3; }
+  .reviewSample:hover { box-shadow: inset 3px 0 #a8c3ea; }
+  .reviewSample[aria-current='true']:hover { box-shadow: inset 3px 0 var(--label-blue); }
+  .imageButton:hover .imageZoom { background: #1e40af; }
+}
+@media (max-width: 730px) {
+  .metric { padding-right: 44px; }
+  .reviewSubmission { align-items: stretch; flex-wrap: wrap; }
+  .reviewSubmission :global(.ant-select) { width: 100%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .metric, .section, .selectionBar, .reviewSubmission, .advancedFilters, .reviewSample, .imageZoom, .workbenchTabs :global(.ant-tabs-tab) { transition: none; }
+  .metric:not(:disabled):hover { transform: none; }
+}

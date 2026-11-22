@@ -43,6 +43,7 @@ export default function NativeAi({
   results = [],
   progress = 0,
   running = false,
+  executionStatus,
   submitting = false,
   onReview,
 }: {
@@ -54,6 +55,7 @@ export default function NativeAi({
   results?: DemoResult[];
   progress?: number;
   running?: boolean;
+  executionStatus?: string;
   submitting?: boolean;
   onReview?: () => void;
 }) {
@@ -84,6 +86,7 @@ export default function NativeAi({
         results={results}
         progress={progress}
         running={running}
+        executionStatus={executionStatus}
         modelName={
           modelOptions.find((model) => model.value === execution.modelId)
             ?.label || execution.modelId

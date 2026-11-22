@@ -1,3 +1,4 @@
+import { LeftOutlined, ReloadOutlined, RightOutlined } from '@ant-design/icons';
 import {
   Alert,
   Button,
@@ -17,7 +18,7 @@ import {
   operationKey,
   post,
 } from '@/services/labeling';
-import type { NativeProject } from '@/services/nativeLabeling';
+import type { NativeProject, NativeSample } from '@/services/nativeLabeling';
 import { hasProjectAnswer } from '@/services/projectCompatibility.mjs';
 import { formatDisplayDateTime } from '@/utils/formatDateTime';
 import AiDemoReview from './AiDemoReview';
@@ -37,9 +38,11 @@ export default function NativeReview({
   busy,
   onGuard,
   aiResults,
+  samples,
   onAiResultsChange,
 }: {
   project: NativeProject;
+  samples: NativeSample[];
   aiResults?: DemoResult[];
   onAiResultsChange: (results: DemoResult[]) => Promise<void>;
   submissions: any[];
@@ -82,7 +85,11 @@ export default function NativeReview({
         if (!abort.signal.aborted) {
           setSubmission(s);
           setReview(r);
-          setSampleId(s.items[0]?.sampleId || '');
+          setSampleId((previous) =>
+            s.items.some((row: any) => row.sampleId === previous)
+              ? previous
+              : s.items[0]?.sampleId || '',
+          );
         }
       })
       .catch((e) => {
@@ -126,6 +133,26 @@ export default function NativeReview({
       return ['ACCEPT', 'MODIFY'].includes(statusFor(row));
     return true;
   });
+  const names = new Map(samples.map((sample) => [sample.sampleId, sample]));
+  const displaySample = (row: any) => {
+    const source = names.get(row.sampleId);
+    const name = sampleName({
+      ...row,
+      displayName: row.displayName || source?.metadata?.displayName,
+      sourcePath: row.sourcePath || source?.sourcePath,
+    });
+    return name.split(/[\\/]/).pop() || name;
+  };
+  const visibleIndex = visibleItems.findIndex(
+    (row: any) => row.sampleId === sampleId,
+  );
+  const changeSample = (id: string) => {
+    if (id !== sampleId && !busy && guard.current()) {
+      setSampleId(id);
+      setEditing(false);
+      setReason('');
+    }
+  };
   const update = async (action: string, items: any[], values?: unknown[]) => {
     await labelingJson(`/submissions/${selected}/review/items`, {
       method: 'PUT',
@@ -156,11 +183,13 @@ export default function NativeReview({
               if (guard.current()) setResultSource('AI');
             }}
           >
-            AI 候选结果（演示）
+            AI 候选结果
           </Button>
           <Button
             type={resultSource === 'HUMAN' ? 'primary' : 'default'}
-            onClick={() => setResultSource('HUMAN')}
+            onClick={() => {
+              if (guard.current()) setResultSource('HUMAN');
+            }}
           >
             人工提交结果
           </Button>
@@ -171,9 +200,13 @@ export default function NativeReview({
           <Alert
             type="info"
             showIcon
-            message="AI 演示结果：核查操作仅在当前页面会话生效，不写入真实项目结果。"
+            message="AI 候选来自本轮后台执行。核查确认后会保存到项目；未完成的结果不可确认。"
           />
-          <AiDemoReview results={aiResults} onChange={onAiResultsChange} />
+          <AiDemoReview
+            results={aiResults}
+            onChange={onAiResultsChange}
+            readOnly={locked}
+          />
         </>
       ) : (
         <>
@@ -240,34 +273,39 @@ export default function NativeReview({
                   </div>
                   <div className={ui.resultsTools}>
                     <span>统计基于当前提交 · 点击卡片筛选样本</span>
-                    <Button
-                      size="small"
-                      disabled={busy}
-                      onClick={() => {
-                        setReload((value) => value + 1);
-                        refresh();
-                      }}
-                    >
-                      刷新结果
-                    </Button>
                   </div>
                   <div className={ui.nativeReviewGrid}>
                     <Card
                       className={ui.reviewPanel}
                       title="样本列表"
                       extra={
-                        <Select
-                          aria-label="按核查状态筛选"
-                          size="small"
-                          value={sampleFilter}
-                          onChange={setSampleFilter}
-                          options={[
-                            { value: 'ALL', label: '全部状态' },
-                            { value: 'ANSWERED', label: '有答案' },
-                            { value: 'NO_ANSWER', label: '无答案' },
-                            { value: 'ACCEPTED', label: '已确认' },
-                          ]}
-                        />
+                        <Space wrap>
+                          <Select
+                            aria-label="按核查状态筛选"
+                            size="small"
+                            value={sampleFilter}
+                            onChange={setSampleFilter}
+                            options={[
+                              { value: 'ALL', label: '全部状态' },
+                              { value: 'ANSWERED', label: '有答案' },
+                              { value: 'NO_ANSWER', label: '无答案' },
+                              { value: 'ACCEPTED', label: '已确认' },
+                            ]}
+                          />
+                          <Button
+                            size="small"
+                            aria-label="刷新结果"
+                            title="刷新结果"
+                            icon={<ReloadOutlined />}
+                            disabled={busy}
+                            onClick={() => {
+                              if (guard.current()) {
+                                setReload((value) => value + 1);
+                                refresh();
+                              }
+                            }}
+                          />
+                        </Space>
                       }
                     >
                       <div className={ui.reviewSampleList}>
@@ -280,15 +318,10 @@ export default function NativeReview({
                               type="button"
                               className={ui.reviewSample}
                               aria-current={row.sampleId === sampleId}
-                              onClick={() => {
-                                if (guard.current()) {
-                                  setSampleId(row.sampleId);
-                                  setEditing(false);
-                                }
-                              }}
+                              onClick={() => changeSample(row.sampleId)}
                             >
                               <span className={ui.reviewSampleName}>
-                                {sampleName(row)}
+                                {displaySample(row)}
                               </span>
                               <span className={ui.reviewSampleMeta}>
                                 <span>
@@ -320,7 +353,7 @@ export default function NativeReview({
                     <Card
                       className={ui.reviewPanel}
                       title="样本数据预览"
-                      extra={item ? sampleName(item) : undefined}
+                      extra={item ? displaySample(item) : undefined}
                     >
                       {item && version ? (
                         <ProjectSampleEditor
@@ -372,23 +405,65 @@ export default function NativeReview({
                       title="核查详情"
                       extra={
                         item && (
-                          <Tag
-                            color={
-                              reviewed?.action === 'ACCEPT' ||
-                              reviewed?.action === 'MODIFY'
-                                ? 'green'
-                                : reviewed?.action === 'REJECT'
-                                  ? 'orange'
-                                  : 'blue'
-                            }
-                          >
-                            {statusLabel(
-                              reviewed?.action || submission.reviewStatus,
-                            )}
-                          </Tag>
+                          <Space wrap>
+                            <Tag
+                              color={
+                                reviewed?.action === 'ACCEPT' ||
+                                reviewed?.action === 'MODIFY'
+                                  ? 'green'
+                                  : reviewed?.action === 'REJECT'
+                                    ? 'orange'
+                                    : 'blue'
+                              }
+                            >
+                              {statusLabel(
+                                reviewed?.action || submission.reviewStatus,
+                              )}
+                            </Tag>
+                            <Button
+                              size="small"
+                              disabled={locked || busy}
+                              onClick={() => {
+                                if (guard.current()) setEditing(!editing);
+                              }}
+                            >
+                              {editing ? '取消修订' : '修订结果'}
+                            </Button>
+                          </Space>
                         )
                       }
                     >
+                      <Space wrap>
+                        <Button
+                          icon={<LeftOutlined />}
+                          disabled={busy || visibleIndex <= 0}
+                          onClick={() =>
+                            changeSample(
+                              visibleItems[visibleIndex - 1].sampleId,
+                            )
+                          }
+                        >
+                          上一张
+                        </Button>
+                        <span>
+                          {visibleIndex < 0 ? '—' : visibleIndex + 1} /{' '}
+                          {visibleItems.length}
+                        </span>
+                        <Button
+                          disabled={
+                            busy ||
+                            visibleIndex < 0 ||
+                            visibleIndex >= visibleItems.length - 1
+                          }
+                          onClick={() =>
+                            changeSample(
+                              visibleItems[visibleIndex + 1].sampleId,
+                            )
+                          }
+                        >
+                          下一张 <RightOutlined />
+                        </Button>
+                      </Space>
                       <div className={ui.reviewDetails}>
                         <div>
                           <span>标注人</span>
@@ -405,7 +480,7 @@ export default function NativeReview({
                         <div>
                           <span>当前样本</span>
                           <strong title={item?.sampleId}>
-                            {item ? sampleName(item) : '—'}
+                            {item ? displaySample(item) : '—'}
                           </strong>
                         </div>
                         <div>
@@ -455,14 +530,6 @@ export default function NativeReview({
                             }
                           >
                             确认采用
-                          </Button>
-                          <Button
-                            disabled={locked || busy}
-                            onClick={() => {
-                              if (guard.current()) setEditing(!editing);
-                            }}
-                          >
-                            {editing ? '取消修订' : '修订结果'}
                           </Button>
                           <Button
                             danger

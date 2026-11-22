@@ -1,6 +1,5 @@
 import {
   ArrowRightOutlined,
-  CheckOutlined,
   LeftOutlined,
   RightOutlined,
   ScanOutlined,
@@ -18,13 +17,6 @@ import type { NativeProject, NativeSample } from '@/services/nativeLabeling';
 import ui from './aiExecution.less';
 import type { DemoResult } from './NativeAi';
 import type { NativeContext } from './NativeEditor';
-
-const stages = [
-  { title: '读取样本', detail: '载入本轮选定的数据范围' },
-  { title: '模型推理', detail: '依据标注规范生成标签建议' },
-  { title: '生成候选', detail: '输出候选标签与置信度' },
-  { title: '汇总结果', detail: '整理候选结果与失败样本' },
-];
 
 function SamplePreview({
   project,
@@ -133,6 +125,7 @@ export default function AiExecutionShowcase({
   progress,
   running,
   modelName,
+  executionStatus,
   instructions,
   versionNo,
   onReview,
@@ -142,6 +135,7 @@ export default function AiExecutionShowcase({
   results: DemoResult[];
   progress: number;
   running: boolean;
+  executionStatus?: string;
   modelName: string;
   instructions: string;
   versionNo?: number;
@@ -165,8 +159,19 @@ export default function AiExecutionShowcase({
     : null;
   const high = scored.filter((score) => score >= 0.8).length;
   const labels = [...new Set(success.map((row) => row.label))];
-  const stageIndex = Math.min(Math.floor(progress / 25), 3);
-  const complete = progress === 100 && !running;
+  const statusText =
+    (
+      {
+        QUEUED: '等待执行',
+        RUNNING: '执行中',
+        SUCCEEDED: '执行完成',
+        PARTIAL: '部分完成',
+        FAILED: '执行失败',
+        CANCELLED: '已取消',
+      } as Record<string, string>
+    )[executionStatus || ''] ||
+    executionStatus ||
+    (running ? '执行中' : '执行已结束');
   const sampleName = (sample: NativeSample): string =>
     sample.metadata.displayName || sample.sourcePath;
 
@@ -176,7 +181,7 @@ export default function AiExecutionShowcase({
         <div className={ui.missionTop}>
           <span className={ui.consoleLabel}>
             <span className={ui.liveDot} data-running={running} />
-            {running ? 'AI 执行中' : complete ? '本轮执行完成' : '准备执行'}
+            {statusText}
           </span>
           <span className={ui.modelName}>
             {modelName}
@@ -262,39 +267,17 @@ export default function AiExecutionShowcase({
             <div className={ui.engineTitle}>
               <ScanOutlined />
               <div>
-                <strong>
-                  {running
-                    ? stages[stageIndex].title
-                    : complete
-                      ? '候选生成完成'
-                      : '等待启动'}
-                </strong>
+                <strong>{statusText}</strong>
                 <span>
                   {running
-                    ? stages[stageIndex].detail
-                    : '结果由需求方在下一步核查'}
+                    ? '进度按服务器返回的样本处理数更新'
+                    : '已生成的候选可在结果明细中查看'}
                 </span>
               </div>
             </div>
-            <ol className={ui.stageList}>
-              {stages.map((stage, index) => {
-                const done = complete || index < stageIndex;
-                const active = running && index === stageIndex;
-                return (
-                  <li key={stage.title} data-done={done} data-active={active}>
-                    <b>{done ? <CheckOutlined /> : `0${index + 1}`}</b>
-                    <div>
-                      <strong>{stage.title}</strong>
-                      <span>{stage.detail}</span>
-                    </div>
-                    <small>{done ? '完成' : active ? '执行中' : '等待'}</small>
-                  </li>
-                );
-              })}
-            </ol>
             <div className={ui.executionProgress}>
               <div>
-                <span>本轮执行进度</span>
+                <span>已处理样本比例</span>
                 <strong>
                   {progress}
                   <small>%</small>
@@ -315,7 +298,7 @@ export default function AiExecutionShowcase({
             <strong className={ui.candidateLabel}>
               {candidate?.status === '执行失败'
                 ? '执行失败'
-                : candidate?.label || '分析中'}
+                : candidate?.label || (running ? '等待结果' : '暂无候选')}
             </strong>
             <div
               className={ui.confidenceRing}
@@ -393,16 +376,20 @@ export default function AiExecutionShowcase({
         <div>
           <span>下一步 / 需求方核查</span>
           <strong>
-            {complete
-              ? '候选已就绪，交由需求方判断。'
-              : 'AI 正在生成候选结果。'}
+            {running
+              ? executionStatus === 'QUEUED'
+                ? '任务已进入队列，等待执行。'
+                : 'AI 正在处理样本。'
+              : success.length
+                ? '请核查已生成的候选结果。'
+                : '本轮没有可核查的候选结果。'}
           </strong>
           <p>确认采用或筛出待修正样本，再决定下一轮执行方式。</p>
         </div>
         <button
           className={ui.reviewButton}
           type="button"
-          disabled={!complete || !success.some((row) => row.reviewable)}
+          disabled={running || !success.some((row) => row.reviewable)}
           onClick={onReview}
         >
           前往核查与重标
@@ -470,7 +457,9 @@ export default function AiExecutionShowcase({
                 : false
             }
             locale={{
-              emptyText: 'AI 正在处理样本，候选结果将在这里逐步出现。',
+              emptyText: running
+                ? 'AI 正在处理样本，候选结果将在这里逐步出现。'
+                : '本轮暂无候选结果。',
             }}
             scroll={{ x: 650 }}
             rowClassName={(row) =>

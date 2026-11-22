@@ -9,6 +9,7 @@ import {
   Button,
   Checkbox,
   Drawer,
+  Empty,
   Input,
   Modal,
   Select,
@@ -111,7 +112,13 @@ export default function NativeAssignment() {
     item.displayName ||
     (item.sourcePath?.startsWith('mapped-')
       ? `样本 ${work.items.indexOf(item) + 1}`
-      : item.sourcePath);
+      : item.sourcePath) ||
+    `样本 ${String(item.sampleId || '').slice(0, 8)}`;
+  const matchingItems = (work?.items || []).filter((item: any) =>
+    displayName(item)
+      .toLocaleLowerCase()
+      .includes(search.trim().toLocaleLowerCase()),
+  );
   const changeSample = (id: string) => {
     if (id === sampleId) {
       setListOpen(false);
@@ -436,12 +443,9 @@ export default function NativeAssignment() {
             allowClear
             onChange={(event) => setSearch(event.target.value)}
           />
-          <ul className={styles.sampleList}>
-            {work?.items
-              .filter((item: any) =>
-                displayName(item).toLowerCase().includes(search.toLowerCase()),
-              )
-              .map((item: any) => (
+          {matchingItems.length ? (
+            <ul className={styles.sampleList}>
+              {matchingItems.map((item: any) => (
                 <li key={item.sampleId}>
                   <button
                     className={styles.sampleButton}
@@ -463,7 +467,15 @@ export default function NativeAssignment() {
                   </button>
                 </li>
               ))}
-          </ul>
+            </ul>
+          ) : (
+            <Empty
+              image={Empty.PRESENTED_IMAGE_SIMPLE}
+              description={
+                search.trim() ? '没有找到匹配的样本' : '任务包暂无样本'
+              }
+            />
+          )}
         </Drawer>
         <Drawer
           title="规范与说明"

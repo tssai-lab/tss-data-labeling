@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import dayjs from 'dayjs';
 import {
   flushHooks,
   renderHooks,
@@ -342,6 +343,7 @@ test('project search and status filtering use loaded records; each management ac
   const location = { pathname: '/labeling', search: '' },
     routes = [];
   const deps = {
+    dayjs: { default: dayjs },
     ...styles,
     './index.less': { default: {} },
     '@ant-design/icons': {
@@ -388,6 +390,7 @@ test('project search and status filtering use loaded records; each management ac
     '@/services/labelingOwner': { ownerApi: { templates: async () => [] } },
     '@/services/labelingUpload.mjs': { hashFile() {}, uploadChunks() {} },
   };
+  deps.antd.DatePicker = { RangePicker: 'RangePicker' };
   deps.antd.Input = Object.assign(() => {}, { TextArea: 'TextArea' });
   deps.antd.App = { useApp: () => ({ message: {} }) };
   deps.antd.Form = Object.assign(() => {}, {
@@ -414,7 +417,7 @@ test('project search and status filtering use loaded records; each management ac
   r.render();
   assert.equal(r.nodes('Table')[0].props.dataSource.length, 2);
   r.nodes(deps.antd.Input)
-    .find((node) => node.props['aria-label'] === '搜索已加载项目')
+    .find((node) => node.props['aria-label'] === '按项目名称搜索')
     .props.onChange({ target: { value: 'energy' } });
   r.render();
   assert.equal(r.nodes('Table')[0].props.dataSource[0].projectId, 'b');
@@ -428,7 +431,8 @@ test('project search and status filtering use loaded records; each management ac
     .props.onChange('ALL');
   r.render();
   const managementCell = r.nodes('Table')[0].props.columns.find((column) => column.title === '项目操作').render(undefined, projects[1]);
-  const management = managementCell.props.children.find((node) => node.type === 'ProjectManagement');
+  const management = managementCell;
+  assert.equal(management.type, 'ProjectManagement');
   assert.equal(management.props.project.projectId, 'b');
   assert.deepEqual(routes, []);
   r.dispose();

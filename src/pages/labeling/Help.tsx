@@ -1,10 +1,18 @@
 import { Link } from '@umijs/max';
 import { Card, Typography } from 'antd';
+import WorkspaceLayout from './WorkspaceLayout';
+import ui from './workspaceUi.less';
 
 export default function Help() {
   return (
-    <main style={{ maxWidth: 1000, margin: '24px auto', padding: 16 }}>
-      <Card title="标注使用说明">
+    <WorkspaceLayout>
+      <header className={ui.pageHeader}>
+        <div>
+          <h1>标注使用说明</h1>
+          <p>了解数据导入、标注配置、审核和成果导出的基本流程。</p>
+        </div>
+      </header>
+      <Card title="使用指南" style={{ maxWidth: 1000 }}>
         <Typography.Paragraph>
           <Link to="/labeling">返回项目列表</Link>
         </Typography.Paragraph>
@@ -48,6 +56,6 @@ export default function Help() {
           不支持在标注配置中执行用户上传的 React 或 JavaScript 代码。
         </Typography.Paragraph>
       </Card>
-    </main>
+    </WorkspaceLayout>
   );
 }

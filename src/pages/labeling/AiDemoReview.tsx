@@ -1,14 +1,4 @@
-import {
-  App,
-  Button,
-  Card,
-  Input,
-  Progress,
-  Space,
-  Table,
-  Tag,
-  Typography,
-} from 'antd';
+import { App, Button, Card, Input, Space, Table, Tag, Typography } from 'antd';
 import { useId, useState } from 'react';
 import { describeLabelingError } from '@/services/labeling';
 import type { DemoResult } from './NativeAi';
@@ -17,9 +7,11 @@ import ui from './workspaceUi.less';
 export default function AiDemoReview({
   results,
   onChange,
+  readOnly = false,
 }: {
   results: DemoResult[];
   onChange: (results: DemoResult[]) => Promise<void>;
+  readOnly?: boolean;
 }) {
   const { message } = App.useApp();
   const thresholdId = useId();
@@ -36,7 +28,7 @@ export default function AiDemoReview({
       row.reviewable,
   );
   async function markSelected(status: '已确认' | '需重标') {
-    if (saving || (status === '需重标' && !reason.trim())) return;
+    if (readOnly || saving || (status === '需重标' && !reason.trim())) return;
     const ids = new Set(selectedResults.map((row) => row.sample.sampleId));
     setSaving(true);
     try {
@@ -71,7 +63,11 @@ export default function AiDemoReview({
       title="候选结果核查"
       extra={`模型结果 · ${acceptedCount} 个已确认`}
     >
-      <Progress percent={100} status="normal" />
+      <Typography.Paragraph type="secondary">
+        已读取 {results.length} 条候选，{selectedResults.length}{' '}
+        条待处理结果已勾选。
+        {readOnly && '当前项目只读，不能修改核查结果。'}
+      </Typography.Paragraph>
       <Space wrap>
         <Input
           aria-label="标记需重标的原因"
@@ -79,17 +75,19 @@ export default function AiDemoReview({
           value={reason}
           maxLength={300}
           onChange={(event) => setReason(event.target.value)}
-          disabled={saving || !selectedResults.length}
+          disabled={readOnly || saving || !selectedResults.length}
         />
         <Button
           type="primary"
-          disabled={saving || !selectedResults.length}
+          disabled={readOnly || saving || !selectedResults.length}
           onClick={() => void markSelected('已确认')}
         >
           确认选中结果
         </Button>
         <Button
-          disabled={saving || !selectedResults.length || !reason.trim()}
+          disabled={
+            readOnly || saving || !selectedResults.length || !reason.trim()
+          }
           onClick={() => void markSelected('需重标')}
         >
           标记需重标
@@ -105,7 +103,8 @@ export default function AiDemoReview({
           selectedRowKeys: selectedIds,
           onChange: (keys) => setSelectedIds(keys.map(String)),
           getCheckboxProps: (row) => ({
-            disabled: saving || !row.reviewable || row.status !== '待核查',
+            disabled:
+              readOnly || saving || !row.reviewable || row.status !== '待核查',
           }),
         }}
         columns={[

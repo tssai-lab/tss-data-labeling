@@ -15,6 +15,7 @@ import { describeLabelingError } from '@/services/labeling';
 import { type LabelingUser, labelingAdmin } from '@/services/labelingAdmin';
 import { type LabelingIdentity, tasks } from '@/services/labelingTasks';
 import AgentRegistration from './AgentRegistration';
+import StatusBadge from './StatusBadge';
 import WorkspaceLayout from './WorkspaceLayout';
 import ui from './workspaceUi.less';
 
@@ -96,6 +97,7 @@ export default function Users() {
       />
       {error && <Alert type="error" showIcon message={error} />}
       <Card
+        title="标注用户"
         extra={
           <Button loading={busy} onClick={() => setRetry((n) => n + 1)}>
             重新读取权限与列表
@@ -120,7 +122,20 @@ export default function Users() {
                   ),
                 },
                 { title: '统一身份编号', dataIndex: 'identityUserId' },
-                { title: '资格', dataIndex: 'status' },
+                {
+                  title: '资格',
+                  dataIndex: 'status',
+                  render: (status: string) => (
+                    <StatusBadge status={status}>
+                      {(
+                        { ENABLED: '已启用', DISABLED: '已停用' } as Record<
+                          string,
+                          string
+                        >
+                      )[status] || status}
+                    </StatusBadge>
+                  ),
+                },
                 {
                   title: '标注管理员',
                   dataIndex: 'labelingAdmin',
