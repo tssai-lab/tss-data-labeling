@@ -151,10 +151,10 @@ class NativeWorkflowIntegrationTest {
                 """
                 <View><TimeSeries name="curve" value="$series" valueType="json" timeColumn="hour">
                 <Channel column="kwh"/></TimeSeries>
-                <TimeSeriesLabels name="events" toName="curve"><Label value="Spike"/></TimeSeriesLabels></View>
+                <TimeSeriesLabels name="energy_events" toName="curve"><Label value="Spike"/></TimeSeriesLabels></View>
                 """,
                 Map.of("series", Map.of("hour", List.of(0, 1, 2), "kwh", List.of(1, 9, 1))), Map.of(),
-                Map.of("id", "event1", "from_name", "events", "to_name", "curve", "type", "timeserieslabels",
+                Map.of("id", "event1", "from_name", "energy_events", "to_name", "curve", "type", "timeserieslabels",
                         "value", Map.of("start", 1, "end", 1, "instant", true, "timeserieslabels", List.of("Spike"))), null);
     }
 
@@ -188,9 +188,21 @@ class NativeWorkflowIntegrationTest {
             assertEquals("pcb.png", getApi("owner", "/projects/" + project + "/samples/" + sample
                     + "/native-input").path("displayName").asText());
         }
-        String spec = postApi("owner", "/projects/" + project + "/spec-versions",
-                Map.of("taskType", taskType, "schemaVersion", "label-studio-v1", "labels", List.of(),
-                        "editorConfig", Map.of("labelConfig", xml, "templateId", "custom")), 201)
+        String specPath = "/projects/" + project + "/spec-versions";
+        var editorConfig = new HashMap<String, Object>(Map.of("labelConfig", xml, "templateId", "custom"));
+        var specBody = new HashMap<String, Object>(Map.of("taskType", taskType, "schemaVersion", "label-studio-v1",
+                "labels", List.of(), "instructions", "项目判断标准", "editorConfig", editorConfig));
+        boolean energy = "qwen-timeseries".equals(modelId);
+        if (energy) {
+            editorConfig.put("energyRules", Map.of("lowDailyPercent", "60%"));
+            postApi("owner", specPath, specBody, 422);
+            editorConfig.put("energyRules", Map.of("lowDailyPercent", 60));
+            var legacySpec = postApi("owner", specPath, specBody, 201);
+            assertEquals(60, legacySpec.at("/editorConfig/energyRules/lowDailyPercent").asInt());
+            assertEquals("thresholds", legacySpec.at("/editorConfig/timeseriesPrelabelMode").asText());
+            editorConfig.remove("energyRules");
+        }
+        String spec = postApi("owner", specPath, specBody, 201)
                 .path("specVersionId").asText();
         String credential = UUID.randomUUID().toString();
         String adminUser = "native-prelabel-admin";
@@ -213,12 +225,20 @@ class NativeWorkflowIntegrationTest {
         } finally {
             org.springframework.test.util.ReflectionTestUtils.setField(aiController, field, previous);
         }
+        specBody.put("instructions", "新版本说明");
+        if (energy) editorConfig.put("energyRules", Map.of("lowDailyPercent", 70));
+        postApi("owner", specPath, specBody, 201);
         String root = "/internal/labeling/v1/executions";
         var claim = json.readTree(mvc.perform(post(root + "/claim").header("X-Worker-Key", credential))
                 .andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
         assertEquals(execution, claim.path("executionId").asText());
         assertEquals(xml, claim.at("/editorConfig/labelConfig").asText());
+        assertEquals("项目判断标准", claim.path("specInstructions").asText());
         assertEquals("fixture guide", claim.path("instructions").asText());
+        if (energy) {
+            assertEquals("instructions", claim.at("/editorConfig/timeseriesPrelabelMode").asText());
+            assertTrue(claim.at("/editorConfig/energyRules").isMissingNode());
+        }
         long generation = claim.path("generation").asLong();
         String path = root + "/" + execution;
         String samplePath = path + "/samples/" + sample;

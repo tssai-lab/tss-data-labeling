@@ -3,6 +3,8 @@
 import argparse
 from contextlib import redirect_stdout
 from functools import lru_cache
+
+from energy_evidence import DEFAULT_RULES, day_candidates, energy_candidates, select_energy_candidates
 import itertools
 import json
 import math
@@ -145,11 +147,62 @@ def prompted_model(weights, context_length, projector):
     return Llama(**options)
 
 
+def energy_result(binding, times, selected, daily_label=None, daily_evidence=None):
+    regions = prompted_intervals(binding, times, selected)
+    daily = binding.get("daily")
+    if not daily:
+        return regions
+
+    details = []
+    for candidate in selected:
+        label = candidate["label"]
+        start, end = candidate["start"], candidate["end"]
+        evidence = candidate["evidence"]
+        interval = f"{start:02d}:00" if start == end else f"{start:02d}:00–{end:02d}:00"
+        if "zeroHours" in evidence:
+            basis = f"连续 {evidence['zeroHours']} 个小时值为 0 kWh"
+        elif "missingHours" in evidence:
+            basis = f"缺少 {evidence['missingHours']} 个小时值"
+        else:
+            basis = f"实测 {evidence['valueKwh']:.4g} kWh，比较阈值 {evidence['thresholdKwh']:.4g} kWh"
+        details.append(f"{interval} {label}：{basis}")
+    if daily_label == "待复核":
+        summary = "日级状态待人工复核。"
+        if daily_evidence:
+            summary += " 可核查的日级依据：" + "；".join(
+                f"{label}：{reason}" for label, reason in daily_evidence.items()
+            ) + "。"
+    else:
+        summary = f"日级候选为「{daily_label}」：{daily_evidence[daily_label]}。"
+    if details:
+        summary += " 模型选中以下有数值依据的候选：" + "；".join(details) + "。"
+    else:
+        summary += " 本轮未选出有数值依据的区间候选。"
+    return series_result(binding, regions, daily_label, summary)
+
+
+def series_result(binding, regions, daily_label, rationale):
+    daily = binding["daily"]
+    if daily_label is None and daily.get("required", False):
+        raise ValueError("Model did not return a required daily label")
+    if not isinstance(rationale, str) or not rationale.strip():
+        raise ValueError("Model did not provide a judgment rationale")
+    day = [result(daily, "choices", {"choices": [daily_label]})] if daily_label is not None else []
+    rationale = {
+        "from_name": binding["rationale"],
+        "to_name": binding["toName"],
+        "type": "textarea",
+        "value": {"text": [rationale.strip()]},
+    }
+    return [*day, *regions, rationale]
+
+
 def prompted(request):
     binding = request["binding"]
     label_schema = {"type": "string", "enum": binding["labels"]}
     is_series = request.get("mode") == "timeseries"
     sample = request.get("sample")
+    grounded_energy = is_series and "legacyEnergyRules" in request
     if is_series:
         if request.get("image"):
             raise ValueError("Time-series mode requires numeric input")
@@ -169,16 +222,76 @@ def prompted(request):
         }
         properties = {"intervals": {"type": "array", "items": item_schema}}
         instruction = (
-            "Return intervals using existing timestamps only. Use an empty intervals array "
-            "when the sample lacks evidence for any configured label."
+            "Apply the project guidelines to the supplied readings and historical statistics. "
+            "Return intervals using existing timestamps only, with start at or before end. "
+            "A point uses the same start and end. Return an empty intervals array when there is "
+            "insufficient evidence for any configured interval label. Treat null readings as missing. "
+            "Do not invent missing readings, historical statistics, or operating causes."
         )
+        if grounded_energy:
+            rules = {**DEFAULT_RULES, **request["legacyEnergyRules"]}
+            numeric_events = energy_candidates(times, values, request.get("sample"), rules)
+            evidence = {key: event for key, event in numeric_events.items() if event["label"] in binding["labels"]}
+            sample["eligibleCandidates"] = evidence
+            sample["energyRules"] = rules
+            properties = {"selectedIds": {
+                "type": "array",
+                "items": {"type": "string", "enum": list(evidence)} if evidence else {"type": "string"},
+                **({} if evidence else {"maxItems": 0}),
+            }}
+            instruction = (
+                "Select review candidates using only the provided eligibleCandidates IDs. "
+                "The listed labels and hours already have numeric evidence. Do not generate new intervals "
+                "or change boundaries. Treat energyRules as the frozen numeric criteria. "
+                "Return an empty selectedIds array if no candidate should be reviewed."
+            )
+            daily = binding.get("daily")
+            if daily:
+                if "待复核" not in daily["labels"]:
+                    raise ValueError("Legacy energy specification requires a day review label")
+                daily_evidence = day_candidates(values, request.get("sample"), numeric_events, daily["labels"], rules)
+                daily_labels = list(daily_evidence)
+                daily_labels.append("待复核")
+                sample["dailyEvidence"] = daily_evidence
+                properties["dailyLabel"] = {"type": "string", "enum": daily_labels}
+                instruction += (
+                    " Also select one dailyLabel from the allowed values. Prefer the supported daily label "
+                    "when its evidence is sufficient. Use 待复核 when evidence is insufficient or conflicting."
+                )
+                if not evidence and len(daily_labels) == 1:
+                    return energy_result(binding, times, [], "待复核", daily_evidence)
+            elif not evidence:
+                return []
+        else:
+            sample.update(request.get("seriesMetadata", {}))
+            daily = binding.get("daily")
+            if daily:
+                daily_label = {"type": "string", "enum": daily["labels"]}
+                properties["dailyLabel"] = daily_label if daily.get("required") else {
+                    "anyOf": [daily_label, {"type": "null"}],
+                }
+                properties["rationale"] = {"type": "string"}
+                instruction += (
+                    " Give the dailyLabel using the configured daily labels, and write the rationale "
+                    "in the language of the guidelines and labels. Cite the supplied readings, hours "
+                    "or statistics that support the daily label and any selected intervals. "
+                    "If evidence is insufficient, explain why and use a configured review label if available."
+                )
+                if not daily.get("required"):
+                    instruction += " If no daily label is supported and there is no review label, return null for dailyLabel."
     else:
         properties = {"label": label_schema}
         instruction = "Select one configured label. Return JSON with a single label field."
-    content = json.dumps({
+    prompt = {
         "task": instruction, "labels": binding["labels"],
         "guidelines": request["guidelines"], "sample": sample,
-    }, ensure_ascii=False)
+    }
+    if is_series and not grounded_energy and binding.get("daily"):
+        prompt["dailyLabels"] = binding["daily"]["labels"]
+    if request.get("batchNotes"):
+        prompt["task"] += " Apply the project guidelines as the annotation criteria. Use batchNotes only where consistent with those criteria."
+        prompt["batchNotes"] = request["batchNotes"]
+    content = json.dumps(prompt, ensure_ascii=False)
     if request.get("image"):
         import base64
         import mimetypes
@@ -219,19 +332,37 @@ def prompted(request):
                                request["projector"] if request.get("image") else None)
         response = model.create_chat_completion(**completion)
     output = json.loads(response["choices"][0]["message"]["content"])
+    if grounded_energy:
+        selected = select_energy_candidates(evidence, output["selectedIds"])
+        if binding.get("daily"):
+            daily_label = output["dailyLabel"]
+            if daily_label not in daily_labels:
+                raise ValueError("Model selected a daily label without sufficient evidence")
+            return energy_result(binding, times, selected, daily_label, daily_evidence)
+        return energy_result(binding, times, selected)
     if is_series:
-        return prompted_intervals(binding, times, output["intervals"])
+        regions = prompted_intervals(binding, times, output["intervals"])
+        if binding.get("daily"):
+            return series_result(binding, regions, output["dailyLabel"], output["rationale"])
+        return regions
     return [result(binding, "choices", {"choices": [output["label"]]})]
 
 
 def prompted_intervals(binding, times, predictions):
+    if not isinstance(predictions, list):
+        raise ValueError("Model intervals must be an array")
+    timestamps = set(times)
     candidates = []
     seen = set()
     for item in predictions:
-        start, end, label = item["start"], item["end"], item["label"]
+        if not isinstance(item, dict):
+            raise ValueError("Model interval must be an object")
+        start, end, label = item.get("start"), item.get("end"), item.get("label")
         if (type(start) not in (int, float) or type(end) not in (int, float)
-                or start not in times or end not in times or start > end):
+                or start not in timestamps or end not in timestamps or start > end):
             raise ValueError("Interval must use ordered timestamps from the sample")
+        if not isinstance(label, str) or label not in binding["labels"]:
+            raise ValueError("Model returned an interval label outside the project configuration")
         key = (start, end, label)
         if key in seen:
             continue

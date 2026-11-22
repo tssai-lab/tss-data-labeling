@@ -1,0 +1,33 @@
+<View>
+  <Header value="站点日能耗标注"/>
+  <Text name="context" value="$context"/>
+  <TimeSeries name="curve" value="$series" valueType="json" timeColumn="hour_local">
+    <Channel column="value_kwh" units="kWh" legend="小时能耗"/>
+  </TimeSeries>
+  <Choices name="energy_daily" toName="curve" choice="single-radio" required="true">
+    <Choice value="正常"/>
+    <Choice value="全天零能耗"/>
+    <Choice value="部分时段零能耗"/>
+    <Choice value="低负荷"/>
+    <Choice value="高负荷"/>
+    <Choice value="尖峰"/>
+    <Choice value="跌落"/>
+    <Choice value="缺测"/>
+    <Choice value="疑似计量异常"/>
+    <Choice value="疑似班次变化"/>
+    <Choice value="节假日模式"/>
+    <Choice value="待复核"/>
+  </Choices>
+  <TimeSeriesLabels name="energy_events" toName="curve">
+    <Label value="全天零能耗" background="#457b9d"/>
+    <Label value="部分时段零能耗" background="#277da1"/>
+    <Label value="尖峰" background="#e76f51"/>
+    <Label value="跌落" background="#9b5de5"/>
+    <Label value="缺测" background="#888888"/>
+  </TimeSeriesLabels>
+  <TextArea name="energy_rationale" toName="curve" required="true" rows="3"
+            placeholder="填写触发值、历史基线或现场依据；AI 候选可由人工补充。"/>
+  <Choices name="human_confidence" toName="curve" choice="single-radio">
+    <Choice value="高"/><Choice value="中"/><Choice value="低"/><Choice value="证据不足"/>
+  </Choices>
+</View>
