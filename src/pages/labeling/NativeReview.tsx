@@ -156,7 +156,7 @@ export default function NativeReview({
               if (guard.current()) setResultSource('AI');
             }}
           >
-            AI 候选结果（演示）
+            AI 候选结果
           </Button>
           <Button
             type={resultSource === 'HUMAN' ? 'primary' : 'default'}
@@ -171,9 +171,16 @@ export default function NativeReview({
           <Alert
             type="info"
             showIcon
-            message="AI 演示结果：核查操作仅在当前页面会话生效，不写入真实项目结果。"
+            message="请核查模型候选，确认采用或标记需重标。"
           />
-          <AiDemoReview results={aiResults} onChange={onAiResultsChange} />
+          <AiDemoReview
+            projectId={project.projectId}
+            showImages={['COMPUTER_VISION', 'IMAGE_CLASSIFICATION'].includes(
+              project.taskType,
+            )}
+            results={aiResults}
+            onChange={onAiResultsChange}
+          />
         </>
       ) : (
         <>
