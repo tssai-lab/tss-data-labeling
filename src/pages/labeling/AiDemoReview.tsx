@@ -163,8 +163,18 @@ export default function AiDemoReview({
           {
             title: 'AI 候选标签',
             dataIndex: 'label',
-            render: (value: string) => (
-              <strong className={ui.aiDemoLabel}>{value}</strong>
+            render: (value: string, row) => (
+              <Space direction="vertical" size={2}>
+                <strong className={ui.aiDemoLabel}>{value}</strong>
+                {row.rationale && (
+                  <details>
+                    <summary>判断依据</summary>
+                    <Typography.Text type="secondary">
+                      {row.rationale}
+                    </Typography.Text>
+                  </details>
+                )}
+              </Space>
             ),
           },
           {
