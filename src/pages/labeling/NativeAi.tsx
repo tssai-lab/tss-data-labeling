@@ -9,20 +9,21 @@ import {
   Tag,
   Typography,
 } from 'antd';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import type {
   NativeProject,
   NativeSample,
   NativeSpec,
 } from '@/services/nativeLabeling';
-import ui from './workspaceUi.less';
 import AiExecutionShowcase from './AiExecutionShowcase';
+import ui from './workspaceUi.less';
 
 export type DemoResult = {
   reason?: string;
   sample: NativeSample;
   label: string;
   confidence: number | null;
+  reviewable?: boolean;
   status: '待核查' | '已确认' | '需重标' | '执行失败';
 };
 
@@ -39,7 +40,10 @@ export default function NativeAi({
   version,
   execution,
   onPublish,
-  onComplete,
+  results = [],
+  progress = 0,
+  running = false,
+  submitting = false,
   onReview,
 }: {
   project: NativeProject;
@@ -47,78 +51,58 @@ export default function NativeAi({
   version?: NativeSpec;
   execution?: { modelId: string; instructions: string };
   onPublish?: (config: { modelId: string; instructions: string }) => void;
-  onComplete?: (results: DemoResult[]) => void;
+  results?: DemoResult[];
+  progress?: number;
+  running?: boolean;
+  submitting?: boolean;
   onReview?: () => void;
 }) {
-  const [modelId, setModelId] = useState('demo-default');
+  const [modelId, setModelId] = useState('');
   const [instructions, setInstructions] = useState('');
-  const [results, setResults] = useState<DemoResult[]>([]);
-  const scopeKey = useMemo(
-    () => selectedSamples.map((sample) => sample.sampleId).join('|'),
-    [selectedSamples],
-  );
-  const labels = version?.labels.map((label) => label.name).filter(Boolean) || [];
   const modelOptions =
     project.taskType === 'TIME_SERIES' ||
     project.taskType === 'TIMESERIES_ANNOTATION'
-      ? [
-          { value: 'demo-ts-1', label: '时序异常检测模型 · 演示版 1.2' },
-          { value: 'demo-ts-2', label: '设备状态预测模型 · 演示版 0.9' },
-        ]
+      ? [{ value: 'qwen-timeseries', label: 'Qwen3-VL · 能耗时序' }]
       : [
-          { value: 'demo-cv-1', label: '工业视觉质检模型 · 演示版 2.4' },
-          { value: 'demo-cv-2', label: '通用图像识别模型 · 演示版 1.7' },
+          { value: 'qwen-image', label: 'Qwen3-VL · 图像分类' },
+          { value: 'yolo-pcb', label: 'YOLO · PCB 缺陷检测' },
         ];
   useEffect(() => {
     setModelId(
       project.taskType === 'TIME_SERIES' ||
         project.taskType === 'TIMESERIES_ANNOTATION'
-        ? 'demo-ts-1'
-        : 'demo-cv-1',
+        ? 'qwen-timeseries'
+        : 'qwen-image',
     );
   }, [project.taskType]);
 
-  function makeDemoResults(): DemoResult[] {
-    const confidenceValues = [0.97, 0.91, 0.78, 0.64, 0.43, 0.86];
-    return selectedSamples.map<DemoResult>((sample, index) => {
-      const failed = index > 0 && index % 7 === 6;
-      return {
-        sample,
-        label: failed
-          ? '—'
-          : labels[index % Math.max(labels.length, 1)] ||
-            (index % 2 === 0 ? '正常' : '缺陷'),
-        confidence: failed ? null : confidenceValues[index % confidenceValues.length],
-        status: failed ? '执行失败' : '待核查',
-      };
-    });
-  }
-
-  useEffect(() => {
-    if (!execution) return;
-    const generated = makeDemoResults();
-    setResults(generated);
-    onComplete?.(generated);
-  }, [execution, project.projectId, scopeKey, version?.specVersionId]);
-
   if (execution) {
-    return <AiExecutionShowcase
-      project={project}
-      samples={selectedSamples}
-      results={results}
-      progress={results.length ? 100 : 0}
-      running={false}
-      modelName={modelOptions.find((model) => model.value === execution.modelId)?.label || execution.modelId}
-      instructions={execution.instructions}
-      versionNo={version?.versionNo}
-      onReview={onReview}
-    />;
+    return (
+      <AiExecutionShowcase
+        project={project}
+        samples={selectedSamples}
+        results={results}
+        progress={progress}
+        running={running}
+        modelName={
+          modelOptions.find((model) => model.value === execution.modelId)
+            ?.label || execution.modelId
+        }
+        instructions={execution.instructions}
+        versionNo={version?.versionNo}
+        onReview={onReview}
+      />
+    );
   }
 
   return (
     <div className={ui.aiConsole}>
       <div className={ui.nativeAiGrid}>
-        <Card className={ui.aiDemoCard} title="本轮执行范围" extra={<Tag color="blue">{selectedSamples.length} 个样本</Tag>}>
+        <Card
+          className={ui.aiDemoCard}
+          title="本轮执行范围"
+          extra={<Tag color="blue">{selectedSamples.length} 个样本</Tag>}
+        >
           {selectedSamples.length ? (
             <Table<NativeSample>
               rowKey="sampleId"
@@ -129,10 +113,16 @@ export default function NativeAi({
               columns={[
                 {
                   title: '样本',
-                  render: (_, sample) => sample.metadata.displayName || sample.sourcePath,
+                  render: (_, sample) =>
+                    sample.metadata.displayName || sample.sourcePath,
                   ellipsis: true,
                 },
-                { title: '类型', dataIndex: 'mediaType', width: 110, ellipsis: true },
+                {
+                  title: '类型',
+                  dataIndex: 'mediaType',
+                  width: 110,
+                  ellipsis: true,
+                },
               ]}
             />
           ) : (
@@ -144,12 +134,14 @@ export default function NativeAi({
           <Space direction="vertical" size="middle" style={{ width: '100%' }}>
             <div className={ui.aiModelBadge}>
               <span>任务类型</span>
-              <strong>{taskTypeNames[project.taskType] || project.taskType}</strong>
+              <strong>
+                {taskTypeNames[project.taskType] || project.taskType}
+              </strong>
               <small>规范 v{version?.versionNo || '—'}</small>
             </div>
             <Select
-              aria-label="选择演示模型"
-              value={modelId === 'demo-default' ? modelOptions[0].value : modelId}
+              aria-label="选择预标注模型"
+              value={modelId || modelOptions[0].value}
               onChange={setModelId}
               options={modelOptions}
             />
@@ -165,13 +157,21 @@ export default function NativeAi({
               className={ui.aiDemoCta}
               type="primary"
               block
-              disabled={!selectedSamples.length}
-              onClick={() => onPublish?.({ modelId: modelId === 'demo-default' ? modelOptions[0].value : modelId, instructions })}
+              disabled={submitting || !selectedSamples.length}
+              loading={submitting}
+              onClick={() =>
+                onPublish?.({
+                  modelId: modelId || modelOptions[0].value,
+                  instructions,
+                })
+              }
             >
-              <span style={{ color: '#fff', WebkitTextFillColor: '#fff' }}>确认发布并查看 AI 演示结果</span>
+              <span style={{ color: '#fff', WebkitTextFillColor: '#fff' }}>
+                确认发布并查看 AI 结果
+              </span>
             </Button>
             <Typography.Text type="secondary">
-              当前为前端演示，发布后模拟执行，不会创建真实 AI 任务。
+              提交后在后台生成候选，可在执行页查看进度。
             </Typography.Text>
           </Space>
         </Card>

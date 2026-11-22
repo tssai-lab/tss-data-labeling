@@ -45,7 +45,11 @@ export default function NativePublish({
   mode: 'HUMAN' | 'AI';
   onModeChange: (mode: 'HUMAN' | 'AI') => void;
   initialSelection?: string[];
-  onPublishAi: (samples: NativeSample[], version: NativeSpec, config: { modelId: string; instructions: string }) => void;
+  onPublishAi: (
+    samples: NativeSample[],
+    version: NativeSpec,
+    config: { modelId: string; instructions: string },
+  ) => void;
   project: NativeProject;
   samples: NativeSample[];
   version?: NativeSpec;
@@ -83,12 +87,16 @@ export default function NativePublish({
   const selectableIds = visible
     .filter((sample) => reopen || !accepted.has(sample.sampleId))
     .map((sample) => sample.sampleId);
-  const selectionWithVisible = [...new Set([...selected.map(String), ...selectableIds])];
+  const selectionWithVisible = [
+    ...new Set([...selected.map(String), ...selectableIds]),
+  ];
   function selectVisible(checked: boolean): void {
     const visibleKeys = new Set(selectableIds);
-    setSelected(checked
-      ? selectionWithVisible
-      : selected.filter((id) => !visibleKeys.has(String(id))));
+    setSelected(
+      checked
+        ? selectionWithVisible
+        : selected.filter((id) => !visibleKeys.has(String(id))),
+    );
     setPlan(undefined);
   }
   const selectedSamples = useMemo(
@@ -127,7 +135,10 @@ export default function NativePublish({
       <div className={ui.aiConsole}>
         <header className={ui.aiPageHeader}>
           <div>
-            <span>AI 标注 · 规范 v{version?.versionNo} · 已选 {selectedSamples.length} 个样本</span>
+            <span>
+              AI 标注 · 规范 v{version?.versionNo} · 已选{' '}
+              {selectedSamples.length} 个样本
+            </span>
           </div>
           <Button onClick={() => setAiPage(false)}>返回选择范围</Button>
         </header>
@@ -135,6 +146,7 @@ export default function NativePublish({
           project={project}
           selectedSamples={selectedSamples}
           version={version}
+          submitting={busy}
           onPublish={(config) => {
             if (version) onPublishAi(selectedSamples, version, config);
           }}
@@ -151,9 +163,12 @@ export default function NativePublish({
             type="success"
             showIcon
             message={`已发布 ${publishedPlan.packages.length} 个任务包，共 ${publishedPlan.sampleCount} 个样本`}
-            description={publishedPlan.packages.map((pkg: { sequenceNo: number; sampleCount: number }) =>
-              `第 ${pkg.sequenceNo} 包：${pkg.sampleCount} 个样本`,
-            ).join('；')}
+            description={publishedPlan.packages
+              .map(
+                (pkg: { sequenceNo: number; sampleCount: number }) =>
+                  `第 ${pkg.sequenceNo} 包：${pkg.sampleCount} 个样本`,
+              )
+              .join('；')}
           />
         )}
         {rework && (
@@ -185,14 +200,14 @@ export default function NativePublish({
           disabled={locked || !!plan}
         >
           <Radio value="HUMAN">人工标注</Radio>
-          <Radio value="AI">AI 标注（前端演示）</Radio>
+          <Radio value="AI">AI 标注</Radio>
         </Radio.Group>
         {mode === 'AI' && (
           <Alert
             type="info"
             showIcon
-            message="当前为前端演示模式"
-            description="选择本轮样本后，进入下一页配置模型、模拟执行并核查候选结果。演示操作仅在页面内生效。"
+            message="AI 预标注"
+            description="选择本轮样本后，配置模型并提交后台执行，完成后核查候选结果。"
           />
         )}
         <Checkbox
@@ -213,7 +228,11 @@ export default function NativePublish({
         />
         <Space wrap>
           <Button
-            disabled={locked || !selectableIds.length || selectionWithVisible.length > 10000}
+            disabled={
+              locked ||
+              !selectableIds.length ||
+              selectionWithVisible.length > 10000
+            }
             onClick={() => selectVisible(true)}
           >
             全选筛选结果（共 {selectableIds.length} 个）
@@ -270,87 +289,99 @@ export default function NativePublish({
             },
           ]}
         />
-        {mode === 'HUMAN' && <Space wrap>
-          <label htmlFor={sizeId}>
-            每包样本数{' '}
-            <InputNumber
-              id={sizeId}
-              aria-label="每包样本数"
-              min={1}
-              max={1000}
-              value={size}
-              disabled={!!plan}
-              onChange={(v) => setSize(v || 1)}
-            />
-          </label>
-          <label htmlFor={peopleId}>
-            每个样本标注人数{' '}
-            <InputNumber
-              id={peopleId}
-              aria-label="每个样本标注人数"
-              min={1}
-              max={10}
-              value={people}
-              disabled={!!plan}
-              onChange={(v) => setPeople(v || 1)}
-            />
-          </label>
-        </Space>}
+        {mode === 'HUMAN' && (
+          <Space wrap>
+            <label htmlFor={sizeId}>
+              每包样本数{' '}
+              <InputNumber
+                id={sizeId}
+                aria-label="每包样本数"
+                min={1}
+                max={1000}
+                value={size}
+                disabled={!!plan}
+                onChange={(v) => setSize(v || 1)}
+              />
+            </label>
+            <label htmlFor={peopleId}>
+              每个样本标注人数{' '}
+              <InputNumber
+                id={peopleId}
+                aria-label="每个样本标注人数"
+                min={1}
+                max={10}
+                value={people}
+                disabled={!!plan}
+                onChange={(v) => setPeople(v || 1)}
+              />
+            </label>
+          </Space>
+        )}
         {mode === 'HUMAN' && selected.length > 0 && (
           <Typography.Text type="secondary">
-            预计生成 {Math.ceil(selected.length / size)} 个任务包，每包最多 {size} 个样本
+            预计生成 {Math.ceil(selected.length / size)} 个任务包，每包最多{' '}
+            {size} 个样本
             {selected.length % size > 0
               ? `，最后一包 ${selected.length % size} 个样本。剩余样本会单独成包。`
               : '。'}
           </Typography.Text>
         )}
-        {mode === 'HUMAN' && <Button
-          disabled={
-            locked ||
-            !version ||
-            !selected.length ||
-            selected.length > 10000 ||
-            !!plan
-          }
-          loading={busy}
-          onClick={() =>
-            void run(async () => {
-              const result = await post(
-                `/projects/${project.projectId}/package-plans`,
-                {
-                  specVersionId: version!.specVersionId,
-                  packageSize: size,
-                  annotatorsPerSample: people,
-                  samples: selected.map((id) => ({
-                    sampleId: id,
-                    ...(rework?.references[String(id)]
-                      ? { referenceResultId: rework.references[String(id)] }
-                      : {}),
-                  })),
-                },
-                operationKey(),
-              );
-              setPlan(result);
-            })
-          }
-        >
-          生成发布计划
-        </Button>}
+        {mode === 'HUMAN' && (
+          <Button
+            disabled={
+              locked ||
+              !version ||
+              !selected.length ||
+              selected.length > 10000 ||
+              !!plan
+            }
+            loading={busy}
+            onClick={() =>
+              void run(async () => {
+                if (!version) return;
+                const result = await post(
+                  `/projects/${project.projectId}/package-plans`,
+                  {
+                    specVersionId: version.specVersionId,
+                    packageSize: size,
+                    annotatorsPerSample: people,
+                    samples: selected.map((id) => ({
+                      sampleId: id,
+                      ...(rework?.references[String(id)]
+                        ? { referenceResultId: rework.references[String(id)] }
+                        : {}),
+                    })),
+                  },
+                  operationKey(),
+                );
+                setPlan(result);
+              })
+            }
+          >
+            生成发布计划
+          </Button>
+        )}
         {mode === 'AI' && (
           <div className={ui.aiNextStep}>
             <div>
               <strong>本轮使用 AI 标注</strong>
-              <span>已选 {selected.length} 个样本 · 下一步选择模型与执行要求</span>
+              <span>
+                已选 {selected.length} 个样本 · 下一步选择模型与执行要求
+              </span>
             </div>
             <Button
               className={`${ui.aiDemoCta} ${!canConfigureAi ? ui.aiDemoCtaDisabled : ''}`}
               size="large"
               type="primary"
-              style={canConfigureAi ? {
-                backgroundColor: '#1c3faa',
-                borderColor: '#1c3faa',
-                color: '#fff',
-              } : undefined}
+              style={
+                canConfigureAi
+                  ? {
+                      backgroundColor: '#1c3faa',
+                      borderColor: '#1c3faa',
+                      color: '#fff',
+                    }
+                  : undefined
+              }
               disabled={!canConfigureAi}
               onClick={() => {
                 setAiPage(true);
@@ -358,11 +389,15 @@ export default function NativePublish({
               }}
             >
               <span
-                style={canConfigureAi ? {
-                  color: '#fff',
-                  WebkitTextFillColor: '#fff',
-                  fontWeight: 700,
-                } : undefined}
+                style={
+                  canConfigureAi
+                    ? {
+                        color: '#fff',
+                        WebkitTextFillColor: '#fff',
+                        fontWeight: 700,
+                      }
+                    : undefined
+                }
               >
                 下一步：配置 AI 标注
               </span>
@@ -379,16 +414,23 @@ export default function NativePublish({
               style={{ marginBottom: 16 }}
             />
             <Typography.Paragraph>
-              分包明细：{plan.packageSampleCounts.map((count: number, index: number) =>
-                `第 ${index + 1} 包 ${count} 个样本`,
-              ).join('；')}
+              分包明细：
+              {plan.packageSampleCounts
+                .map(
+                  (count: number, index: number) =>
+                    `第 ${index + 1} 包 ${count} 个样本`,
+                )
+                .join('；')}
             </Typography.Paragraph>
             <Typography.Title level={5}>本轮样本范围</Typography.Title>
             <Table
               size="small"
               rowKey="sampleId"
               dataSource={selectedSamples}
-              pagination={{ pageSize: 5, showTotal: (total) => `共 ${total} 个样本` }}
+              pagination={{
+                pageSize: 5,
+                showTotal: (total) => `共 ${total} 个样本`,
+              }}
               columns={[
                 {
                   title: '样本名称',
@@ -413,7 +455,8 @@ export default function NativePublish({
             </Typography.Title>
             <Space direction="vertical" style={{ width: '100%' }}>
               <Typography.Text>
-                第 {version?.versionNo} 版 · 模板 {version?.editorConfig.templateId}（
+                第 {version?.versionNo} 版 · 模板{' '}
+                {version?.editorConfig.templateId}（
                 {version?.editorConfig.templateVersion}）
               </Typography.Text>
               {version?.instructions && (
@@ -422,9 +465,7 @@ export default function NativePublish({
                 </Typography.Paragraph>
               )}
               {specLabels.length > 0 && (
-                <Typography.Text>
-                  标签：{specLabels.join('、')}
-                </Typography.Text>
+                <Typography.Text>标签：{specLabels.join('、')}</Typography.Text>
               )}
               <details>
                 <summary>查看完整标注配置</summary>
