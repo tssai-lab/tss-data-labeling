@@ -197,6 +197,10 @@ class NativeWorkflowIntegrationTest {
             editorConfig.put("energyRules", Map.of("lowDailyPercent", "60%"));
             postApi("owner", specPath, specBody, 422);
             editorConfig.put("energyRules", Map.of("lowDailyPercent", 60));
+            var legacySpec = postApi("owner", specPath, specBody, 201);
+            assertEquals(60, legacySpec.at("/editorConfig/energyRules/lowDailyPercent").asInt());
+            assertEquals("thresholds", legacySpec.at("/editorConfig/timeseriesPrelabelMode").asText());
+            editorConfig.remove("energyRules");
         }
         String spec = postApi("owner", specPath, specBody, 201)
                 .path("specVersionId").asText();
@@ -231,7 +235,10 @@ class NativeWorkflowIntegrationTest {
         assertEquals(xml, claim.at("/editorConfig/labelConfig").asText());
         assertEquals("项目判断标准", claim.path("specInstructions").asText());
         assertEquals("fixture guide", claim.path("instructions").asText());
-        if (energy) assertEquals(60, claim.at("/editorConfig/energyRules/lowDailyPercent").asInt());
+        if (energy) {
+            assertEquals("instructions", claim.at("/editorConfig/timeseriesPrelabelMode").asText());
+            assertTrue(claim.at("/editorConfig/energyRules").isMissingNode());
+        }
         long generation = claim.path("generation").asLong();
         String path = root + "/" + execution;
         String samplePath = path + "/samples/" + sample;

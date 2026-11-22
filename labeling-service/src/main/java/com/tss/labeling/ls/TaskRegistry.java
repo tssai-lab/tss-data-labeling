@@ -42,6 +42,9 @@ public class TaskRegistry {
         checkCategory(type,parsed);
         validateEnergyRules(type, parsed, config.path("energyRules"));
         ObjectNode frozen=config.deepCopy();
+        if (isTimeSeries(type)) {
+            frozen.put("timeseriesPrelabelMode", config.has("energyRules") ? "thresholds" : "instructions");
+        }
         frozen.put("engine","label-studio");
         frozen.put("pluginVersion",PLUGIN_VERSION);
         frozen.put("capabilityContractVersion",2);

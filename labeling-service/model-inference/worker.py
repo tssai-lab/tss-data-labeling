@@ -43,19 +43,20 @@ def binding_for(config, mode):
     if not labels or any(label.startswith("$") for label in labels):
         raise ValueError("Expected static project labels")
     binding = {"fromName": control.attrib["name"], "toName": target.attrib["name"], "labels": labels}
-    if mode == "timeseries" and binding["fromName"] == "energy_events":
+    if mode == "timeseries":
         daily = root.find(".//Choices[@name='energy_daily']")
         rationale = root.find(".//TextArea[@name='energy_rationale']")
-        if daily is not None or rationale is not None:
+        if ((daily is not None and rationale is not None) or
+                (binding["fromName"] == "energy_events" and (daily is not None or rationale is not None))):
             if (daily is None or rationale is None
                     or daily.get("toName") != binding["toName"]
                     or rationale.get("toName") != binding["toName"]):
                 raise ValueError("Energy day and rationale controls must bind to the same curve")
-            daily_labels = [choice.attrib["value"] for choice in daily.findall("Choice")]
-            if "待复核" not in daily_labels:
-                raise ValueError("Shared energy specification requires a day review label")
+            daily_labels = [choice.attrib["value"] for choice in daily.iter("Choice")]
+            if not daily_labels or any(label.startswith("$") for label in daily_labels):
+                raise ValueError("Expected static daily project labels")
             binding["daily"] = {"fromName": daily.attrib["name"], "toName": binding["toName"],
-                                "labels": daily_labels}
+                                "labels": daily_labels, "required": daily.get("required") == "true"}
             binding["rationale"] = rationale.attrib["name"]
     return binding, source[1:], target
 
@@ -87,7 +88,8 @@ class Worker:
     def infer(self, path, lease, execution):
         input_data = self.call("GET", path + "/data", query=lease)
         mode = self.model["mode"]
-        binding, source, target = binding_for(execution["editorConfig"], mode)
+        config = execution["editorConfig"]
+        binding, source, target = binding_for(config, mode)
         task_data = input_data["task"]["data"]
         request = dict(self.model["options"], binding=binding)
         spec_instructions = (execution.get("specInstructions") or "").strip()
@@ -104,7 +106,17 @@ class Worker:
             if "daily_kwh" in task_data:
                 context["dailyKwh"] = task_data["daily_kwh"]
             request["sample"] = context
-            request["energyRules"] = execution["editorConfig"].get("energyRules", {})
+            if binding["fromName"] == "energy_events" and config.get("timeseriesPrelabelMode") != "instructions":
+                request["legacyEnergyRules"] = config.get("energyRules", {})
+            else:
+                request["seriesMetadata"] = {
+                    "timeColumn": target.attrib["timeColumn"],
+                    "measurementColumn": channel.attrib["column"],
+                    "units": channel.get("units"),
+                }
+                for key in ("station", "date", "context"):
+                    if key in task_data:
+                        context[key] = task_data[key]
             return prelabel.prompted(request)
 
         resource, = [item for item in input_data["resources"] if item["field"] == source]
