@@ -60,7 +60,9 @@ import WorkspaceLayout from './WorkspaceLayout';
 type PrelabelOutput = {
   sampleId: string;
   status: string;
-  result: { result?: { value?: Record<string, unknown> }[] } | null;
+  result: {
+    result?: { from_name?: string; value?: Record<string, unknown> }[];
+  } | null;
   confidence: number | null;
   errorMessage?: string;
   errorCode?: string;
@@ -365,10 +367,18 @@ export default function ServerWorkspace() {
           const sample = samplesById.get(output.sampleId);
           if (!sample || output.status === 'PENDING') return [];
           const succeeded = output.status === 'SUCCEEDED';
+          const rationale = output.result?.result?.find(
+            (entry) => entry.from_name === 'energy_rationale',
+          )?.value?.text;
           return [
             {
               sample,
               label: succeeded ? candidateLabel(output) : '—',
+              rationale: Array.isArray(rationale)
+                ? rationale
+                    .filter((line) => typeof line === 'string')
+                    .join('\n')
+                : undefined,
               confidence: output.confidence,
               status: succeeded
                 ? accepted.has(output.sampleId)

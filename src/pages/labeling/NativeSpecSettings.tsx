@@ -1,4 +1,13 @@
-import { Alert, Button, Card, Checkbox, Input, Select, Space, Typography } from 'antd';
+import {
+  Alert,
+  Button,
+  Card,
+  Checkbox,
+  Input,
+  Select,
+  Space,
+  Typography,
+} from 'antd';
 import { useEffect, useId, useRef, useState } from 'react';
 import { labelingJson, operationKey, post } from '@/services/labeling';
 import {
@@ -9,11 +18,11 @@ import {
   type NativeSpec,
   nativeDefaults,
 } from '@/services/nativeLabeling';
-import LocalEditor from './LocalEditor';
-import LegacyProjectSettings from './LegacyProjectSettings';
 import { isLegacyProjectSpec } from '@/services/projectCompatibility.mjs';
-import NativeEditor from './NativeEditor';
 import styles from './annotationWorkspace.less';
+import LegacyProjectSettings from './LegacyProjectSettings';
+import LocalEditor from './LocalEditor';
+import NativeEditor from './NativeEditor';
 
 function NativeConfigurationSettings({
   project,
@@ -56,7 +65,7 @@ function NativeConfigurationSettings({
       () =>
         editorGuard.current() &&
         (!metadataDirty.current ||
-          window.confirm('标注说明或完成规则尚未保存，是否放弃并离开？')),
+          window.confirm('标注设置尚未保存，是否放弃并离开？')),
     );
   };
   useEffect(
@@ -77,8 +86,7 @@ function NativeConfigurationSettings({
       (isTimeSeries
         ? nativeDefaults.TIME_SERIES
         : nativeDefaults.COMPUTER_VISION);
-    if (seed || !samples.length || isTimeSeries)
-      setXml(seed || fallback);
+    if (seed || !samples.length || isTimeSeries) setXml(seed || fallback);
     else {
       setXml('');
       void labelingJson<any>(
@@ -230,7 +238,7 @@ function NativeConfigurationSettings({
           <section className={styles.specField}>
             <div className={styles.specFieldHeading}>
               <label htmlFor={instructionsId}>标注说明</label>
-              <span>向标注员说明判断标准和特殊情况</span>
+              <span>标注员和 Qwen 预标注共用的判断标准和特殊情况</span>
             </div>
             <Input.TextArea
               id={instructionsId}
@@ -238,7 +246,11 @@ function NativeConfigurationSettings({
               value={instructions}
               readOnly={locked}
               autoSize={{ minRows: 3, maxRows: 6 }}
-              placeholder="例如：发现表面裂纹时选择“缺陷”；无法判断时请备注原因。"
+              placeholder={
+                isTimeSeries
+                  ? '例如：当天用量低于过去 30 天日用量中位数的 60% 时，标为低负荷，并说明判断依据。'
+                  : '例如：发现表面裂纹时选择“缺陷”；无法判断时请备注原因。'
+              }
               onChange={(e) => {
                 metadataDirty.current = true;
                 setInstructions(e.target.value);
@@ -341,7 +353,16 @@ function NativeConfigurationSettings({
   );
 }
 
-export default function NativeSpecSettings(props: Parameters<typeof NativeConfigurationSettings>[0]) {
-  return isLegacyProjectSpec(props.version, props.project.taskType) || (!props.version && ['IMAGE_CLASSIFICATION', 'TIMESERIES_ANNOTATION'].includes(props.project.taskType))
-    ? <LegacyProjectSettings {...props} /> : <NativeConfigurationSettings {...props} />;
+export default function NativeSpecSettings(
+  props: Parameters<typeof NativeConfigurationSettings>[0],
+) {
+  return isLegacyProjectSpec(props.version, props.project.taskType) ||
+    (!props.version &&
+      ['IMAGE_CLASSIFICATION', 'TIMESERIES_ANNOTATION'].includes(
+        props.project.taskType,
+      )) ? (
+    <LegacyProjectSettings {...props} />
+  ) : (
+    <NativeConfigurationSettings {...props} />
+  );
 }
