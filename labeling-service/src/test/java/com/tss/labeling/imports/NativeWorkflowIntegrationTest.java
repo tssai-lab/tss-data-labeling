@@ -164,10 +164,30 @@ class NativeWorkflowIntegrationTest {
         String project = postApi("owner", "/projects", Map.of("name", modelId, "taskType", taskType), 201)
                 .path("projectId").asText();
         var files = new HashMap<>(resources);
-        files.put("tasks.json", json.writeValueAsBytes(List.of(Map.of("data", data))));
-        upload(project, files);
-        String sample = getApi("owner", "/projects/" + project + "/input-samples")
-                .at("/items/0/sampleId").asText();
+        if (expectedImage == null) {
+            files.put("tasks.json", json.writeValueAsBytes(List.of(Map.of("data", data))));
+        }
+        String batch = upload(project, files);
+        if (expectedImage != null) {
+            postApi("owner", "/projects/" + project + "/imports/" + batch + "/tasks",
+                    Map.of("tasks", List.of(Map.of("data", data))), 200);
+        }
+        JsonNode listedSample = getApi("owner", "/projects/" + project + "/input-samples").at("/items/0");
+        String sample = listedSample.path("sampleId").asText();
+        if (expectedImage != null) {
+            assertEquals("pcb.png", listedSample.at("/metadata/displayName").asText());
+            // Older mapped samples have the filename only in the stored task input.
+            try (var connection = ImportIntegrationTest.PG.getPostgresDatabase().getConnection();
+                    var update = connection.prepareStatement(
+                            "UPDATE labeling.sample SET metadata=metadata-'displayName' WHERE id=?")) {
+                update.setObject(1, UUID.fromString(sample));
+                assertEquals(1, update.executeUpdate());
+            }
+            assertEquals("pcb.png", getApi("owner", "/projects/" + project + "/input-samples")
+                    .at("/items/0/metadata/displayName").asText());
+            assertEquals("pcb.png", getApi("owner", "/projects/" + project + "/samples/" + sample
+                    + "/native-input").path("displayName").asText());
+        }
         String spec = postApi("owner", "/projects/" + project + "/spec-versions",
                 Map.of("taskType", taskType, "schemaVersion", "label-studio-v1", "labels", List.of(),
                         "editorConfig", Map.of("labelConfig", xml, "templateId", "custom")), 201)
