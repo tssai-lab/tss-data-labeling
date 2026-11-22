@@ -1,14 +1,64 @@
-import { App, Button, Card, Input, Space, Table, Tag, Typography } from 'antd';
+import {
+  App,
+  Button,
+  Card,
+  Image,
+  Input,
+  Space,
+  Table,
+  Tag,
+  Typography,
+} from 'antd';
 import { useId, useState } from 'react';
 import { describeLabelingError } from '@/services/labeling';
+import type { NativeSample } from '@/services/nativeLabeling';
 import type { DemoResult } from './NativeAi';
+import { aiSampleName, useAiSampleImage } from './useAiSampleImage';
 import ui from './workspaceUi.less';
 
+function ReviewImage({
+  projectId,
+  sample,
+}: {
+  projectId: string;
+  sample: NativeSample;
+}) {
+  const image = useAiSampleImage(
+    projectId,
+    sample.sampleId,
+    sample.mediaType,
+    true,
+  );
+  const name = image.fileName || aiSampleName(sample);
+  return (
+    <Space>
+      {image.url ? (
+        <Image
+          src={image.url}
+          alt={name}
+          width={64}
+          height={48}
+          style={{ objectFit: 'contain' }}
+        />
+      ) : (
+        <Typography.Text type="secondary">
+          {image.loading ? '加载中…' : '原图不可用'}
+        </Typography.Text>
+      )}
+      <Typography.Text title={name}>{name}</Typography.Text>
+    </Space>
+  );
+}
+
 export default function AiDemoReview({
+  projectId,
+  showImages,
   results,
   onChange,
   readOnly = false,
 }: {
+  projectId: string;
+  showImages: boolean;
   results: DemoResult[];
   onChange: (results: DemoResult[]) => Promise<void>;
   readOnly?: boolean;
@@ -111,14 +161,28 @@ export default function AiDemoReview({
           {
             title: '样本',
             render: (_, row) =>
-              row.sample.metadata.displayName || row.sample.sourcePath,
+              showImages ? (
+                <ReviewImage projectId={projectId} sample={row.sample} />
+              ) : (
+                aiSampleName(row.sample)
+              ),
             ellipsis: true,
           },
           {
             title: 'AI 候选标签',
             dataIndex: 'label',
-            render: (value: string) => (
-              <strong className={ui.aiDemoLabel}>{value}</strong>
+            render: (value: string, row) => (
+              <Space direction="vertical" size={2}>
+                <strong className={ui.aiDemoLabel}>{value}</strong>
+                {row.rationale && (
+                  <details>
+                    <summary>判断依据</summary>
+                    <Typography.Text type="secondary">
+                      {row.rationale}
+                    </Typography.Text>
+                  </details>
+                )}
+              </Space>
             ),
           },
           {

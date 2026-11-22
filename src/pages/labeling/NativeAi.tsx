@@ -20,6 +20,7 @@ import ui from './workspaceUi.less';
 
 export type DemoResult = {
   reason?: string;
+  rationale?: string;
   sample: NativeSample;
   label: string;
   confidence: number | null;

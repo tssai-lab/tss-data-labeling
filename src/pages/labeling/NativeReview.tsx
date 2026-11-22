@@ -203,6 +203,10 @@ export default function NativeReview({
             message="AI 候选来自本轮后台执行。核查确认后会保存到项目；未完成的结果不可确认。"
           />
           <AiDemoReview
+            projectId={project.projectId}
+            showImages={['COMPUTER_VISION', 'IMAGE_CLASSIFICATION'].includes(
+              project.taskType,
+            )}
             results={aiResults}
             onChange={onAiResultsChange}
             readOnly={locked}
