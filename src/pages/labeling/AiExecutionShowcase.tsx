@@ -7,17 +7,11 @@ import {
 } from '@ant-design/icons';
 import { Table, Tag } from 'antd';
 import type { CSSProperties } from 'react';
-import { useEffect, useState } from 'react';
-import {
-  describeLabelingError,
-  labelingBlob,
-  labelingJson,
-  sampleBlob,
-} from '@/services/labeling';
+import { useState } from 'react';
 import type { NativeProject, NativeSample } from '@/services/nativeLabeling';
 import ui from './aiExecution.less';
 import type { DemoResult } from './NativeAi';
-import type { NativeContext } from './NativeEditor';
+import { aiSampleName, useAiSampleImage } from './useAiSampleImage';
 
 const stages = [
   { title: '读取样本', detail: '载入本轮选定的数据范围' },
@@ -27,62 +21,22 @@ const stages = [
 ];
 
 function SamplePreview({
-  project,
   sample,
   running,
+  isTimeSeries,
+  imageUrl,
+  loading,
+  error,
+  name,
 }: {
-  project: NativeProject;
   sample?: NativeSample;
   running: boolean;
+  isTimeSeries: boolean;
+  imageUrl: string;
+  loading: boolean;
+  error?: string;
+  name: string;
 }) {
-  const [imageUrl, setImageUrl] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-  const isTimeSeries = ['TIME_SERIES', 'TIMESERIES_ANNOTATION'].includes(
-    project.taskType,
-  );
-  useEffect(() => {
-    setImageUrl('');
-    setError('');
-    if (!sample || isTimeSeries) return;
-    const controller = new AbortController();
-    let objectUrl = '';
-    setLoading(true);
-    void labelingJson<NativeContext>(
-      `/projects/${project.projectId}/samples/${sample.sampleId}/native-input`,
-      { signal: controller.signal },
-    )
-      .then(async (context) => {
-        const resource = context.resources?.find((item) =>
-          item.mediaType.startsWith('image/'),
-        );
-        if (!resource && !sample.mediaType.startsWith('image/')) return;
-        const blob = resource
-          ? await labelingBlob(
-              resource.url.replace('/api/labeling/v1', ''),
-              controller.signal,
-            )
-          : await sampleBlob(
-              project.projectId,
-              sample.sampleId,
-              controller.signal,
-            );
-        if (controller.signal.aborted) return;
-        objectUrl = URL.createObjectURL(blob);
-        setImageUrl(objectUrl);
-      })
-      .catch((reason: unknown) => {
-        if (!controller.signal.aborted) setError(describeLabelingError(reason));
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) setLoading(false);
-      });
-    return () => {
-      controller.abort();
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
-    };
-  }, [project.projectId, sample?.sampleId, isTimeSeries]);
-
   const occurrences = new Map<string, number>();
   const previewRows = sample?.metadata.previewRows?.slice(0, 5).map((row) => {
     const text = row.join('  /  ');
@@ -93,10 +47,7 @@ function SamplePreview({
   return (
     <div className={ui.sampleCanvas} data-running={running}>
       {imageUrl ? (
-        <img
-          src={imageUrl}
-          alt={sample?.metadata.displayName || '本轮原始样本'}
-        />
+        <img src={imageUrl} alt={name} />
       ) : (
         <div className={ui.samplePlaceholder}>
           <ScanOutlined />
@@ -167,8 +118,18 @@ export default function AiExecutionShowcase({
   const labels = [...new Set(success.map((row) => row.label))];
   const stageIndex = Math.min(Math.floor(progress / 25), 3);
   const complete = progress === 100 && !running;
+  const isTimeSeries = ['TIME_SERIES', 'TIMESERIES_ANNOTATION'].includes(
+    project.taskType,
+  );
+  const image = useAiSampleImage(
+    project.projectId,
+    focused?.sampleId,
+    focused?.mediaType,
+    !isTimeSeries,
+  );
   const sampleName = (sample: NativeSample): string =>
-    sample.metadata.displayName || sample.sourcePath;
+    (sample.sampleId === focused?.sampleId && image.fileName) ||
+    aiSampleName(sample);
 
   return (
     <div className={ui.showcase}>
@@ -190,9 +151,13 @@ export default function AiExecutionShowcase({
               <small>{samples.length} 个样本</small>
             </div>
             <SamplePreview
-              project={project}
               sample={focused}
               running={running}
+              isTimeSeries={isTimeSeries}
+              imageUrl={image.url}
+              loading={image.loading}
+              error={image.error}
+              name={focused ? sampleName(focused) : '本轮原始样本'}
             />
             <div className={ui.sampleCaption}>
               <span title={focused ? sampleName(focused) : ''}>
