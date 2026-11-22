@@ -59,6 +59,16 @@ public class AiWorkerController {
         return ai.data(workerKey, executionId, sampleId, generation);
     }
 
+    @GetMapping("/executions/{executionId}/samples/{sampleId}/resources/{resourceId}")
+    public ResponseEntity<Resource> resource(
+            @RequestHeader(value = "X-Worker-Key", required = false) String workerKey,
+            @PathVariable UUID executionId, @PathVariable UUID sampleId, @PathVariable UUID resourceId,
+            @RequestParam long generation) {
+        SampleFile file = ai.resource(workerKey, executionId, sampleId, generation, resourceId);
+        return ResponseEntity.ok().contentType(MediaType.parseMediaType(file.mediaType()))
+                .contentLength(file.sizeBytes()).header("Cache-Control", "private, no-store").body(file.resource());
+    }
+
     @PutMapping("/executions/{executionId}/outputs/{sampleId}")
     public JsonNode output(@RequestHeader(value = "X-Worker-Key", required = false) String workerKey,
             @PathVariable UUID executionId, @PathVariable UUID sampleId, @RequestBody OutputRequest body) {

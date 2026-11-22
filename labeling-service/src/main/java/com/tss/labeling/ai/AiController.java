@@ -2,6 +2,7 @@ package com.tss.labeling.ai;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.tss.labeling.common.ApiResponse;
+import com.tss.labeling.common.BusinessException;
 import com.tss.labeling.identity.ActorService;
 import com.tss.labeling.identity.IdentityClient;
 import com.tss.labeling.identity.MeController;
@@ -10,7 +11,9 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
+import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -23,6 +26,15 @@ public class AiController {
     private final AiService ai;
     private final IdentityClient identity;
     private final ActorService actors;
+
+    @Value("${LABELING_PRELABEL_QWEN_IMAGE_AGENT_ID:}")
+    private String qwenImageAgentId;
+
+    @Value("${LABELING_PRELABEL_YOLO_PCB_AGENT_ID:}")
+    private String yoloPcbAgentId;
+
+    @Value("${LABELING_PRELABEL_QWEN_TIMESERIES_AGENT_ID:}")
+    private String qwenTimeseriesAgentId;
 
     public AiController(AiService ai, IdentityClient identity, ActorService actors) {
         this.ai = ai;
@@ -64,6 +76,43 @@ public class AiController {
                                 body.referenceMode(),
                                 body.reopenAccepted()), key), req);
     }
+
+    @PostMapping("/projects/{projectId}/prelabel-runs")
+    @ResponseStatus(HttpStatus.ACCEPTED)
+    public ApiResponse<JsonNode> createPrelabelRun(
+            @RequestHeader(value = "Authorization", required = false) String auth,
+            @PathVariable UUID projectId,
+            @RequestHeader("Idempotency-Key") String key,
+            @Valid @RequestBody PrelabelRequest body,
+            HttpServletRequest req) {
+        var owner = actor(auth);
+        String configuredId = switch (body.modelId()) {
+            case "qwen-image" -> qwenImageAgentId;
+            case "yolo-pcb" -> yoloPcbAgentId;
+            case "qwen-timeseries" -> qwenTimeseriesAgentId;
+            default -> throw new BusinessException(HttpStatus.BAD_REQUEST, "UNKNOWN_PRELABEL_MODEL", "未知预标注模型");
+        };
+        if (configuredId.isBlank()) {
+            throw new BusinessException(HttpStatus.SERVICE_UNAVAILABLE, "PRELABEL_MODEL_NOT_CONFIGURED", "预标注模型尚未配置");
+        }
+        UUID agentId;
+        try {
+            agentId = UUID.fromString(configuredId);
+        } catch (IllegalArgumentException invalidConfiguration) {
+            throw new BusinessException(HttpStatus.SERVICE_UNAVAILABLE, "INVALID_PRELABEL_MODEL_CONFIG", "预标注模型配置无效");
+        }
+        return response(ai.createExecution(owner, projectId,
+                new AiService.CreateInput(body.specVersionId(), agentId, body.samples(), body.instructions(),
+                        body.selectionId(), "NONE", body.reopenAccepted()), key), req);
+    }
+
+    public record PrelabelRequest(
+            @NotNull UUID specVersionId,
+            @NotNull String modelId,
+            @Size(max = 10000) List<AiService.SelectionSample> samples,
+            @Size(max = 500) String instructions,
+            UUID selectionId,
+            Boolean reopenAccepted) {}
 
     @GetMapping("/ai-executions/{executionId}")
     public ApiResponse<JsonNode> execution(@RequestHeader(value = "Authorization", required = false) String auth,
