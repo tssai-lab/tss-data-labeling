@@ -40,6 +40,7 @@ public class TaskRegistry {
         JsonNode inspected=source.inspect(xml);
         JsonNode parsed=inspected.path("parsedConfig");
         checkCategory(type,parsed);
+        validateEnergyRules(type, parsed, config.path("energyRules"));
         ObjectNode frozen=config.deepCopy();
         frozen.put("engine","label-studio");
         frozen.put("pluginVersion",PLUGIN_VERSION);
@@ -90,5 +91,26 @@ public class TaskRegistry {
     private boolean isTimeSeries(String type) {
         return Set.of("TIME_SERIES", "TIMESERIES_ANNOTATION").contains(type);
     }
+
+    private void validateEnergyRules(String type, JsonNode parsed, JsonNode rules) {
+        if (rules.isMissingNode()) return;
+        if (!rules.isObject() || !isTimeSeries(type)
+                || !"TimeSeriesLabels".equals(parsed.path("energy_events").path("type").asText())) {
+            throw error(422, "INVALID_ENERGY_RULES", "站点日能耗模板支持配置能耗阈值");
+        }
+        rules.fields().forEachRemaining(rule -> {
+            JsonNode value = rule.getValue();
+            double percent = value.asDouble();
+            boolean valid = switch (rule.getKey()) {
+                case "lowDailyPercent", "dropPercent" -> percent > 0 && percent <= 100;
+                case "highDailyPercent", "spikePercent" -> percent >= 100;
+                default -> false;
+            };
+            if (!value.isNumber() || !Double.isFinite(percent) || !valid) {
+                throw error(422, "INVALID_ENERGY_RULES", "低负荷和跌落阈值须大于 0% 且不超过 100%，高负荷和尖峰阈值须至少为 100%");
+            }
+        });
+    }
+
     private String digest(String value){try{return java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(value.getBytes(java.nio.charset.StandardCharsets.UTF_8)));}catch(java.security.NoSuchAlgorithmException exc){throw new IllegalStateException(exc);}}
 }

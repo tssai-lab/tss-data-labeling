@@ -767,7 +767,7 @@ WHERE r.status='OPEN' AND c.project_id=?
         var spec =
                 one(
                         "SELECT"
-                            + " task_type,template_id,template_version,input_schema_id,result_schema_id,editor_config::text AS editor_config"
+                            + " task_type,template_id,template_version,input_schema_id,result_schema_id,instructions,editor_config::text AS editor_config"
                             + " FROM spec_version WHERE id=?",
                         e.get("spec_version_id"));
         out.put("templateId", spec.get("template_id"));
@@ -776,6 +776,7 @@ WHERE r.status='OPEN' AND c.project_id=?
         out.put("resultSchemaId", spec.get("result_schema_id"));
         out.put("resultFormat", validator.format((UUID) e.get("spec_version_id")));
         out.put("editorConfig", read((String) spec.get("editor_config")));
+        out.put("specInstructions", spec.get("instructions"));
         out.put("instructions", one("SELECT instructions FROM publication_round WHERE id=?", e.get("round_id")).get("instructions"));
         out.put("modelVersion", e.get("model_version"));
         out.put("supportsReference", agent.get("supports_reference"));

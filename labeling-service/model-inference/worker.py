@@ -42,7 +42,22 @@ def binding_for(config, mode):
     labels = [node.attrib["value"] for node in control.iter(tags)]
     if not labels or any(label.startswith("$") for label in labels):
         raise ValueError("Expected static project labels")
-    return {"fromName": control.attrib["name"], "toName": target.attrib["name"], "labels": labels}, source[1:], target
+    binding = {"fromName": control.attrib["name"], "toName": target.attrib["name"], "labels": labels}
+    if mode == "timeseries" and binding["fromName"] == "energy_events":
+        daily = root.find(".//Choices[@name='energy_daily']")
+        rationale = root.find(".//TextArea[@name='energy_rationale']")
+        if daily is not None or rationale is not None:
+            if (daily is None or rationale is None
+                    or daily.get("toName") != binding["toName"]
+                    or rationale.get("toName") != binding["toName"]):
+                raise ValueError("Energy day and rationale controls must bind to the same curve")
+            daily_labels = [choice.attrib["value"] for choice in daily.findall("Choice")]
+            if "待复核" not in daily_labels:
+                raise ValueError("Shared energy specification requires a day review label")
+            binding["daily"] = {"fromName": daily.attrib["name"], "toName": binding["toName"],
+                                "labels": daily_labels}
+            binding["rationale"] = rationale.attrib["name"]
+    return binding, source[1:], target
 
 
 class Worker:
@@ -75,14 +90,21 @@ class Worker:
         binding, source, target = binding_for(execution["editorConfig"], mode)
         task_data = input_data["task"]["data"]
         request = dict(self.model["options"], binding=binding)
-        request["guidelines"] = execution.get("instructions") or request.get("guidelines", "")
+        spec_instructions = (execution.get("specInstructions") or "").strip()
+        batch_notes = (execution.get("instructions") or "").strip()
+        request["guidelines"] = spec_instructions or batch_notes or request.get("guidelines", "")
+        if spec_instructions and batch_notes:
+            request["batchNotes"] = batch_notes
         if mode == "timeseries":
             columns = task_data[source]
             channel, = target.findall("Channel")
             request.update(mode="timeseries", times=columns[target.attrib["timeColumn"]],
                            values=columns[channel.attrib["column"]])
-            if "history_summary" in task_data:
-                request["sample"] = task_data["history_summary"]
+            context = dict(task_data.get("history_summary") or {})
+            if "daily_kwh" in task_data:
+                context["dailyKwh"] = task_data["daily_kwh"]
+            request["sample"] = context
+            request["energyRules"] = execution["editorConfig"].get("energyRules", {})
             return prelabel.prompted(request)
 
         resource, = [item for item in input_data["resources"] if item["field"] == source]
@@ -152,8 +174,10 @@ class Worker:
                             candidate["id"] = f"prediction-{index}"
                         if lost.is_set():
                             return
-                        self.call("PUT", output_path, dict(lease, status="SUCCEEDED",
-                                                          result={"result": candidates}))
+                        result = {"result": candidates}
+                        if not candidates:
+                            result["emptyReason"] = "模型未生成有依据的标注候选"
+                        self.call("PUT", output_path, dict(lease, status="SUCCEEDED", result=result))
                     except HTTPError as error:
                         if error.code != 422:
                             raise
