@@ -488,7 +488,9 @@ export default function NativeOutcome({
                       onClick={() =>
                         void run(async () => {
                           const blob = await labelingBlob(
-                              `/exports/${row.exportId}/${pluginExport ? 'download' : 'file'}`,
+                              pluginExport
+                                ? `/exports/${row.exportId}/download`
+                                : `/source-exports/${row.exportId}/file`,
                             ),
                             url = URL.createObjectURL(blob);
                           const anchor = document.createElement('a');

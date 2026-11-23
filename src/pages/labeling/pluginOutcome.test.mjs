@@ -34,3 +34,39 @@ test('historical plugin results use plugin formats, jobs and export API instead 
   assert.equal(created.body.includeOriginals,false);
   r.dispose();
 });
+
+test('ready native JSON exports use the source export download route', async () => {
+  const version = { specVersionId: 'frozen', versionNo: 2, schemaVersion: 'label-studio-v1', labels: [], editorConfig: {} };
+  const snapshot = { finalSnapshotId: 'snapshot', specVersionId: 'frozen', name: '第二批质检结果' };
+  const job = { exportId: 'job', status: 'READY', format: 'JSON' };
+  const props = {
+    project: { projectId: 'project', taskType: 'COMPUTER_VISION', status: 'OPEN', specVersions: [version] },
+    version, reviews: [], snapshots: [snapshot], onVersionChange() {}, refresh() {}, busy: false,
+    run: async (action) => assert.rejects(action(), /stop before browser download/),
+  };
+  const antd = Object.fromEntries(['Alert', 'Button', 'Card', 'Checkbox', 'Input', 'Modal', 'Select', 'Space', 'Table', 'Tag'].map(name => [name, name]));
+  antd.Typography = { Paragraph: 'Paragraph' };
+  const downloads = [];
+  const r = renderHooks(new URL('./NativeOutcome.tsx', import.meta.url), props, {
+    antd, dayjs: { default: dayjs }, './OutcomeDetails': { default: 'OutcomeDetails' }, './outcome.less': { default: {} },
+    '@/services/labeling': {
+      describeLabelingError: e => e.message,
+      labelingJson: async () => ({ formats: [{ name: 'JSON', enabled: true, title: '任务与标注 JSON' }] }),
+      labelingBlob: async path => {
+        downloads.push(path);
+        throw new Error('stop before browser download');
+      },
+    },
+    '@/services/nativeLabeling': { collectPages: async () => [job] },
+  });
+  r.render();
+  await flushHooks();
+  r.render();
+  const jobs = r.nodes('Table').find(node => node.props.rowKey === 'exportId');
+  const download = jobs.props.columns.find(column => column.title === '操作').render(null, jobs.props.dataSource[0]);
+  assert.equal(download.props.disabled, false);
+  download.props.onClick();
+  await flushHooks();
+  assert.deepEqual(downloads, ['/source-exports/job/file']);
+  r.dispose();
+});
