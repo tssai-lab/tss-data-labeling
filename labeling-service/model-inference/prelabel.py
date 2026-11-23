@@ -16,15 +16,13 @@ MAX_ENERGY_RATIONALE_LENGTH = 96
 
 
 def result(binding, kind, value):
-    if kind == "choices":
-        labels = value["choices"]
-    else:
-        labels = value[kind]
+    labels = value[kind]
     if not labels or any(label not in binding["labels"] for label in labels):
         raise ValueError("Prediction contains a label outside the project configuration")
+    aliases = binding.get("labelAliases", {})
     return {
         "from_name": binding["fromName"], "to_name": binding["toName"],
-        "type": kind, "value": value,
+        "type": kind, "value": {**value, kind: [aliases.get(label, label) for label in labels]},
     }
 
 
