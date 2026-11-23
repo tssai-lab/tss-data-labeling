@@ -23,6 +23,21 @@ class NoRedirect(HTTPRedirectHandler):
         return None
 
 
+def label_binding(control, target_name, tag):
+    aliases = {}
+    for option in control.iter(tag):
+        label = option.attrib["value"]
+        alias = option.get("alias") or label
+        if aliases.setdefault(label, alias) != alias:
+            raise ValueError("A project label has multiple result aliases")
+    if not aliases or any(label.startswith("$") for label in aliases):
+        raise ValueError("Expected static project labels")
+    return {
+        "fromName": control.attrib["name"], "toName": target_name,
+        "labels": list(aliases), "labelAliases": aliases,
+    }
+
+
 def binding_for(config, mode):
     root = ElementTree.fromstring(config["labelConfig"])
     control_tag = {"image": "Choices", "pcb": "RectangleLabels", "timeseries": "TimeSeriesLabels"}[mode]
@@ -38,11 +53,8 @@ def binding_for(config, mode):
     source = target.attrib["value"]
     if not source.startswith("$"):
         raise ValueError("Expected a data-bound input")
-    tags = "Choice" if mode == "image" else "Label"
-    labels = [node.attrib["value"] for node in control.iter(tags)]
-    if not labels or any(label.startswith("$") for label in labels):
-        raise ValueError("Expected static project labels")
-    binding = {"fromName": control.attrib["name"], "toName": target.attrib["name"], "labels": labels}
+    tag = "Choice" if mode == "image" else "Label"
+    binding = label_binding(control, target.attrib["name"], tag)
     if mode == "timeseries":
         daily = root.find(".//Choices[@name='energy_daily']")
         rationale = root.find(".//TextArea[@name='energy_rationale']")
@@ -52,11 +64,8 @@ def binding_for(config, mode):
                     or daily.get("toName") != binding["toName"]
                     or rationale.get("toName") != binding["toName"]):
                 raise ValueError("Energy day and rationale controls must bind to the same curve")
-            daily_labels = [choice.attrib["value"] for choice in daily.iter("Choice")]
-            if not daily_labels or any(label.startswith("$") for label in daily_labels):
-                raise ValueError("Expected static daily project labels")
-            binding["daily"] = {"fromName": daily.attrib["name"], "toName": binding["toName"],
-                                "labels": daily_labels, "required": daily.get("required") == "true"}
+            binding["daily"] = label_binding(daily, binding["toName"], "Choice")
+            binding["daily"]["required"] = daily.get("required") == "true"
             binding["rationale"] = rationale.attrib["name"]
     return binding, source[1:], target
 
