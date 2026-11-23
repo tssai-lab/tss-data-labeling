@@ -54,6 +54,8 @@ class PromptedTimeseriesTest(unittest.TestCase):
             self.assertEqual(prompt["sample"]["context"]["dailyKwh"], 55)
             self.assertNotIn("eligibleCandidates", prompt["sample"])
             self.assertIn("环比跳升", schema["properties"]["intervals"]["items"]["properties"]["label"]["enum"])
+            self.assertIn("one short sentence", prompt["task"])
+            self.assertEqual(schema["properties"]["rationale"]["maxLength"], prelabel.MAX_ENERGY_RATIONALE_LENGTH)
             return self.output
 
         results = self.infer(xml, respond, timeseriesPrelabelMode="instructions")
@@ -71,6 +73,7 @@ class PromptedTimeseriesTest(unittest.TestCase):
             ({"intervals": [{"label": "环比跳升", "start": 8, "end": 25}]}, "ordered timestamps"),
             ({"intervals": [{"label": "环比跳升", "start": 8, "end": 7}]}, "ordered timestamps"),
             ({"rationale": " "}, "judgment rationale"),
+            ({"rationale": "依据" * prelabel.MAX_ENERGY_RATIONALE_LENGTH}, "exceeded the length limit"),
         ]
         for changes, error in variants:
             with self.subTest(changes=changes), self.assertRaisesRegex(ValueError, error):

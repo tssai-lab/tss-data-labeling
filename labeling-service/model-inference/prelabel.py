@@ -12,6 +12,9 @@ from pathlib import Path
 import sys
 
 
+MAX_ENERGY_RATIONALE_LENGTH = 96
+
+
 def result(binding, kind, value):
     if kind == "choices":
         labels = value["choices"]
@@ -270,12 +273,15 @@ def prompted(request):
                 properties["dailyLabel"] = daily_label if daily.get("required") else {
                     "anyOf": [daily_label, {"type": "null"}],
                 }
-                properties["rationale"] = {"type": "string"}
+                properties["rationale"] = {
+                    "type": "string", "minLength": 1, "maxLength": MAX_ENERGY_RATIONALE_LENGTH,
+                }
                 instruction += (
-                    " Give the dailyLabel using the configured daily labels, and write the rationale "
-                    "in the language of the guidelines and labels. Cite the supplied readings, hours "
-                    "or statistics that support the daily label and any selected intervals. "
-                    "If evidence is insufficient, explain why and use a configured review label if available."
+                    " Use a configured dailyLabel. Write the rationale in the language of the guidelines "
+                    f"as one short sentence, at most {MAX_ENERGY_RATIONALE_LENGTH} characters. "
+                    "Give only the key reading and comparison or event time; omit rule restatement and "
+                    "step-by-step calculations. If evidence is insufficient, briefly state what is missing "
+                    "and use a configured review label if available."
                 )
                 if not daily.get("required"):
                     instruction += " If no daily label is supported and there is no review label, return null for dailyLabel."
@@ -343,7 +349,12 @@ def prompted(request):
     if is_series:
         regions = prompted_intervals(binding, times, output["intervals"])
         if binding.get("daily"):
-            return series_result(binding, regions, output["dailyLabel"], output["rationale"])
+            rationale = output["rationale"]
+            if isinstance(rationale, str):
+                if len(rationale) > MAX_ENERGY_RATIONALE_LENGTH:
+                    raise ValueError("Model judgment rationale exceeded the length limit")
+                rationale = " ".join(rationale.split())
+            return series_result(binding, regions, output["dailyLabel"], rationale)
         return regions
     return [result(binding, "choices", {"choices": [output["label"]]})]
 
