@@ -20,6 +20,7 @@ import {
 } from 'antd';
 import dayjs, { type Dayjs } from 'dayjs';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { formatAiCandidateLabel } from '@/services/aiCandidateLabel.mjs';
 import {
   describeLabelingError,
   labelingJson,
@@ -84,30 +85,6 @@ const finishedExecutions = new Set([
   'FAILED',
   'CANCELLED',
 ]);
-
-function candidateLabel(output: PrelabelOutput) {
-  const names = (output.result?.result || []).flatMap(({ value }) =>
-    Object.entries(value || {}).flatMap(([key, entries]) => {
-      if (
-        !(key === 'choices' || key.endsWith('labels')) ||
-        !Array.isArray(entries)
-      )
-        return [];
-      return entries
-        .filter((entry): entry is string => typeof entry === 'string')
-        .map((label) => {
-          if (
-            key === 'timeserieslabels' &&
-            typeof value?.start === 'number' &&
-            typeof value.end === 'number'
-          )
-            return `${label}（${value.start}–${value.end}）`;
-          return label;
-        });
-    }),
-  );
-  return [...new Set(names)].join('、') || '未生成标注区域';
-}
 
 const statusName: Record<string, string> = {
   DRAFT: '草稿',
@@ -321,6 +298,7 @@ export default function ServerWorkspace() {
       ? aiSession.execution.executionId
       : undefined;
   const activeSamples = aiSession?.samples;
+  const activeParsedConfig = aiSession?.version.editorConfig?.parsedConfig;
   useEffect(() => {
     if (!activeExecutionId || !activeSamples) return;
     const abort = new AbortController();
@@ -373,7 +351,12 @@ export default function ServerWorkspace() {
           return [
             {
               sample,
-              label: succeeded ? candidateLabel(output) : '—',
+              label: succeeded
+                ? formatAiCandidateLabel(
+                    output.result?.result,
+                    activeParsedConfig,
+                  )
+                : '—',
               rationale: Array.isArray(rationale)
                 ? rationale
                     .filter((line) => typeof line === 'string')
@@ -414,7 +397,7 @@ export default function ServerWorkspace() {
       abort.abort();
       clearTimeout(timer);
     };
-  }, [activeExecutionId, activeSamples]);
+  }, [activeExecutionId, activeSamples, activeParsedConfig]);
 
   const current = project?.projectId === projectId ? project : undefined;
   const filteredProjects = projects.filter((value) => {

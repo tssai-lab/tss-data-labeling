@@ -1,3 +1,4 @@
+import type { ParsedLabelConfig } from './aiCandidateLabel.mjs';
 import {
   labelingJson,
   type Page,
@@ -50,6 +51,7 @@ export type NativeSpec = SpecVersion & {
     templateVersion: string;
     completion?: { allowEmpty?: boolean };
     configSha256?: string;
+    parsedConfig?: ParsedLabelConfig;
     pluginVersion?: string;
     capabilities?: {
       version: string;
