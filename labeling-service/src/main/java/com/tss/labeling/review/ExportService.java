@@ -183,13 +183,19 @@ public class ExportService {
 SELECT f.snapshot_id AS "finalSnapshotId",f.sample_id AS "sampleId",f.spec_version_id AS "specVersionId",f.result_id AS "resultId",
 f.source_kind AS "sourceKind",f.submission_id AS "submissionId",f.execution_id AS "executionId",f.result::text AS result,
 f.review_revision AS "reviewRevision",f.source_path AS "sourcePath",f.content_hash AS "inputHash",s.metadata::text AS input,
-s.batch_id AS "batchId",s.media_type AS "mediaType"
+s.batch_id AS "batchId",s.media_type AS "mediaType",f.annotation_provenance::text AS "annotationProvenance"
 FROM final_snapshot_item f JOIN sample s ON s.id=f.sample_id WHERE f.snapshot_id=? ORDER BY f.sample_id
 """,
                                 UUID.fromString(snapshot.asText()))) {
                     if (!seen.add((UUID) row.get("sampleId"))) continue;
                     row.put("result", s.read((String) row.get("result")));
                     row.put("input", s.read((String) row.get("input")));
+                    var annotationProvenance = row.remove("annotationProvenance");
+                    if(annotationProvenance!=null) {
+                        var frozenAudit=s.read(annotationProvenance.toString());
+                        for(String key:List.of("annotator","reviewer","updated_at"))
+                            row.put(key,frozenAudit.path(key).isNull()?null:frozenAudit.path(key).asText());
+                    }
                     if (includeOriginals) {
                         UUID sampleId = (UUID) row.get("sampleId");
                         String sourcePath = (String) row.get("sourcePath");
@@ -217,11 +223,17 @@ FROM final_snapshot_item f JOIN sample s ON s.id=f.sample_id WHERE f.snapshot_id
             var exported = frozenPlugin.export((String)job.get("format"),rows);
             String filename = exported.filename();
             byte[] data = exported.bytes();
+            for(var sidecar:exported.sidecars().entrySet()) {
+                if(!sidecar.getKey().matches("[A-Za-z0-9_.-]+") || sidecar.getKey().equals(filename)
+                        || Set.of("manifest.json",".","..").contains(sidecar.getKey())) throw new IOException("invalid plugin sidecar name");
+                originals.put(sidecar.getKey(),sidecar.getValue());
+            }
             long archiveContentBytes = data.length + originals.values().stream().mapToLong(value -> value.length).sum();
             if (archiveContentBytes > 64L * 1024 * 1024) throw new IOException("export size limit");
             var files = new ArrayList<Map<String, Object>>();
             files.add(Map.of("path", filename, "sha256", WorkflowStore.digest(data), "sizeBytes", data.length));
             files.addAll(originalManifest);
+            for(var sidecar:exported.sidecars().entrySet()) files.add(Map.of("path",sidecar.getKey(),"sha256",WorkflowStore.digest(sidecar.getValue()),"sizeBytes",sidecar.getValue().length));
             byte[] manifest = s.write(Map.ofEntries(
                     Map.entry("schemaVersion", "1.0.0"),
                     Map.entry("exportId", id),

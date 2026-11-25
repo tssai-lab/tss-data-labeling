@@ -694,3 +694,7 @@ GET `/task-templates`：启用身份，data 为内置模板数组；字段 templ
 开发说明、接口边界与新增插件步骤见 [24-task-plugins.md](08-task-plugins.md)。此机制只运行随平台发布的可信代码，不提供上传后执行任意代码的接口。
 
 插件成果格式查询：`GET /final-snapshots/{snapshotId}/plugin-export-formats`；作业列表：`GET /projects/{projectId}/exports?snapshotId=...&limit=20&cursor=...`。图片分类和站点日能耗的前端导出使用这些接口及既有 `POST /projects/{projectId}/exports`、`GET /exports/{exportId}/download`，编码器由成果的冻结插件版本决定。
+
+## 结构化与半结构化数据插件
+
+新增 `STRUCTURED`、`SEMI_STRUCTURED` 两类可信插件，沿用样本 `/data`、规范、草稿、提交、审核、成果和导出接口。新增记录校验只读接口及完整结果结构见 [记录插件接口与操作](10-record-data-plugins.md)。

@@ -180,6 +180,9 @@ def run(job_root):
     request = json.loads((job_root / 'request.json').read_text(encoding='utf-8'))
     if request.get('protocolVersion') != PROTOCOL_VERSION:
         raise ValueError('UNSUPPORTED_PROTOCOL_VERSION')
+    if request.get('action', '').startswith('records'):
+        from record_codec import run as run_records
+        return run_records(job_root, request)
     if request.get('action') == 'templates':
         from ls_backend_templates import platform_catalog
         return platform_catalog()

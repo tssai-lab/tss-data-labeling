@@ -9,6 +9,12 @@ import org.springframework.context.annotation.Configuration;
 
 @Configuration
 public class BuiltInPlugins {
+    @Bean TaskPlugin structuredRecordsPlugin(RecordArchiveParser parser, WorkflowStore store, com.tss.labeling.ls.LsSourceAdapter source, ImportStorage storage) {
+        return new RecordDataPlugin(descriptor("STRUCTURED", "结构化数据标注"), parser, store, source, storage);
+    }
+    @Bean TaskPlugin semiStructuredDocumentsPlugin(RecordArchiveParser parser, WorkflowStore store, com.tss.labeling.ls.LsSourceAdapter source, ImportStorage storage) {
+        return new RecordDataPlugin(descriptor("SEMI_STRUCTURED", "半结构化数据标注"), parser, store, source, storage);
+    }
     static TaskPlugin.Descriptor descriptor(String type, String name) {
         var binding = TaskTemplates.forType(type);
         return new TaskPlugin.Descriptor((String)binding.get("templateId"), (String)binding.get("templateVersion"), name, type,

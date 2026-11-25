@@ -11,12 +11,16 @@ public interface TaskPlugin {
     ArchiveParser.ParsedArchive parseArchive(UUID batch, UUID project) throws IOException;
     default void validateImport(UUID project, ArchiveParser.ParsedArchive archive) {}
     default void persistInputs(UUID project, UUID batch, ArchiveParser.ParsedArchive archive) {}
+    default JsonNode freezeConfig(JsonNode config) { return config; }
     JsonNode readInput(UUID project, UUID sample, String authorizedSamplePath);
     void validateResult(UUID spec, UUID sample, Set<String> labels, JsonNode result, boolean done);
     Set<String> exportFormats();
     ExportData export(String format, List<Map<String, Object>> rows);
 
-    record ExportData(String filename, byte[] bytes) {}
+    record ExportData(String filename, byte[] bytes, Map<String, byte[]> sidecars) {
+        public ExportData(String filename, byte[] bytes) { this(filename, bytes, Map.of()); }
+        public ExportData { sidecars = Collections.unmodifiableMap(new TreeMap<>(sidecars)); }
+    }
     class ImportFailure extends RuntimeException {
         public final String code, sourcePath, field;
         public final long sourceRow;

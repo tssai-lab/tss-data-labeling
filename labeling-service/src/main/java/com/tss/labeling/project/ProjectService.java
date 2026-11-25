@@ -184,6 +184,10 @@ FROM spec_version WHERE id = ? AND project_id = ?
         }
 
         if (TaskRegistry.FORMAT.equals(request.schemaVersion())) editorConfig = registry.freeze(taskType, request.schemaVersion(), editorConfig);
+        if (Set.of("STRUCTURED", "SEMI_STRUCTURED").contains(taskType)
+                && !plugin.descriptor().resultFormat().equals(request.schemaVersion()))
+            throw com.tss.labeling.common.WorkflowStore.error(422,"TEMPLATE_MISMATCH","记录插件的规范格式不匹配");
+        editorConfig = plugin.freezeConfig(editorConfig);
         Integer versionNo = jdbcTemplate.queryForObject(
                         "SELECT COALESCE(MAX(version_no), 0) + 1 FROM spec_version WHERE project_id"
                             + " = ?",

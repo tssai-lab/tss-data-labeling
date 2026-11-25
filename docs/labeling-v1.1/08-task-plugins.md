@@ -6,7 +6,7 @@
 
 ## 通用类型与业务模板
 
-创建项目只提供 **图像标注**（`COMPUTER_VISION`）和 **时序标注**（`TIME_SERIES`）两个入口。它们分别使用已注册的 `computer-vision@1.0.0`、`time-series@1.0.0`，共用原生编辑器及 `label-studio-v1` 结果契约。
+创建项目提供 **图像标注**（`COMPUTER_VISION`）、**时序标注**（`TIME_SERIES`）、**结构化数据标注**（`STRUCTURED`）和 **半结构化数据标注**（`SEMI_STRUCTURED`）四个入口。图像和时序分别使用 `computer-vision@1.0.0`、`time-series@1.0.0`，共用原生编辑器及 `label-studio-v1` 结果契约。新增表格与文档使用独立的版本化编辑器及记录结果契约，详见 [记录插件](10-record-data-plugins.md)。
 
 整图分类、画框、多边形、异常点、异常区间等通过项目的“标注设置”选择模板或配置控件。能耗、温度、电流是时序业务内容，不再各占一个创建入口。标签、说明、数据字段和坐标/时间单位属于模板与数据映射；新业务优先复用现有控件、CSV/JSON 输入、校验和导出，只有通用能力无法表达的新交互或数据结构才考虑扩展插件。
 
@@ -18,6 +18,8 @@
 |---|---|---|---|---|---|
 | computer-vision | 1.0.0 | COMPUTER_VISION | label-studio-editor | label-studio-v1 | 新建图像项目 |
 | time-series | 1.0.0 | TIME_SERIES | label-studio-editor | label-studio-v1 | 新建时序项目 |
+| structured-records | 1.0.0 | STRUCTURED | structured-records-editor | structured-records-result-v1 | 表格行/单元格标注 |
+| semi-structured-documents | 1.0.0 | SEMI_STRUCTURED | semi-structured-documents-editor | semi-structured-documents-result-v1 | 文档节点/实体/关系标注 |
 | image-classification | 1.0.0 | IMAGE_CLASSIFICATION | image-classification-editor | image-classification-v1 | 历史分类项目及旧客户端兼容 |
 | energy-station-day | 1.0.0 | TIMESERIES_ANNOTATION | energy-station-day-editor | annotation-record-v1 | 历史能耗项目及旧客户端兼容 |
 
@@ -25,7 +27,7 @@
 
 ## 使用流程
 
-1. 需求方创建项目，选择图像或时序类型；平台匹配后端已启用且前端已安装的通用插件。
+1. 需求方创建项目，选择图像、时序、结构化或半结构化类型；平台匹配后端已启用且前端已安装的通用插件。
 2. 平台保存项目的插件 ID 和版本，使用通用输入适配导入未标注数据；需要时配置 CSV 字段和分组。
 3. 需求方配置标签和说明，保存规范版本；规范固定插件版本、输入/结果 schema 和摘要。
 4. 发布时选择人工或 AI。人工按包领取，宿主按 `editorKey` 打开编辑器；AI 按范围执行，通过已有 Worker 接口读取输入并回报结果。
@@ -93,7 +95,7 @@
 
 实际响应还包含 `schemaDigest`。`enabled` 只有在插件启用且五项必要能力全部就绪时才为真。前端同时检查本地是否安装对应版本和编辑器，不认识的版本保留为不可选项，不能拿别的编辑器回退。
 
-`creationAvailable` 独立表达当前创建界面是否开放该契约：两个通用类型在能力就绪时为 true；历史分类和能耗为 false，但其 `enabled` 仍可为 true，以继续编辑和导出已有任务。旧客户端明确指定原 ID/版本的创建请求继续兼容；目录仍返回四项，不等于界面展示四个类型。`GET /label-configs/task-types` 也只列出两个通用类别。无需新增数据库迁移，不改历史 schemaDigest 或项目绑定。
+`creationAvailable` 独立表达当前创建界面是否开放该契约：四个通用数据类型在能力就绪时为 true；历史分类和能耗为 false，但其 `enabled` 仍可为 true，以继续编辑和导出已有任务。旧客户端明确指定原 ID/版本的创建请求继续兼容；目录返回六个已安装契约，创建界面展示四个通用类型。`GET /label-configs/task-types` 同样列出四类。记录插件新增 V28 成果审核来源冻结字段，不改历史 schemaDigest 或项目绑定。
 
 前端可信描述在 `src/services/labelingTemplates.mjs`，组件映射在 `TaskEditorHost.tsx`，领取工作区按可信 `editorKey` 选择。服务返回的键不作为远程 URL 或动态 import 表达式。
 
@@ -157,3 +159,7 @@ mvn -o -f labeling-service/pom.xml \
 ```
 
 `-o` 使用本机 Maven 缓存，依赖未缓存时会失败。原生编辑器测试还需完整的 Python 依赖环境，并通过 `-Dls.test.python=/绝对路径/python` 显式启用；不应把跳过记录算成通过。测试记录是上述工作区的本次结果，后续代码变更后应重新验证。
+
+## 2026-11-25 记录插件扩展
+
+结构化、半结构化的格式、校验、结果契约、样例及配套发布步骤详见 [10-record-data-plugins.md](10-record-data-plugins.md)。

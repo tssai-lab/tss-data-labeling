@@ -18,3 +18,9 @@ rstr==3.2.2
 # Optional formats, retained upstream and currently disabled in the adapter:
 # opencv-python-headless (BRUSH_TO_COCO), doclang (DOCLANG).
 # ijson is only required when invoking the upstream JSON-array file API directly.
+
+openpyxl==3.1.5
+
+et-xmlfile==2.0.0
+
+pyarrow==19.0.1

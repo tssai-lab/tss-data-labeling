@@ -205,14 +205,19 @@ ORDER BY r.sample_id,r.spec_version_id LIMIT ?
                                                     itemSpec, sampleId,
                                                     resultId)
                                             .get("content"));
+            var provenance = new LinkedHashMap<String,Object>();
+            provenance.put("reviewer",rev.get("reviewed_by"));
+            provenance.put("updated_at",String.valueOf(rev.get("updated_at")));
+            var author=db.queryForList("SELECT source_actor FROM project_result_candidate WHERE result_id=?",resultId);
+            provenance.put("annotator",author.isEmpty()?null:author.get(0).get("source_actor"));
             db.update(
                     """
-INSERT INTO final_snapshot_item(snapshot_id,project_id,sample_id,spec_version_id,source_kind,submission_id,execution_id,result,review_revision,source_path,content_hash,result_id)
-VALUES (?,?,?,?,?,?,?,?::jsonb,?,?,?,?)
+INSERT INTO final_snapshot_item(snapshot_id,project_id,sample_id,spec_version_id,source_kind,submission_id,execution_id,result,review_revision,source_path,content_hash,result_id,annotation_provenance)
+VALUES (?,?,?,?,?,?,?,?::jsonb,?,?,?,?,?::jsonb)
 """, snapshotId, project, sampleId, itemSpec, rev.get("source_kind"),
                     rev.get("submission_id"), rev.get("execution_id"), write(result), ((Number) rev.get("revision")).longValue(),
                     sample.get("source_path"), sample.get("content_sha256"),
-                    resultId);
+                    resultId,write(provenance));
         }
         UUID duplicate = db.query("""
 SELECT previous.id FROM final_snapshot previous

@@ -4,7 +4,7 @@
 
 ## 发布包
 
-构建使用 Java 17、Python 3.11。`ls-source-adapter/requirements.lock` 固定 Linux x86_64 的38个直接／间接依赖版本和 wheel SHA-256。修改依赖时同时更新 requirements.txt、lock 和验证记录；不在服务器从包索引临时解析依赖。
+构建使用 Java 17、Python 3.11。`ls-source-adapter/requirements.lock` 固定 Linux x86_64 的直接／间接依赖版本和 wheel SHA-256，包含记录插件的 openpyxl、et-xmlfile、pyarrow。修改依赖时同时更新 requirements.txt、lock 和验证记录；不在服务器从包索引临时解析依赖。
 
 CI 下载锁定 wheels，在独立环境执行源码运行检查，运行 Maven verify，再生成 `target/labeling-release.tar.gz`。包内包含 JAR、Python 源码、原版模板资源、wheelhouse、哈希锁、运行检查和清单。清单绑定本次 Git 提交及逐文件摘要。再次解包、离线安装并验证后才上传；原始 ZIP、图片、数据库和已有结果不在发布包内。
 

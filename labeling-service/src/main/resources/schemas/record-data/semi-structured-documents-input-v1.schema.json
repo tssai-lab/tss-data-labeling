@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:tss:semi-structured-documents-input@1.0.0",
+  "type": "object",
+  "required": [
+    "sampleId",
+    "inputHash",
+    "inputFormat",
+    "schemaId",
+    "sourcePath",
+    "sourceRow",
+    "record"
+  ],
+  "properties": {
+    "sampleId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "inputHash": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "inputFormat": {
+      "const": "semi-structured-documents-input-v1"
+    },
+    "schemaId": {
+      "const": "semi-structured-documents-input@1.0.0"
+    },
+    "sourcePath": {
+      "type": "string"
+    },
+    "sourceRow": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "record": {},
+    "raw": {
+      "type": "string"
+    },
+    "sheet": {
+      "type": "string"
+    },
+    "columns": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  }
+}
