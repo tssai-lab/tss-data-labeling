@@ -27,7 +27,9 @@ public class TaskRegistry {
 
     public List<Map<String,Object>> list() {
         return List.of(Map.of("taskType","COMPUTER_VISION","name","图像标注","version",PLUGIN_VERSION,"resultFormat",FORMAT,"aiAvailable",false),
-                Map.of("taskType","TIME_SERIES","name","时序标注","version",PLUGIN_VERSION,"resultFormat",FORMAT,"aiAvailable",false));
+                Map.of("taskType","TIME_SERIES","name","时序标注","version",PLUGIN_VERSION,"resultFormat",FORMAT,"aiAvailable",false),
+                Map.of("taskType","STRUCTURED","name","结构化数据标注","version","1.0.0","resultFormat","structured-records-result-v1","aiAvailable",false),
+                Map.of("taskType","SEMI_STRUCTURED","name","半结构化数据标注","version","1.0.0","resultFormat","semi-structured-documents-result-v1","aiAvailable",false));
     }
 
     public JsonNode freeze(String type, String schema, JsonNode config) {

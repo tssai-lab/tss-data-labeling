@@ -11,6 +11,25 @@ XML = '<View><TimeSeries name="curve" value="$readings" valueType="json" timeCol
 
 def check(source):
     source = source.resolve(strict=True)
+    # Verify the newly shipped codecs and all optional binary format dependencies too.
+    import importlib.util
+    spec = importlib.util.spec_from_file_location('release_record_codec', source / 'record_codec.py')
+    codec = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(codec)
+    from openpyxl import Workbook
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+    with tempfile.TemporaryDirectory(prefix='record-release-check-') as folder:
+        root = Path(folder)
+        workbook = Workbook()
+        workbook.active.append(['id', 'value'])
+        workbook.active.append(['001', 0])
+        workbook.save(root / 'check.xlsx')
+        assert list(codec.parse_file(root / 'check.xlsx', 'check.xlsx', True))[0]['record'] == {'id': '001', 'value': 0}
+        pq.write_table(pa.Table.from_pylist([{'id': '001', 'value': 0}]), root / 'check.parquet')
+        assert list(codec.parse_file(root / 'check.parquet', 'check.parquet', True))[0]['record']['id'] == '001'
+        codec.validate_config({'schema': {'type': 'object'}})
+        codec.validate_result({'id': '001'}, {'labelId': 'ok', 'nodes': [{'path': '/id', 'labelId': 'ok'}]}, ['ok'], True, True, {})
     with tempfile.TemporaryDirectory(prefix='labeling-release-check-') as folder:
         root = Path(folder)
         def invoke(action, **fields):

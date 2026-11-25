@@ -1,0 +1,100 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:tss:structured-records-result@1.0.0",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "labelId": {
+      "type": "string"
+    },
+    "notes": {
+      "type": "string",
+      "maxLength": 10000
+    },
+    "nodes": {
+      "type": "array",
+      "maxItems": 1000,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "path",
+          "labelId"
+        ],
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "labelId": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "entities": {
+      "type": "array",
+      "maxItems": 0,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "path",
+          "start",
+          "end",
+          "labelId"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "path": {
+            "type": "string"
+          },
+          "start": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "end": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "labelId": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "relations": {
+      "type": "array",
+      "maxItems": 0,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "from",
+          "to",
+          "labelId"
+        ],
+        "properties": {
+          "from": {
+            "type": "string",
+            "minLength": 1
+          },
+          "to": {
+            "type": "string",
+            "minLength": 1
+          },
+          "labelId": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    }
+  },
+  "description": "Draft schema. Complete results additionally require a label from the frozen specification, existing JSON Pointer targets, valid UTF-16 entity bounds and local relation endpoints; enforced by record_codec.py."
+}

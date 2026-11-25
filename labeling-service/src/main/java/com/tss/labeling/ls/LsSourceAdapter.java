@@ -56,6 +56,48 @@ public class LsSourceAdapter {
         return withJob(job -> invoke(job, request("inspect", labelConfig)));
     }
 
+    /** The caller supplies storage paths, never client-provided filesystem paths. */
+    public JsonNode parseRecords(Path file, String name, boolean structured) {
+        return withJob(job -> {
+            Files.copy(file, job.resolve("source.input"));
+            ObjectNode request = request("recordsParse", "<View/>");
+            request.put("sourceName", name).put("structured", structured);
+            JsonNode response = invoke(job, request);
+            Path output = job.resolve("records.jsonl");
+            if (Files.size(output) > 64L * 1024 * 1024) throw new IOException("record output limit");
+            var records = json.createArrayNode();
+            try (var reader = Files.newBufferedReader(output, StandardCharsets.UTF_8)) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    if (records.size() >= 10000) throw new IOException("record count limit");
+                    records.add(json.readTree(line));
+                }
+            }
+            ((ObjectNode) response).set("records", records);
+            return response;
+        });
+    }
+
+    public JsonNode recordOperation(String action, JsonNode fields) {
+        if (!java.util.Set.of("recordsConfig", "recordsValidate", "recordsIssues").contains(action))
+            throw new IllegalArgumentException("record operation");
+        return withJob(job -> {
+            ObjectNode request = request(action, "<View/>");
+            request.setAll((ObjectNode) fields);
+            return invoke(job, request);
+        });
+    }
+
+    public byte[] recordParquet(JsonNode rows) {
+        return withJob(job -> {
+            json.writeValue(job.resolve("rows.json").toFile(), rows);
+            invoke(job, request("recordsParquet", "<View/>"));
+            Path output = job.resolve("records.parquet");
+            if (Files.size(output) > 64L * 1024 * 1024) throw new IOException("parquet output limit");
+            return Files.readAllBytes(output);
+        }, exportSlots);
+    }
+
     public JsonNode templates() {
         return withJob(job -> invoke(job, request("templates", "<View/>")));
     }
@@ -215,6 +257,7 @@ public class LsSourceAdapter {
             }
             if (!payload.path("ok").asBoolean() || process.exitValue() != 0) {
                 String message = payload.path("error").path("message").asText();
+                if (action.startsWith("records")) throw failure(HttpStatus.UNPROCESSABLE_ENTITY,"INVALID_RECORD_DATA",friendly(message));
                 if (isConfigAction(action)) {
                     throw failure(HttpStatus.UNPROCESSABLE_ENTITY, "INVALID_LABEL_CONFIG", configFriendly(message));
                 }
@@ -295,6 +338,7 @@ public class LsSourceAdapter {
             healthy=true;
             if(!payload.path("ok").asBoolean()) {
                 String message = payload.path("error").path("message").asText();
+                if (action.startsWith("records")) throw failure(HttpStatus.UNPROCESSABLE_ENTITY,"INVALID_RECORD_DATA",friendly(message));
                 if (isConfigAction(action)) {
                     throw failure(HttpStatus.UNPROCESSABLE_ENTITY, "INVALID_LABEL_CONFIG", configFriendly(message));
                 }
@@ -333,7 +377,24 @@ public class LsSourceAdapter {
             output=new BufferedReader(new InputStreamReader(process.getInputStream(),StandardCharsets.UTF_8));
             allWorkers.add(this);
         }
-        public void close(){allWorkers.remove(this);process.descendants().forEach(ProcessHandle::destroyForcibly);process.destroyForcibly();try{input.close();output.close();}catch(IOException ignored){}}
+        public void close(){
+            allWorkers.remove(this);
+            var children=process.descendants().toList();
+            children.forEach(ProcessHandle::destroyForcibly);
+            process.destroyForcibly();
+            // Windows venv launchers spawn a real Python child which also owns stderr.
+            // Both levels must exit before the private job/log directory is released.
+            try {
+                process.waitFor(5,TimeUnit.SECONDS);
+                for(var child:children) {
+                    try { child.onExit().get(5,TimeUnit.SECONDS); }
+                    catch(ExecutionException | TimeoutException ignored) {}
+                }
+            }
+            catch(InterruptedException interrupted) { Thread.currentThread().interrupt(); }
+            try { input.close(); } catch(IOException ignored) {}
+            try { output.close(); } catch(IOException ignored) {}
+        }
     }
     @PreDestroy public void close(){allWorkers.forEach(Worker::close);readers.shutdownNow();}
 

@@ -11,7 +11,7 @@ import static org.junit.jupiter.api.Assertions.*;
 /** A dedicated throwaway cluster, never the developer's running database. */
 class MigrationUpgradeTest {
     @org.junit.jupiter.api.io.TempDir java.nio.file.Path legacyMigrations;
-    @Test void upgradesPopulatedV14ToV27WithoutChangingLegacyResults() throws Exception {
+    @Test void upgradesPopulatedV14ToV28WithoutChangingLegacyResults() throws Exception {
         try (var pg = EmbeddedPostgres.builder().start()) {
             var db = new JdbcTemplate(pg.getPostgresDatabase());
             db.execute("CREATE ROLE tss_labeling_app LOGIN");
@@ -44,13 +44,14 @@ class MigrationUpgradeTest {
             String frozen = db.queryForObject("SELECT result::text FROM labeling.final_snapshot_item WHERE snapshot_id=?",String.class,snapshot);
 
             var current = Flyway.configure().dataSource(pg.getPostgresDatabase()).defaultSchema("labeling").schemas("labeling").load();
-            assertEquals(13,current.migrate().migrationsExecuted);
+            assertEquals(14,current.migrate().migrationsExecuted);
             current.validate();
             assertEquals(0,current.migrate().migrationsExecuted);
             assertEquals("image-classification",db.queryForObject("SELECT template_id FROM labeling.project WHERE id=?",String.class,project));
             assertEquals("1.0.0",db.queryForObject("SELECT template_version FROM labeling.import_batch WHERE id=?",String.class,batch));
             assertEquals(before,db.queryForMap("SELECT result::text AS result,result_id FROM labeling.submission_item WHERE submission_id=?",submission));
             assertEquals(frozen,db.queryForObject("SELECT result::text FROM labeling.final_snapshot_item WHERE snapshot_id=?",String.class,snapshot));
+            assertNull(db.queryForObject("SELECT annotation_provenance FROM labeling.final_snapshot_item WHERE snapshot_id=?",Object.class,snapshot));
             assertEquals(spec,db.queryForObject("SELECT spec_version_id FROM labeling.final_snapshot WHERE id=?",UUID.class,snapshot));
             assertEquals("image-classification-v1",db.queryForObject("SELECT result_format FROM labeling.annotation_draft WHERE sample_id=?",String.class,sample));
             assertEquals("历史确认",db.queryForObject("SELECT reason FROM labeling.review_item WHERE sample_id=?",String.class,sample));

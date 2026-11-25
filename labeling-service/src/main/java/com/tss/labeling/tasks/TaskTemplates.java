@@ -13,6 +13,14 @@ public final class TaskTemplates {
     public static Map<String, Object> forType(String type) {
         String id, input, result, inputSchema, resultSchema, editor;
         switch (type) {
+            case "STRUCTURED", "SEMI_STRUCTURED" -> {
+                id = "STRUCTURED".equals(type) ? "structured-records" : "semi-structured-documents";
+                input = id + "-input-v1";
+                result = id + "-result-v1";
+                inputSchema = id + "-input@1.0.0";
+                resultSchema = id + "-result@1.0.0";
+                editor = id + "-editor";
+            }
             case "IMAGE_CLASSIFICATION" -> {
                 id = "image-classification";
                 input = "image";

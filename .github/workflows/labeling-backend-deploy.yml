@@ -45,7 +45,7 @@ jobs:
             verify
       - name: 发布边界测试
         run: |
-          python -m unittest discover -s labeling-service/scripts -p 'test_*.py'
+          labeling-service/target/ls-build-env/bin/python -m unittest discover -s labeling-service/scripts -p 'test_*.py'
           bash -n labeling-service/deploy-release.sh labeling-service/scripts/install-private-python.sh
       - name: 打包并核对完整发布内容
         run: |
