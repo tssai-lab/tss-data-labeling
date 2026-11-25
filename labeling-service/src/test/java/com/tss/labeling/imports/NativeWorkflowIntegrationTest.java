@@ -124,6 +124,150 @@ class NativeWorkflowIntegrationTest {
         }
     }
 
+    @Autowired com.tss.labeling.ai.AiController aiController;
+    @Autowired org.springframework.jdbc.core.JdbcTemplate db;
+
+    @Test void fixedModelWorkerCanReadNativeInputsAndPersistCandidates() throws Exception {
+        byte[] picture = ImportIntegrationTest.image("png");
+        verifyPrelabel("COMPUTER_VISION", "yolo-pcb", "yoloPcbAgentId",
+                """
+                <View><Image name="image" value="$image"/>
+                <RectangleLabels name="defect" toName="image"><Label value="Scratch"/></RectangleLabels></View>
+                """,
+                Map.of("image", "pcb.png"), Map.of("pcb.png", picture),
+                Map.of("id", "defect1", "from_name", "defect", "to_name", "image", "type", "rectanglelabels",
+                        "original_width", 8, "original_height", 6,
+                        "value", Map.of("x", 10, "y", 10, "width", 20, "height", 20, "rotation", 0,
+                                "rectanglelabels", List.of("Scratch"))), picture);
+        verifyPrelabel("COMPUTER_VISION", "qwen-image", "qwenImageAgentId",
+                """
+                <View><Image name="image" value="$image"/>
+                <Choices name="quality" toName="image"><Choice value="Anomaly"/></Choices></View>
+                """,
+                Map.of("image", "pcb.png"), Map.of("pcb.png", picture),
+                Map.of("id", "quality1", "from_name", "quality", "to_name", "image", "type", "choices",
+                        "value", Map.of("choices", List.of("Anomaly"))), picture);
+        verifyPrelabel("TIME_SERIES", "qwen-timeseries", "qwenTimeseriesAgentId",
+                """
+                <View><TimeSeries name="curve" value="$series" valueType="json" timeColumn="hour">
+                <Channel column="kwh"/></TimeSeries>
+                <TimeSeriesLabels name="energy_events" toName="curve"><Label value="Spike"/></TimeSeriesLabels></View>
+                """,
+                Map.of("series", Map.of("hour", List.of(0, 1, 2), "kwh", List.of(1, 9, 1))), Map.of(),
+                Map.of("id", "event1", "from_name", "energy_events", "to_name", "curve", "type", "timeserieslabels",
+                        "value", Map.of("start", 1, "end", 1, "instant", true, "timeserieslabels", List.of("Spike"))), null);
+    }
+
+    private void verifyPrelabel(String taskType, String modelId, String field, String xml,
+            Map<String, Object> data, Map<String, byte[]> resources, Map<String, Object> candidate,
+            byte[] expectedImage) throws Exception {
+        String project = postApi("owner", "/projects", Map.of("name", modelId, "taskType", taskType), 201)
+                .path("projectId").asText();
+        var files = new HashMap<>(resources);
+        if (expectedImage == null) {
+            files.put("tasks.json", json.writeValueAsBytes(List.of(Map.of("data", data))));
+        }
+        String batch = upload(project, files);
+        if (expectedImage != null) {
+            postApi("owner", "/projects/" + project + "/imports/" + batch + "/tasks",
+                    Map.of("tasks", List.of(Map.of("data", data))), 200);
+        }
+        JsonNode listedSample = getApi("owner", "/projects/" + project + "/input-samples").at("/items/0");
+        String sample = listedSample.path("sampleId").asText();
+        if (expectedImage != null) {
+            assertEquals("pcb.png", listedSample.at("/metadata/displayName").asText());
+            // Older mapped samples have the filename only in the stored task input.
+            try (var connection = ImportIntegrationTest.PG.getPostgresDatabase().getConnection();
+                    var update = connection.prepareStatement(
+                            "UPDATE labeling.sample SET metadata=metadata-'displayName' WHERE id=?")) {
+                update.setObject(1, UUID.fromString(sample));
+                assertEquals(1, update.executeUpdate());
+            }
+            assertEquals("pcb.png", getApi("owner", "/projects/" + project + "/input-samples")
+                    .at("/items/0/metadata/displayName").asText());
+            assertEquals("pcb.png", getApi("owner", "/projects/" + project + "/samples/" + sample
+                    + "/native-input").path("displayName").asText());
+        }
+        String specPath = "/projects/" + project + "/spec-versions";
+        var editorConfig = new HashMap<String, Object>(Map.of("labelConfig", xml, "templateId", "custom"));
+        var specBody = new HashMap<String, Object>(Map.of("taskType", taskType, "schemaVersion", "label-studio-v1",
+                "labels", List.of(), "instructions", "项目判断标准", "editorConfig", editorConfig));
+        boolean energy = "qwen-timeseries".equals(modelId);
+        if (energy) {
+            editorConfig.put("energyRules", Map.of("lowDailyPercent", "60%"));
+            postApi("owner", specPath, specBody, 422);
+            editorConfig.put("energyRules", Map.of("lowDailyPercent", 60));
+            var legacySpec = postApi("owner", specPath, specBody, 201);
+            assertEquals(60, legacySpec.at("/editorConfig/energyRules/lowDailyPercent").asInt());
+            assertEquals("thresholds", legacySpec.at("/editorConfig/timeseriesPrelabelMode").asText());
+            editorConfig.remove("energyRules");
+        }
+        String spec = postApi("owner", specPath, specBody, 201)
+                .path("specVersionId").asText();
+        String credential = UUID.randomUUID().toString();
+        String adminUser = "native-prelabel-admin";
+        getApi(adminUser, "/me");
+        db.update("""
+                INSERT INTO actor_role_grant(actor_id,role_code)
+                SELECT id, 'LABELING_ADMIN' FROM actor WHERE identity_user_id=?
+                ON CONFLICT DO NOTHING
+                """, adminUser);
+        String agent = postApi(adminUser, "/admin/agents",
+                Map.of("taskType", taskType, "displayName", modelId, "modelVersion", "fixture",
+                        "workerKey", credential), 201).path("agentId").asText();
+        Object previous = org.springframework.test.util.ReflectionTestUtils.getField(aiController, field);
+        org.springframework.test.util.ReflectionTestUtils.setField(aiController, field, agent);
+        String execution;
+        try {
+            execution = postApi("owner", "/projects/" + project + "/prelabel-runs",
+                    Map.of("modelId", modelId, "specVersionId", spec, "instructions", "fixture guide",
+                            "samples", List.of(Map.of("sampleId", sample))), 202).path("executionId").asText();
+        } finally {
+            org.springframework.test.util.ReflectionTestUtils.setField(aiController, field, previous);
+        }
+        specBody.put("instructions", "新版本说明");
+        if (energy) editorConfig.put("energyRules", Map.of("lowDailyPercent", 70));
+        postApi("owner", specPath, specBody, 201);
+        String root = "/internal/labeling/v1/executions";
+        var claim = json.readTree(mvc.perform(post(root + "/claim").header("X-Worker-Key", credential))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
+        assertEquals(execution, claim.path("executionId").asText());
+        assertEquals(xml, claim.at("/editorConfig/labelConfig").asText());
+        assertEquals("项目判断标准", claim.path("specInstructions").asText());
+        assertEquals("fixture guide", claim.path("instructions").asText());
+        if (energy) {
+            assertEquals("instructions", claim.at("/editorConfig/timeseriesPrelabelMode").asText());
+            assertTrue(claim.at("/editorConfig/energyRules").isMissingNode());
+        }
+        long generation = claim.path("generation").asLong();
+        String path = root + "/" + execution;
+        String samplePath = path + "/samples/" + sample;
+        var input = json.readTree(mvc.perform(get(samplePath + "/data").header("X-Worker-Key", credential)
+                .queryParam("generation", Long.toString(generation))).andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString());
+        assertEquals(json.valueToTree(data), input.at("/task/data"));
+        if (expectedImage != null) {
+            String resource = input.at("/resources/0/resourceId").asText();
+            var image = mvc.perform(get(samplePath + "/resources/" + resource).header("X-Worker-Key", credential)
+                    .queryParam("generation", Long.toString(generation))).andExpect(status().isOk())
+                    .andReturn().getResponse().getContentAsByteArray();
+            assertArrayEquals(expectedImage, image);
+            mvc.perform(get(samplePath + "/resources/" + UUID.randomUUID()).header("X-Worker-Key", credential)
+                    .queryParam("generation", Long.toString(generation))).andExpect(status().isNotFound());
+        }
+        mvc.perform(put(path + "/outputs/" + sample).header("X-Worker-Key", credential)
+                .contentType("application/json").content(json.writeValueAsString(Map.of("generation", generation,
+                        "status", "SUCCEEDED", "result", Map.of("result", List.of(candidate))))))
+                .andExpect(status().isOk());
+        mvc.perform(post(path + "/finish").header("X-Worker-Key", credential)
+                .header("Idempotency-Key", UUID.randomUUID().toString()).contentType("application/json")
+                .content(json.writeValueAsString(Map.of("generation", generation)))).andExpect(status().isOk());
+        assertEquals("SUCCEEDED", getApi("owner", "/ai-executions/" + execution).path("status").asText());
+        var output = getApi("owner", "/ai-executions/" + execution + "/results").at("/items/0");
+        assertTrue(output.path("reviewable").asBoolean());
+        assertEquals(candidate.get("type"), output.at("/result/result/0/type").asText());
+    }
+
     @Test void csvIsAResourceUntilExplicitNativeTasksArePrepared() throws Exception {
         String project=postApi("owner","/projects",Map.of("name","资源与任务分离","taskType","TIME_SERIES"),201).path("projectId").asText();
         String batch=upload(project,Map.of("daily.csv","t,a,b\n0,1,2\n1,3,4\n".getBytes(StandardCharsets.UTF_8)));

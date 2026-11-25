@@ -42,7 +42,22 @@ public class NativeTaskService {
                 WHERE s.project_id=? AND b.status='READY' AND s.id>? ORDER BY s.id LIMIT ?
                 """,project,after,limit+1);
         boolean more=rows.size()>limit; if(more) rows.remove(rows.size()-1);
-        for(var row:rows) row.put("metadata",read((String)row.get("metadata")));
+        for (var row : rows) {
+            var metadata = (ObjectNode) read((String) row.get("metadata"));
+            String source = (String) row.get("sourcePath");
+            if (source.startsWith("mapped-") && metadata.path("displayName").asText("").isBlank()) {
+                UUID sample = (UUID) row.get("sampleId");
+                String name = "";
+                try {
+                    Path stored = storage.sample((UUID) row.get("batchId"), sample);
+                    name = parser.singleSourceFileName(json.readTree(stored.toFile()));
+                } catch (IOException ignored) {
+                    // Keep other samples accessible when one historical payload is unavailable.
+                }
+                metadata.put("displayName", name.isBlank() ? "样本 " + sample.toString().substring(0, 8) : name);
+            }
+            row.put("metadata", metadata);
+        }
         var out=json.createObjectNode();out.set("items",json.valueToTree(rows));
         if(more) out.put("nextCursor",rows.get(rows.size()-1).get("sampleId").toString());else out.putNull("nextCursor");
         return out;
@@ -99,6 +114,11 @@ public class NativeTaskService {
     @Transactional
     public ImportService.SampleFile resource(ActorContext actor,UUID scope,UUID sample,UUID resource,UUID spec,boolean assignment) {
         JsonNode context=assignment?assignmentTask(actor,scope,sample):ownerTask(actor,scope,sample,spec);
+        return inputResource(context, resource);
+    }
+
+    /** The supplied context must come from the authorized sample. */
+    public ImportService.SampleFile inputResource(JsonNode context, UUID resource) {
         boolean permitted=false;
         for(JsonNode item:context.path("resources")) if(resource.toString().equals(item.path("resourceId").asText())) permitted=true;
         if(!permitted) throw error(404,"RESOURCE_NOT_FOUND","输入资源不存在");
@@ -126,6 +146,11 @@ public class NativeTaskService {
     @Transactional
     public JsonNode ownerInput(ActorContext actor,UUID project,UUID sample) {
         ownerDataAccess(actor,project);
+        return inputWithResources(project, sample);
+    }
+
+    /** Caller must authorize the project and sample before reading. */
+    public JsonNode inputWithResources(UUID project, UUID sample) {
         var row=one("SELECT * FROM sample WHERE id=? AND project_id=?",sample,project);
         ObjectNode task=(ObjectNode)rawTask(sample).deepCopy();task.put("id",sample.toString());
         JsonNode data=task.path("data");
@@ -133,8 +158,17 @@ public class NativeTaskService {
         collectResources(data,"",(UUID)row.get("batch_id"),(String)row.get("source_path"),project,resources);
         var out=json.createObjectNode();out.set("task",task);
         out.set("resources",resources);out.put("sourcePath",(String)row.get("source_path"));
-        out.put("displayName",read(row.get("metadata").toString()).path("displayName").asText((String)row.get("source_path")));
+        out.put("displayName", displayName(row, task, sample));
         return out;
+    }
+
+    private String displayName(Map<String, Object> row, JsonNode task, UUID sample) {
+        String configured = read(row.get("metadata").toString()).path("displayName").asText("");
+        if (!configured.isBlank()) return configured;
+        String source = (String) row.get("source_path");
+        if (!source.startsWith("mapped-")) return source;
+        String fileName = parser.singleSourceFileName(task);
+        return fileName.isBlank() ? "样本 " + sample.toString().substring(0, 8) : fileName;
     }
 
     private void collectResources(JsonNode node,String field,UUID batch,String source,UUID project,com.fasterxml.jackson.databind.node.ArrayNode resources) {
@@ -185,6 +219,7 @@ public class NativeTaskService {
         if(parsed.isEmpty()) throw error(422,"NATIVE_CONFIG_REQUIRED","此规范未包含原生 LS 配置");
         ObjectNode task=(ObjectNode)rawTask(sample).deepCopy();task.put("id",sample.toString());
         ObjectNode data=(ObjectNode)task.path("data");
+        String name = displayName(row, task, sample);
         var resources=json.createArrayNode();
         Set<String> visited=new HashSet<>();
         for(JsonNode control:parsed) for(JsonNode input:control.path("inputs")) {
@@ -212,7 +247,7 @@ public class NativeTaskService {
         response.set("task",task);
         response.set("resources",resources);response.set("editorConfig",config);
         response.put("sourcePath",(String)row.get("source_path"));
-        response.put("displayName",read(row.get("metadata").toString()).path("displayName").asText((String)row.get("source_path")));
+        response.put("displayName", name);
         return response;
     }
 
