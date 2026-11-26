@@ -419,6 +419,69 @@ class ImportIntegrationTest {
                 Map.of("selectionHash", plan.path("selectionHash").asText()), 200);
     }
 
+    @Test void parallelPublicationIsAtomicIdempotentAndExcludesOtherGroups() throws Exception {
+        JsonNode draft = taskPlan(1);
+        String project = draft.path("projectId").asText(), spec = draft.path("specVersionId").asText();
+        String base = "/projects/" + project;
+        var items = new java.util.ArrayList<Map<String,Object>>();
+        for (JsonNode row : resultGet(base + "/results?specVersionId=" + spec, "owner", 200).path("items"))
+            items.add(Map.of("sampleId", row.path("sampleId").asText(), "reviewRevision", row.path("reviewRevision").asLong()));
+        assertEquals(3, items.size());
+        JsonNode selection = taskPost(base + "/result-selections", "owner", UUID.randomUUID().toString(),
+                Map.of("purpose", "PUBLISH", "specVersionId", spec, "items", items), 201);
+        String first = agent("IMAGE_CLASSIFICATION", UUID.randomUUID().toString());
+        String second = agent("IMAGE_CLASSIFICATION", UUID.randomUUID().toString());
+        var bad = Map.of("specVersionId", spec, "selectionId", selection.path("selectionId").asText(),
+                "human", true, "packageSize", 2, "annotatorsPerSample", 1,
+                "agentIds", java.util.List.of(first, UUID.randomUUID().toString()), "reopenAccepted", false);
+        taskPost(base + "/publication-groups", "owner", UUID.randomUUID().toString(), bad, 422);
+        assertEquals(0, db.queryForObject("SELECT count(*) FROM publication_group WHERE project_id=?", Integer.class, UUID.fromString(project)));
+        assertEquals(0, db.queryForObject("SELECT count(*) FROM sample_work_claim WHERE project_id=?", Integer.class, UUID.fromString(project)));
+        var body = Map.of("specVersionId", spec, "selectionId", selection.path("selectionId").asText(),
+                "human", true, "packageSize", 2, "annotatorsPerSample", 1,
+                "agentIds", java.util.List.of(first, second), "reopenAccepted", false);
+        String key = UUID.randomUUID().toString();
+        JsonNode receipt = taskPost(base + "/publication-groups", "owner", key, body, 201);
+        assertEquals(receipt, taskPost(base + "/publication-groups", "owner", key, body, 201));
+        assertEquals(2, receipt.path("humanPlan").path("packages").size());
+        assertEquals(2, receipt.path("executions").size());
+        assertEquals(9, db.queryForObject("SELECT count(*) FROM sample_work_claim WHERE project_id=?", Integer.class, UUID.fromString(project)));
+        taskPost(base + "/publication-groups", "owner", UUID.randomUUID().toString(), body, 409);
+        JsonNode status = resultGet(base + "/publication-groups/" + receipt.path("publicationGroupId").asText(), "owner", 200);
+        assertEquals(2, status.path("executions").size());
+        resultGet(base + "/publication-groups/" + receipt.path("publicationGroupId").asText(), "other", 404);
+        String firstExecution = receipt.path("executions").get(0).path("executionId").asText();
+        JsonNode cancelled = taskPost("/ai-executions/" + firstExecution + "/cancel", "owner", UUID.randomUUID().toString(),
+                Map.of("baseRevision", receipt.path("executions").get(0).path("revision").asLong(), "reason", "测试重试"), 200);
+        assertEquals(6, db.queryForObject("SELECT count(*) FROM sample_work_claim WHERE project_id=?", Integer.class, UUID.fromString(project)));
+        String retryKey = UUID.randomUUID().toString();
+        var retryInput = Map.of("baseRevision", cancelled.path("revision").asLong());
+        JsonNode retried = taskPost("/ai-executions/" + firstExecution + "/retries", "owner", retryKey, retryInput, 201);
+        assertEquals(retried, taskPost("/ai-executions/" + firstExecution + "/retries", "owner", retryKey, retryInput, 201));
+        assertEquals(9, db.queryForObject("SELECT count(*) FROM sample_work_claim WHERE project_id=?", Integer.class, UUID.fromString(project)));
+        assertEquals(3, resultGet(base + "/publication-groups/" + receipt.path("publicationGroupId").asText(), "owner", 200).path("executions").size());
+        JsonNode secondExecution = receipt.path("executions").get(1);
+        taskPost("/ai-executions/" + secondExecution.path("executionId").asText() + "/cancel", "owner", UUID.randomUUID().toString(), Map.of("baseRevision", secondExecution.path("revision").asLong(), "reason", "测试结束"), 200);
+        taskPost("/ai-executions/" + retried.path("executionId").asText() + "/cancel", "owner", UUID.randomUUID().toString(), Map.of("baseRevision", retried.path("revision").asLong(), "reason", "测试结束"), 200);
+        assertEquals(3, db.queryForObject("SELECT count(*) FROM sample_work_claim WHERE project_id=?", Integer.class, UUID.fromString(project)));
+        for (JsonNode pkg : receipt.path("humanPlan").path("packages")) {
+            taskPost("/rounds/" + pkg.path("roundId").asText() + "/cancel", "owner", UUID.randomUUID().toString(), Map.of("baseRevision", 1, "reason", "测试结束"), 200);
+        }
+        assertEquals(0, db.queryForObject("SELECT count(*) FROM sample_work_claim WHERE project_id=?", Integer.class, UUID.fromString(project)));
+    }
+
+    @Test void parallelPublicationRejectsAChangedReviewAfterPreview() throws Exception {
+        JsonNode draft = taskPlan(1);
+        String project = draft.path("projectId").asText(), spec = draft.path("specVersionId").asText();
+        String base = "/projects/" + project;
+        JsonNode selection = taskPost(base + "/result-selections", "owner", UUID.randomUUID().toString(),
+                Map.of("purpose", "PUBLISH", "specVersionId", spec, "filter", Map.of()), 201);
+        String sample = resultGet("/result-selections/" + selection.path("selectionId").asText() + "/items", "owner", 200).path("items").get(0).path("sampleId").asText();
+        taskPost(base + "/sample-reviews", "owner", UUID.randomUUID().toString(), Map.of("items", java.util.List.of(Map.of("sampleId", sample, "specVersionId", spec, "action", "NEEDS_REVISION", "reason", "测试"))), 200);
+        taskPost(base + "/publication-groups", "owner", UUID.randomUUID().toString(), Map.of("specVersionId", spec, "selectionId", selection.path("selectionId").asText(), "human", true, "packageSize", 2, "agentIds", java.util.List.of(), "reopenAccepted", false), 409);
+        assertEquals(0, db.queryForObject("SELECT count(*) FROM publication_group WHERE project_id=?", Integer.class, UUID.fromString(project)));
+    }
+
     @Test void taskPackagesAllowOnlyClaimedImagesAndReplayClaims() throws Exception {
         JsonNode draft = taskPlan(2);
         JsonNode published = publishTask(draft);

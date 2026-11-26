@@ -270,6 +270,14 @@ node examples/image-import.mjs $projectId $imageZip $downloadDir
 
 ## 4. 人工打包与领取
 
+### 联合发布（需执行数据库迁移 V29）
+
+`POST /projects/{projectId}/publication-groups` 使用需求方权限和 `Idempotency-Key`。请求包含 `specVersionId`、用途为 `PUBLISH` 的 `selectionId`、`human`、`packageSize`、`annotatorsPerSample`、`agentIds`、显式 `reopenAccepted` 和可选 `instructions`。至少选择人工或一个已启用且任务类型兼容的 Agent；Agent 最多 10 个且不能重复。发布会在同一事务中重新校验范围及审核版本，创建人工包和各模型执行，返回 `publicationGroupId`、固定范围、`humanPlan` 和 `executions`。请求失败时整个事务回滚；同一幂等键和请求重放原回执。
+
+同组来源可以并行处理相同样本，其他发布仍返回 `SAMPLE_BUSY`；每个轮次结束或取消仅释放自己的占用。已确认样本仅在 `reopenAccepted=true` 时重新发布，发布会清除当前确认指针并记录审计。执行条目包含 `agentConfigId`，用于区分已注册模型，不能与兼容字段 `agentId`（模型 actor ID）混用。
+
+`GET /projects/{projectId}/publication-groups` 返回最近 20 条发布记录；`GET /projects/{projectId}/publication-groups/{groupId}` 返回固定样本 ID、人工包及状态和各 AI 执行的当前状态。AI 失败或取消后可使用现有 `POST /ai-executions/{executionId}/retries` 按来源重试，重试批次仍归属原联合发布。上述接口仅限项目需求方。
+
 | 接口 | 请求 | 响应 |
 |---|---|---|
 | POST /projects/{id}/package-plans | batchId 或 samples[]（二选一）、specVersionId、packageSize、annotatorsPerSample、instructions，幂等键 | 201 planId、status、selectionHash、sampleCount、packageSampleCounts、totalWorkload、packages |
