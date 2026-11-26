@@ -7,6 +7,9 @@
   display: flex; flex-direction: column; gap: 14px; min-width: 0; padding: 0 0 6px; color: var(--ink);
   button { font: inherit; cursor: pointer; transition: background .2s, transform .2s, box-shadow .2s; &:focus-visible { outline: 3px solid #72b6ff; outline-offset: 4px; } &:disabled { cursor: default; opacity: .55; } }
 }
+.demoNotice { padding: 12px 16px; border: 1px solid #d8e2eb; border-radius: 8px; background: #fff; color: #536c81; font-size: 12px; }
+.demoIllustration { width: 100%; height: 100%; max-height: 220px; border-radius: 4px; background: #20384b; }
+@media (min-width: 1051px) and (max-height: 900px) { .missionBody .sampleCanvas { height: clamp(150px, 21vh, 210px); } .missionBody .inputPanel, .missionBody .enginePanel, .missionBody .outputPanel { padding-top: 12px; padding-bottom: 12px; } .missionBody .confidenceRing { width: 132px; height: 132px; margin: 12px 0; > div { width: 120px; height: 120px; } } }
 .executionToolbar { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
 .demoBadge { padding: 5px 10px; border: 1px solid #cedbe8; border-radius: 5px; color: #657c92; font-size: 11px; letter-spacing: .04em; }
 .mission { overflow: hidden; border: 1px solid #243f59; border-radius: 16px; background: #0d2236; color: #e8f2fb; box-shadow: 0 18px 48px #132f4824; }

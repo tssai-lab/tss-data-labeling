@@ -234,50 +234,53 @@ function NativeConfigurationSettings({
           </div>
         )}
 
-        <div className={styles.specMetaGrid}>
-          <section className={styles.specField}>
-            <div className={styles.specFieldHeading}>
-              <label htmlFor={instructionsId}>标注说明</label>
-              <span>标注员和 Qwen 预标注共用的判断标准和特殊情况</span>
-            </div>
-            <Input.TextArea
-              id={instructionsId}
-              aria-label="标注说明"
-              value={instructions}
-              readOnly={locked}
-              autoSize={{ minRows: 3, maxRows: 6 }}
-              placeholder={
-                isTimeSeries
-                  ? '例如：当天用量低于过去 30 天日用量中位数的 60% 时，标为低负荷，并说明判断依据。'
-                  : '例如：发现表面裂纹时选择“缺陷”；无法判断时请备注原因。'
-              }
-              onChange={(e) => {
-                metadataDirty.current = true;
-                setInstructions(e.target.value);
-              }}
-            />
-          </section>
+        <details className={styles.specMetaDetails}>
+          <summary>标注说明与完成规则</summary>
+          <div className={styles.specMetaGrid}>
+            <section className={styles.specField}>
+              <div className={styles.specFieldHeading}>
+                <label htmlFor={instructionsId}>标注说明</label>
+                <span>标注员和 Qwen 预标注共用的判断标准和特殊情况</span>
+              </div>
+              <Input.TextArea
+                id={instructionsId}
+                aria-label="标注说明"
+                value={instructions}
+                readOnly={locked}
+                autoSize={{ minRows: 3, maxRows: 6 }}
+                placeholder={
+                  isTimeSeries
+                    ? '例如：当天用量低于过去 30 天日用量中位数的 60% 时，标为低负荷，并说明判断依据。'
+                    : '例如：发现表面裂纹时选择“缺陷”；无法判断时请备注原因。'
+                }
+                onChange={(e) => {
+                  metadataDirty.current = true;
+                  setInstructions(e.target.value);
+                }}
+              />
+            </section>
 
-          <section className={styles.specCompletion}>
-            <div className={styles.specFieldHeading}>
-              <span>完成规则</span>
-              <span>决定标注员何时可以提交</span>
-            </div>
-            <Checkbox
-              checked={allowEmpty}
-              disabled={locked}
-              onChange={(e) => {
-                metadataDirty.current = true;
-                setAllowEmpty(e.target.checked);
-              }}
-            >
-              允许提交无标注结果
-            </Checkbox>
-            <Typography.Text type="secondary">
-              开启后，提交时必须填写无目标原因。
-            </Typography.Text>
-          </section>
-        </div>
+            <section className={styles.specCompletion}>
+              <div className={styles.specFieldHeading}>
+                <span>完成规则</span>
+                <span>决定标注员何时可以提交</span>
+              </div>
+              <Checkbox
+                checked={allowEmpty}
+                disabled={locked}
+                onChange={(e) => {
+                  metadataDirty.current = true;
+                  setAllowEmpty(e.target.checked);
+                }}
+              >
+                允许提交无标注结果
+              </Checkbox>
+              <Typography.Text type="secondary">
+                开启后，提交时必须填写无目标原因。
+              </Typography.Text>
+            </section>
+          </div>
+        </details>
 
         <section className={styles.specEditorSection}>
           <div className={styles.specSectionHeader}>

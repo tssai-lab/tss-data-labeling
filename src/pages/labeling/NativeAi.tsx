@@ -47,6 +47,8 @@ export default function NativeAi({
   executionStatus,
   submitting = false,
   onReview,
+  demonstration = false,
+  onStart,
 }: {
   project: NativeProject;
   selectedSamples: NativeSample[];
@@ -59,6 +61,8 @@ export default function NativeAi({
   executionStatus?: string;
   submitting?: boolean;
   onReview?: () => void;
+  demonstration?: boolean;
+  onStart?: () => void;
 }) {
   const [modelId, setModelId] = useState('');
   const [instructions, setInstructions] = useState('');
@@ -78,6 +82,41 @@ export default function NativeAi({
         : 'qwen-image',
     );
   }, [project.taskType]);
+
+  if (demonstration) {
+    const series = ['TIME_SERIES', 'TIMESERIES_ANNOTATION'].includes(
+      project.taskType,
+    );
+    const labels = series
+      ? ['正常波动', '异常波动', '正常波动']
+      : ['正常', '待检查', '正常'];
+    const demoSamples: NativeSample[] = labels.map((_, index) => ({
+      sampleId: `example-${index + 1}`,
+      batchId: '',
+      sourcePath: series ? `时序样本 ${index + 1}` : `样本图片 ${index + 1}`,
+      mediaType: series ? 'text/csv' : 'image/png',
+      contentSha256: '',
+      metadata: {},
+    }));
+    return (
+      <AiExecutionShowcase
+        project={project}
+        samples={demoSamples}
+        results={demoSamples.map((sample, index) => ({
+          sample,
+          label: labels[index],
+          confidence: [0.96, 0.87, 0.93][index],
+          status: '待核查',
+        }))}
+        progress={100}
+        running={false}
+        modelName="示例模型"
+        instructions="示例展示样本输入、模型执行和候选结果的查看方式。"
+        demonstration
+        onStart={onStart}
+      />
+    );
+  }
 
   if (execution) {
     return (

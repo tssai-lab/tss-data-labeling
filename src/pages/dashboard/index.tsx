@@ -205,11 +205,18 @@ const Dashboard: React.FC = () => {
         <Result
           status="error"
           title="首页数据加载失败"
-          subTitle={`无法从后端获取真实统计数据，页面没有使用演示数据替代。${dashboardError ? ` 原因：${dashboardError}` : ''}`}
+          subTitle={
+            dashboardError.includes('404')
+              ? '首页的平台统计接口未找到，请确认对应服务已启动。本地仅运行标注服务时，可直接进入数据标注平台。'
+              : `无法从后端获取真实统计数据。原因：${dashboardError}`
+          }
           extra={
-            <Button type="primary" onClick={() => void loadDashboard()}>
-              重新加载
-            </Button>
+            <>
+              <Button type="primary" onClick={() => history.push('/labeling')}>
+                进入数据标注平台
+              </Button>
+              <Button onClick={() => void loadDashboard()}>重新加载</Button>
+            </>
           }
         />
       </PageContainer>

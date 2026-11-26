@@ -73,19 +73,25 @@ test('publish selects and deselects only the filtered samples and sends an expli
   r.render();
   r.nodes('Search')[0].props.onChange({ target: { value: 'cat' } });
   r.render();
-  buttons(r, '全选筛选结果').props.onClick();
+  r.nodes('Table')[0].props.rowSelection.columnTitle.props.onChange({ target: { checked: true } });
   r.render();
   assert.equal(
     r.nodes('Table')[0].props.rowSelection.selectedRowKeys.join(','),
     'a,c',
   );
-  buttons(r, '取消全选筛选结果').props.onClick();
+  r.nodes('Table')[0].props.rowSelection.onChange(['a']);
+  r.render();
+  assert.equal(r.nodes('Table')[0].props.rowSelection.columnTitle.props.indeterminate, true);
+  r.nodes('Table')[0].props.rowSelection.columnTitle.props.onChange({ target: { checked: true } });
+  r.render();
+  assert.equal(r.nodes('Table')[0].props.rowSelection.columnTitle.props.checked, true);
+  r.nodes('Table')[0].props.rowSelection.columnTitle.props.onChange({ target: { checked: false } });
   r.render();
   assert.equal(
     r.nodes('Table')[0].props.rowSelection.selectedRowKeys.length,
     0,
   );
-  buttons(r, '全选筛选结果').props.onClick();
+  r.nodes('Table')[0].props.rowSelection.columnTitle.props.onChange({ target: { checked: true } });
   r.render();
   buttons(r, '生成发布计划').props.onClick();
   await flushHooks();
@@ -119,7 +125,7 @@ test('AI prelabel forwards the choice to reopen accepted samples', () => {
   r.render();
   r.nodes('Checkbox')[0].props.onChange({ target: { checked: true } });
   r.render();
-  buttons(r, '全选筛选结果').props.onClick();
+  r.nodes('Table')[0].props.rowSelection.columnTitle.props.onChange({ target: { checked: true } });
   r.render();
   r.nodes('Button').find((node) => node.props.type === 'primary').props.onClick();
   r.render();
