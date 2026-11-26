@@ -133,6 +133,11 @@ VALUES (?,?,?,?,?,?,?,?,?::jsonb,?)
 
     @Transactional
     public JsonNode publish(ActorContext actor, UUID planId, String expectedHash, String key) {
+        return publishForGroup(actor, planId, expectedHash, key, null);
+    }
+
+    @Transactional
+    public JsonNode publishForGroup(ActorContext actor, UUID planId, String expectedHash, String key, UUID groupId) {
         enabled(actor.actorId());
         Map<String,Object> plan = one("SELECT * FROM package_plan WHERE id = ?", planId);
         UUID projectId = (UUID) plan.get("project_id");
@@ -162,7 +167,7 @@ VALUES (?,?,?,?,?,?,?,?,?::jsonb,?)
                     (UUID) plan.get("spec_version_id"),
                     sampleIds,
                     (Boolean) plan.get("reopen_accepted"));
-            checkClaimConflict(projectId, sampleIds);
+            checkClaimConflict(projectId, sampleIds, groupId);
             int size = ((Number)plan.get("package_size")).intValue(), people = ((Number)plan.get("annotators_per_sample")).intValue();
             // ponytail: 有界同步发布，超过样本上限需拆分批次；大规模发布再引入后台任务。
             for (int start=0, sequence=1; start<samples.size(); start+=size, sequence++) {
@@ -177,6 +182,7 @@ VALUES (?,?,?,?,?,?,?,?,?::jsonb,?)
 INSERT INTO publication_round(id,project_id,spec_version_id,package_id,round_no,mode,instructions,status)
 VALUES (?,?,?,?,1,'HUMAN_POOL',?,'OPEN')
 """, roundId, projectId, plan.get("spec_version_id"), pkg, plan.get("instructions"));
+                if (groupId != null) db.update("UPDATE publication_round SET publication_group_id=? WHERE id=?", groupId, roundId);
                 for (int i=0;i<count;i++) {
                     Map<String,Object> s = samples.get(start+i);
                     db.update(
@@ -696,12 +702,15 @@ WHERE t.plan_id=? ORDER BY t.sequence_no
         return rows;
     }
     private void checkClaimConflict(UUID project, List<UUID> sampleIds) {
+        checkClaimConflict(project, sampleIds, null);
+    }
+    private void checkClaimConflict(UUID project, List<UUID> sampleIds, UUID groupId) {
         Set<UUID> wanted = new HashSet<>(sampleIds);
         var claimed = db.queryForList(
                         """
 SELECT c.sample_id FROM sample_work_claim c JOIN publication_round r ON r.id=c.round_id
-WHERE r.status='OPEN' AND c.project_id=?
-""", project);
+WHERE r.status='OPEN' AND c.project_id=? AND (CAST(? AS uuid) IS NULL OR r.publication_group_id IS DISTINCT FROM CAST(? AS uuid))
+""", project, groupId, groupId);
         for (var row : claimed) if (wanted.contains((UUID) row.get("sample_id"))) throw error(409,"SAMPLE_BUSY","所选样本存在进行中的轮次");
     }
     private JsonNode roundView(UUID id, Map<String,Object> r) {

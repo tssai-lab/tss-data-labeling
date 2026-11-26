@@ -170,6 +170,11 @@ FROM confidence_policy WHERE round_id=? ORDER BY created_at DESC
 
     @Transactional
     public JsonNode createExecution(ActorContext actor, UUID project, CreateInput input, String key) {
+        return createExecutionForGroup(actor, project, input, key, null);
+    }
+
+    @Transactional
+    public JsonNode createExecutionForGroup(ActorContext actor, UUID project, CreateInput input, String key, UUID groupId) {
         enabled(actor.actorId());
         Map<String,Object> p = project(project, true);
         owner(actor, p);
@@ -179,7 +184,9 @@ FROM confidence_policy WHERE round_id=? ORDER BY created_at DESC
         if (previous != null) return previous;
         Map<String,Object> spec = one("SELECT * FROM spec_version WHERE id=? AND project_id=?", input.specVersionId(), project);
         if (!Objects.equals(spec.get("task_type"), p.get("task_type"))) throw error(409,"SPEC_MISMATCH","规范任务类型不匹配");
-        Map<String,Object> agent = one("SELECT * FROM ai_agent_config WHERE id=? AND enabled=TRUE", input.agentId());
+        var agentRows = db.queryForList("SELECT * FROM ai_agent_config WHERE id=? AND enabled=TRUE", input.agentId());
+        if (agentRows.isEmpty()) throw error(422,"AGENT_UNAVAILABLE","所选模型不存在或已停用，请刷新模型列表后重新选择");
+        Map<String,Object> agent = agentRows.get(0);
         if (!spec.get("task_type").equals(agent.get("task_type"))) throw error(422,"AGENT_INCOMPATIBLE","Agent 不支持该项目任务类型");
         if ((input.samples() == null) == (input.selectionId() == null))
             throw error(422, "INVALID_REQUEST", "samples 与 selectionId 必须二选一");
@@ -217,7 +224,7 @@ FROM confidence_policy WHERE round_id=? ORDER BY created_at DESC
         List<UUID> sampleIds = new ArrayList<>();
         for (var s : samples) sampleIds.add((UUID) s.get("id"));
         scopes.checkReopen(project, input.specVersionId(), sampleIds, input.reopenAccepted());
-        checkClaimConflict(project, sampleIds);
+        checkClaimConflict(project, sampleIds, groupId);
         int roundNo = db.queryForObject(
                         "SELECT COALESCE(MAX(round_no),0)+1 FROM publication_round WHERE"
                             + " project_id=?", Integer.class, project);
@@ -227,6 +234,7 @@ FROM confidence_policy WHERE round_id=? ORDER BY created_at DESC
 INSERT INTO publication_round(id,project_id,spec_version_id,package_id,round_no,mode,instructions,status)
 VALUES (?,?,?,NULL,?,'AI_AGENT',?,'OPEN')
 """, roundId, project, input.specVersionId(), roundNo, input.instructions());
+        if (groupId != null) db.update("UPDATE publication_round SET publication_group_id=? WHERE id=?", groupId, roundId);
         int ordinal = 1;
         for (var s : samples) {
             UUID sampleId = (UUID) s.get("id");
@@ -654,12 +662,15 @@ WHERE si.submission_id=? AND si.sample_id=? AND s.project_id=? AND s.spec_versio
     }
 
     private void checkClaimConflict(UUID project, List<UUID> sampleIds) {
+        checkClaimConflict(project, sampleIds, null);
+    }
+    private void checkClaimConflict(UUID project, List<UUID> sampleIds, UUID groupId) {
         Set<UUID> wanted = new HashSet<>(sampleIds);
         var claimed = db.queryForList(
                         """
 SELECT c.sample_id FROM sample_work_claim c JOIN publication_round r ON r.id=c.round_id
-WHERE r.status='OPEN' AND c.project_id=?
-""", project);
+WHERE r.status='OPEN' AND c.project_id=? AND (CAST(? AS uuid) IS NULL OR r.publication_group_id IS DISTINCT FROM CAST(? AS uuid))
+""", project, groupId, groupId);
         for (var row : claimed) if (wanted.contains((UUID) row.get("sample_id"))) throw error(409,"SAMPLE_BUSY","所选样本存在进行中的轮次");
     }
 
@@ -936,18 +947,20 @@ WHERE r.status='OPEN' AND c.project_id=?
                                                 original.get("round_id"))
                                         .get("instructions")
                         : input.instructions();
+        UUID publicationGroup = (UUID) one("SELECT publication_group_id FROM publication_round WHERE id=?", original.get("round_id")).get("publication_group_id");
         JsonNode created =
-                createExecution(
+                createExecutionForGroup(
                         actor,
                         (UUID) original.get("project_id"),
                         new CreateInput(
                                 (UUID) original.get("spec_version_id"),
                                 agentId,
                                 retrySamples,
-                                instructions),
-                        "retry-" + hash(id + ":" + key));
+                                instructions, null, null, false),
+                        "retry-" + hash(id + ":" + key), publicationGroup);
         UUID child = UUID.fromString(created.path("executionId").asText());
         db.update("UPDATE ai_execution SET retry_of_execution_id=? WHERE id=?", id, child);
+        if (publicationGroup != null) db.update("INSERT INTO publication_group_execution(publication_group_id,execution_id,agent_id) VALUES (?,?,?)", publicationGroup, child, agentId);
         JsonNode response = execView(child);
         remember(actor.actorId(), op, key, requestHash, child, response);
         return response;}
