@@ -1,6 +1,10 @@
 .workspace { padding: 0 16px 16px; min-width: 0; }
 .toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 12px 0; border-bottom: 1px solid #dce3ec; margin-bottom: 12px; }
 .toolbarGroup { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; min-width: 0; }
+.backLink { display: inline-flex; align-items: center; min-height: 37px; padding: 0 12px; border: 1px solid #d7e1eb; border-radius: 7px; background: #fff; color: #1e40af; &:hover { border-color: #7596c9; color: #17338c; } &:focus-visible { outline: 2px solid #3765d9; outline-offset: 2px; } }
+.sampleNavigation { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.editorNavigation { padding: 0 0 10px; }
+.editorHost { max-height: max(260px, calc(100dvh - 250px)); overflow-y: auto; overflow-wrap: normal; word-break: normal; }
 .sampleSelect { width: 340px; max-width: 100%; }
 .position { color: #718096; white-space: nowrap; }
 .message { margin: 8px 0; }
@@ -19,6 +23,7 @@
 .specSettings { min-width: 0; }
 .specLead { display:flex; flex-direction:column; gap:4px; padding:12px 14px; border:1px solid #d9e5f4; border-radius:8px; background:#f5f8fc; }
 .specMetaGrid { display:grid; grid-template-columns:minmax(0,1fr) minmax(260px,.38fr); gap:16px; align-items:stretch; }
+.specMetaDetails { border: 1px solid #dce5f0; border-radius: 8px; background: #fff; > summary { padding: 10px 14px; color: #173452; font-weight: 600; cursor: pointer; } > summary:focus-visible { outline: 2px solid #3765d9; outline-offset: -2px; } .specMetaGrid { padding: 0 12px 12px; } }
 .specField, .specCompletion { min-width:0; padding:16px; border:1px solid #dce5f0; border-radius:9px; background:#fff; }
 .specFieldHeading { display:flex; flex-direction:column; gap:4px; margin-bottom:10px; color:#173452; font-weight:600; span { color:#71839a; font-size:12px; font-weight:400; } }
 .specField :global(.ant-input), .specEditorSection :global(.ant-input) { border-radius:7px; }
@@ -29,4 +34,5 @@
 .specPreviewSelect { display:flex; align-items:center; gap:9px; flex:0 0 min(420px, 48%); label { flex:0 0 auto; color:#526a83; font-size:13px; } :global(.ant-select) { min-width:0; flex:1; } }
 .specEditorSection > :global(.ant-input), .specEditorSection > :global(.ant-alert), .specEditorSection > :global(.ant-spin-nested-loading) { background:#fff; border-radius:7px; }
 @media (max-width: 760px) { .workspace { padding: 0 8px 8px; } .sampleSelect { width: min(340px, calc(100vw - 40px)); } .editorPane { padding: 8px; } .editorFooter { margin: 12px -8px -8px; } }
+@media (max-width: 760px) { .sampleNavigation { flex-wrap: nowrap; } .sampleSelect { flex: 1; width: auto; min-width: 80px; } .editorHost { max-height: max(260px, calc(100dvh - 300px)); } }
 @media (max-width: 760px) { .specMetaGrid { grid-template-columns:1fr; } .specSectionHeader { flex-direction:column; } .specPreviewSelect { width:100%; flex-basis:auto; } }

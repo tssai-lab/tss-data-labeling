@@ -20,6 +20,7 @@ function SamplePreview({
   loading,
   error,
   name,
+  demonstration,
 }: {
   sample?: NativeSample;
   running: boolean;
@@ -28,6 +29,7 @@ function SamplePreview({
   loading: boolean;
   error?: string;
   name: string;
+  demonstration?: boolean;
 }) {
   const occurrences = new Map<string, number>();
   const previewRows = sample?.metadata.previewRows?.slice(0, 5).map((row) => {
@@ -38,7 +40,38 @@ function SamplePreview({
   });
   return (
     <div className={ui.sampleCanvas} data-running={running}>
-      {imageUrl ? (
+      {demonstration ? (
+        <svg
+          className={ui.demoIllustration}
+          viewBox="0 0 400 220"
+          role="img"
+          aria-label={isTimeSeries ? '时序样本示意图' : '图片样本示意图'}
+        >
+          {isTimeSeries ? (
+            <path
+              d="M40 145L75 133L110 142L145 108L180 120L215 75L250 91L285 62L320 79L365 48"
+              fill="none"
+              stroke="#79b5d0"
+              strokeWidth="3"
+            />
+          ) : (
+            <>
+              <rect
+                x="65"
+                y="35"
+                width="270"
+                height="150"
+                rx="8"
+                fill="#a7b9c2"
+              />
+              <circle cx="155" cy="85" r="30" fill="#e9ece8" />
+              <circle cx="245" cy="85" r="30" fill="#e9ece8" />
+              <circle cx="155" cy="145" r="30" fill="#e9ece8" />
+              <circle cx="245" cy="145" r="30" fill="#e9ece8" />
+            </>
+          )}
+        </svg>
+      ) : imageUrl ? (
         <img src={imageUrl} alt={name} />
       ) : (
         <div className={ui.samplePlaceholder}>
@@ -62,7 +95,7 @@ function SamplePreview({
       )}
       {running && <div className={ui.scanLine} aria-hidden="true" />}
       <span className={ui.canvasBadge}>
-        {running ? '分析中' : '原始数据预览'}
+        {demonstration ? '示例样本' : running ? '分析中' : '原始数据预览'}
       </span>
       <div className={ui.canvasCorners} aria-hidden="true" />
     </div>
@@ -80,6 +113,8 @@ export default function AiExecutionShowcase({
   instructions,
   versionNo,
   onReview,
+  demonstration = false,
+  onStart,
 }: {
   project: NativeProject;
   samples: NativeSample[];
@@ -91,6 +126,8 @@ export default function AiExecutionShowcase({
   instructions: string;
   versionNo?: number;
   onReview?: () => void;
+  demonstration?: boolean;
+  onStart?: () => void;
 }) {
   const [focusedId, setFocusedId] = useState('');
   const focused =
@@ -110,19 +147,20 @@ export default function AiExecutionShowcase({
     : null;
   const high = scored.filter((score) => score >= 0.8).length;
   const labels = [...new Set(success.map((row) => row.label))];
-  const statusText =
-    (
-      {
-        QUEUED: '等待执行',
-        RUNNING: '执行中',
-        SUCCEEDED: '执行完成',
-        PARTIAL: '部分完成',
-        FAILED: '执行失败',
-        CANCELLED: '已取消',
-      } as Record<string, string>
-    )[executionStatus || ''] ||
-    executionStatus ||
-    (running ? '执行中' : '执行已结束');
+  const statusText = demonstration
+    ? '结果演示'
+    : (
+        {
+          QUEUED: '等待执行',
+          RUNNING: '执行中',
+          SUCCEEDED: '执行完成',
+          PARTIAL: '部分完成',
+          FAILED: '执行失败',
+          CANCELLED: '已取消',
+        } as Record<string, string>
+      )[executionStatus || ''] ||
+      executionStatus ||
+      (running ? '执行中' : '执行已结束');
   const isTimeSeries = ['TIME_SERIES', 'TIMESERIES_ANNOTATION'].includes(
     project.taskType,
   );
@@ -130,7 +168,7 @@ export default function AiExecutionShowcase({
     project.projectId,
     focused?.sampleId,
     focused?.mediaType,
-    !isTimeSeries,
+    !isTimeSeries && !demonstration,
   );
   const sampleName = (sample: NativeSample): string =>
     (sample.sampleId === focused?.sampleId && image.fileName) ||
@@ -138,6 +176,11 @@ export default function AiExecutionShowcase({
 
   return (
     <div className={ui.showcase}>
+      {demonstration && (
+        <div className={ui.demoNotice} role="note">
+          以下为示例数据，仅用于展示结果页面，不会写入当前项目。
+        </div>
+      )}
       <section className={ui.mission} aria-label="AI 执行">
         <div className={ui.missionTop}>
           <span className={ui.consoleLabel}>
@@ -163,6 +206,7 @@ export default function AiExecutionShowcase({
               loading={image.loading}
               error={image.error}
               name={focused ? sampleName(focused) : '本轮原始样本'}
+              demonstration={demonstration}
             />
             <div className={ui.sampleCaption}>
               <span title={focused ? sampleName(focused) : ''}>
@@ -285,11 +329,13 @@ export default function AiExecutionShowcase({
             </div>
             <div className={ui.outputNote}>
               <span />
-              {candidate?.status === '执行失败'
-                ? '该样本未生成候选，请在明细中查看'
-                : candidate
-                  ? '候选已生成，等待需求方核查'
-                  : '执行过程中将逐步显示候选结果'}
+              {demonstration
+                ? '示例候选，仅供界面预览'
+                : candidate?.status === '执行失败'
+                  ? '该样本未生成候选，请在明细中查看'
+                  : candidate
+                    ? '候选已生成，等待需求方核查'
+                    : '执行过程中将逐步显示候选结果'}
             </div>
             <small className={ui.simulationNote}>
               模型未提供置信度时显示为未知
@@ -341,23 +387,28 @@ export default function AiExecutionShowcase({
         <div>
           <span>下一步 / 需求方核查</span>
           <strong>
-            {running
-              ? executionStatus === 'QUEUED'
-                ? '任务已进入队列，等待执行。'
-                : 'AI 正在处理样本。'
-              : success.length
-                ? '请核查已生成的候选结果。'
-                : '本轮没有可核查的候选结果。'}
+            {demonstration
+              ? '选择项目样本后，即可创建 AI 执行任务。'
+              : running
+                ? executionStatus === 'QUEUED'
+                  ? '任务已进入队列，等待执行。'
+                  : 'AI 正在处理样本。'
+                : success.length
+                  ? '请核查已生成的候选结果。'
+                  : '本轮没有可核查的候选结果。'}
           </strong>
           <p>确认采用或筛出待修正样本，再决定下一轮执行方式。</p>
         </div>
         <button
           className={ui.reviewButton}
           type="button"
-          disabled={running || !success.some((row) => row.reviewable)}
-          onClick={onReview}
+          disabled={
+            !demonstration &&
+            (running || !success.some((row) => row.reviewable))
+          }
+          onClick={demonstration ? onStart : onReview}
         >
-          前往核查与重标
+          {demonstration ? '前往发布任务' : '前往核查与重标'}
           <ArrowRightOutlined />
         </button>
       </footer>

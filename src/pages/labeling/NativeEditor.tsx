@@ -32,11 +32,13 @@ export default function NativeEditor({
   instructions,
   compact,
   footerActions,
+  navigation,
   refreshKey,
 }: {
   refreshKey?: string;
   compact?: boolean;
   footerActions?: ReactNode;
+  navigation?: ReactNode;
   instructions?: string;
   configProjectId?: string;
   path: string;
@@ -128,6 +130,7 @@ export default function NativeEditor({
           instructions={instructions}
           compact={compact}
           footerActions={footerActions}
+          navigation={navigation}
           sample={{
             id: context.task.id,
             name: context.displayName || context.sourcePath,

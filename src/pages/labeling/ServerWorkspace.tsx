@@ -53,6 +53,7 @@ import NativeOutcome from './NativeOutcome';
 import NativePublish, { type ReworkScope } from './NativePublish';
 import NativeReview from './NativeReview';
 import NativeSpecSettings from './NativeSpecSettings';
+import ParallelPublish from './ParallelPublish';
 import ProjectBreadcrumbs from './ProjectBreadcrumbs';
 import ProjectManagement from './ProjectManagement';
 import StatusBadge from './StatusBadge';
@@ -118,6 +119,14 @@ export default function ServerWorkspace() {
     execution: LiveExecution;
     results: DemoResult[];
   }>();
+  const [groupExecutions, setGroupExecutions] = useState<
+    {
+      execution: LiveExecution;
+      samples: NativeSample[];
+      version: NativeProject['specVersions'][number];
+      model: string;
+    }[]
+  >([]);
   const [projectNameQuery, setProjectNameQuery] = useState('');
   const [projectDescriptionQuery, setProjectDescriptionQuery] = useState('');
   const [projectStatus, setProjectStatus] = useState('ALL');
@@ -164,6 +173,7 @@ export default function ServerWorkspace() {
   }, [projectId, project?.taskType, location.pathname, location.search]);
   useEffect(() => {
     setAiSession(undefined);
+    setGroupExecutions([]);
     setPublishMode('HUMAN');
     setSpecId('');
     setSuggestion('');
@@ -837,9 +847,7 @@ export default function ServerWorkspace() {
                     </span>
                   ),
                 },
-                ...(publishMode === 'AI'
-                  ? [{ key: 'ai', label: 'AI 执行' }]
-                  : []),
+                { key: 'ai', label: 'AI 执行' },
                 {
                   key: 'review',
                   label: (
@@ -867,7 +875,7 @@ export default function ServerWorkspace() {
                 onPublish={(ids) => {
                   setPublishSelection(ids);
                   setRework(undefined);
-                  navigate(`/labeling/projects/${projectId}?panel=publish`);
+                  navigate(`/labeling/projects/${projectId}?panel=settings`);
                 }}
                 onGuard={(fn) => {
                   guard.current = fn;
@@ -944,21 +952,64 @@ export default function ServerWorkspace() {
               </div>
             )}
             {tab === 'ai' && !aiSession && (
-              <Alert
-                type="info"
-                message="暂无 AI 执行任务，请从发布任务选择 AI 标注并完成配置。"
-                action={
-                  <Button
-                    onClick={() =>
-                      navigate(`/labeling/projects/${projectId}?panel=publish`)
-                    }
-                  >
-                    前往发布任务
-                  </Button>
+              <NativeAi
+                project={current}
+                selectedSamples={[]}
+                version={version}
+                demonstration
+                onStart={() =>
+                  navigate(`/labeling/projects/${projectId}?panel=publish`)
                 }
               />
             )}
-            {tab === 'publish' && (
+            {!rework && (
+              <div hidden={tab !== 'publish'}>
+                <ParallelPublish
+                  project={current}
+                  samples={samples}
+                  version={version}
+                  specVersions={current.specVersions}
+                  reviews={reviews}
+                  initialSelection={publishSelection}
+                  onVersionChange={setSpecId}
+                  refresh={refresh}
+                  onExecutions={setGroupExecutions}
+                  onOpenExecution={(
+                    execution,
+                    selectedSamples,
+                    selectedVersion,
+                    model,
+                  ) => {
+                    const config = { modelId: model, instructions: '' };
+                    setAiSession({
+                      projectId: current.projectId,
+                      samples: selectedSamples,
+                      version: selectedVersion,
+                      config,
+                      execution,
+                      results: [],
+                    });
+                    try {
+                      sessionStorage.setItem(
+                        receiptKey(current.projectId),
+                        JSON.stringify({
+                          executionId: execution.executionId,
+                          specVersionId: selectedVersion.specVersionId,
+                          sampleIds: selectedSamples.map(
+                            (sample) => sample.sampleId,
+                          ),
+                          config,
+                        }),
+                      );
+                    } catch {
+                      /* Storage is optional. */
+                    }
+                    navigate(`/labeling/projects/${projectId}?panel=ai`);
+                  }}
+                />
+              </div>
+            )}
+            {tab === 'publish' && !!rework && (
               <NativePublish
                 mode={publishMode}
                 onModeChange={(mode) => {
@@ -1022,6 +1073,25 @@ export default function ServerWorkspace() {
             {tab === 'review' && (
               <NativeReview
                 samples={samples}
+                aiSources={groupExecutions.map((item) => ({
+                  value: item.execution.executionId,
+                  label: `${item.model} · ${({ QUEUED: '排队中', RUNNING: '执行中', SUCCEEDED: '已完成', PARTIAL: '部分完成', FAILED: '失败', CANCELLED: '已取消' } as Record<string, string>)[item.execution.status] || item.execution.status}`,
+                }))}
+                selectedAiSource={aiSession?.execution.executionId}
+                onSelectAiSource={(id) => {
+                  const item = groupExecutions.find(
+                    (entry) => entry.execution.executionId === id,
+                  );
+                  if (item)
+                    setAiSession({
+                      projectId: current.projectId,
+                      samples: item.samples,
+                      version: item.version,
+                      config: { modelId: item.model, instructions: '' },
+                      execution: item.execution,
+                      results: [],
+                    });
+                }}
                 aiResults={
                   aiSession?.projectId === projectId
                     ? aiSession.results

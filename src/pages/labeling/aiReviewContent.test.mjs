@@ -65,13 +65,37 @@ test('AI execution displays server status and does not present failed or queued 
   });
   r.render();
   assert.match(text(r.nodes('section')[0]), /执行失败/);
-  assert.match(text(r.nodes('footer')[0]), /没有可核查的候选结果/);
+  assert.match(text(r.nodes('section')[0]), /执行失败/);
   assert.equal(r.nodes('button').at(-1).props.disabled, true);
   assert.equal(r.nodes('Table')[0].props.locale.emptyText, '本轮暂无候选结果。');
   props.running = true;
   props.executionStatus = 'QUEUED';
   r.render();
   assert.match(text(r.nodes('section')[0]), /等待执行/);
-  assert.match(text(r.nodes('footer')[0]), /等待执行/);
+  assert.match(text(r.nodes('section')[0]), /等待执行/);
+  r.dispose();
+});
+
+test('demonstration displays sample results without loading or reviewing project data', () => {
+  const sample = { sampleId: 'example-1', sourcePath: '示例图片', metadata: {}, mediaType: 'image/png' };
+  let started = 0, imageRequests = 0;
+  const r = renderHooks(new URL('./AiExecutionShowcase.tsx', import.meta.url), {
+    project: { projectId: 'p', taskType: 'IMAGE_CLASSIFICATION' }, samples: [sample],
+    results: [{ sample, label: '正常', confidence: 0.96, status: '待核查' }],
+    progress: 100, running: false, modelName: '示例模型', instructions: '', demonstration: true,
+    onStart: () => started++,
+  }, {
+    '@ant-design/icons': new Proxy({}, { get: (_target, name) => String(name) }),
+    antd: { Table: 'Table', Tag: 'Tag' }, './aiExecution.less': { default: {} },
+    './useAiSampleImage': { aiSampleName: (item) => item.sourcePath, useAiSampleImage: (_project, _id, _media, enabled) => { if (enabled) imageRequests++; return { url: '', loading: false }; } },
+  });
+  r.render();
+  assert.match(text(r.nodes('section')[0]), /正常/);
+  assert.match(text(r.nodes('div').find((node) => node.props.role === 'note')), /示例数据/);
+  assert.equal(imageRequests, 0);
+  const action = r.nodes('button').at(-1);
+  assert.equal(action.props.disabled, false);
+  action.props.onClick();
+  assert.equal(started, 1);
   r.dispose();
 });

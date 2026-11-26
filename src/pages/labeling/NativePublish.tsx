@@ -74,11 +74,8 @@ export default function NativePublish({
   );
   const [aiPage, setAiPage] = useState(false);
   const [search, setSearch] = useState('');
-  const visible = samples.filter((sample) =>
-    (sample.metadata.displayName || sample.sourcePath)
-      .toLowerCase()
-      .includes(search.toLowerCase()),
-  );
+  const [pageSize, setPageSize] = useState(10);
+  const [reviewFilter, setReviewFilter] = useState('ALL');
   const accepted = new Set(
     reviews
       .filter(
@@ -86,6 +83,24 @@ export default function NativePublish({
           r.specVersionId === version?.specVersionId && r.status === 'ACCEPTED',
       )
       .map((r) => r.sampleId),
+  );
+  const reviewStatus = (sample: NativeSample) =>
+    accepted.has(sample.sampleId)
+      ? 'ACCEPTED'
+      : reviews.some(
+            (r) =>
+              r.specVersionId === version?.specVersionId &&
+              r.sampleId === sample.sampleId &&
+              r.status === 'NEEDS_REVISION',
+          )
+        ? 'NEEDS_REVISION'
+        : 'PENDING';
+  const visible = samples.filter(
+    (sample) =>
+      (sample.metadata.displayName || sample.sourcePath)
+        .toLowerCase()
+        .includes(search.toLowerCase()) &&
+      (reviewFilter === 'ALL' || reviewStatus(sample) === reviewFilter),
   );
   const selectableIds = visible
     .filter((sample) => reopen || !accepted.has(sample.sampleId))
@@ -236,33 +251,51 @@ export default function NativePublish({
           value={search}
           onChange={(event) => setSearch(event.target.value)}
         />
-        <Space wrap>
-          <Button
-            disabled={
-              locked ||
-              !selectableIds.length ||
-              (!allVisibleSelected && selectionWithVisible.length > 10000) ||
-              busy ||
-              !!plan
-            }
-            onClick={() => selectVisible(!allVisibleSelected)}
-          >
-            {allVisibleSelected ? '取消全选筛选结果' : '全选筛选结果'}（共{' '}
-            {selectableIds.length} 个）
-          </Button>
-          <span>
-            已选择 {selected.length} 个样本；每次发布最多 10000 个，可分批发布。
-          </span>
-        </Space>
+        <Select
+          aria-label="筛选审核状态"
+          value={reviewFilter}
+          onChange={setReviewFilter}
+          options={[
+            { value: 'ALL', label: '全部审核状态' },
+            { value: 'PENDING', label: '待处理' },
+            { value: 'NEEDS_REVISION', label: '需重标' },
+            { value: 'ACCEPTED', label: '已确认' },
+          ]}
+        />
+        {selected.length > 10000 && (
+          <Alert
+            type="warning"
+            showIcon
+            message="本次最多发布 10000 个样本，请减少选择后分批发布。"
+          />
+        )}
         <Table
           rowKey="sampleId"
           size="small"
           dataSource={visible}
           scroll={{ x: 700 }}
+          pagination={{
+            pageSize,
+            showSizeChanger: true,
+            onShowSizeChange: (_page, size) => setPageSize(size),
+            showTotal: (total) =>
+              `已选 ${selected.length} 个 · 共 ${total} 个样本 · 共 ${Math.ceil(total / pageSize)} 页`,
+          }}
           rowSelection={{
             hideSelectAll: true,
-            columnWidth: 155,
-            columnTitle: '选择',
+            columnWidth: 64,
+            columnTitle: (
+              <Checkbox
+                aria-label="全选筛选结果"
+                checked={allVisibleSelected}
+                indeterminate={
+                  !allVisibleSelected &&
+                  selectableIds.some((id) => selected.includes(id))
+                }
+                disabled={locked || !selectableIds.length || busy || !!plan}
+                onChange={(event) => selectVisible(event.target.checked)}
+              />
+            ),
             preserveSelectedRowKeys: true,
             selectedRowKeys: selected,
             onChange: (ids) => {
@@ -282,13 +315,9 @@ export default function NativePublish({
             {
               title: '审核状态',
               render: (_, sample) =>
-                accepted.has(sample.sampleId)
+                reviewStatus(sample) === 'ACCEPTED'
                   ? '已确认'
-                  : reviews.some(
-                        (r) =>
-                          r.sampleId === sample.sampleId &&
-                          r.status === 'NEEDS_REVISION',
-                      )
+                  : reviewStatus(sample) === 'NEEDS_REVISION'
                     ? '需重标'
                     : '待处理',
             },

@@ -269,6 +269,16 @@
   :global(.ant-btn[disabled]) { box-shadow: none; transform: none; }
 }
 .workspacePage .footerAccount:focus-visible { outline: 2px solid #b2cdff; outline-offset: 2px; }
+
+/* Shared labeling surfaces: subtle structure keeps images and annotations in focus. */
+.workspacePage .content {
+  :global(.ant-card) { box-shadow: 0 2px 10px #17354c0a; }
+  :global(.ant-card-head-title) { font-weight: 600; letter-spacing: 0; }
+  :global(.ant-table-thead > tr > th) { background: #f3f6f9; font-weight: 600; }
+  :global(.ant-table-tbody > tr > td) { transition: background-color .16s ease; }
+}
+.workspacePage .heading h1 { font-weight: 650; letter-spacing: 0; }
+.projectFlowTabs { box-shadow: 0 2px 10px #17354c08; }
 @media (hover: hover) and (pointer: fine) {
   .workspacePage .content :global(.ant-table-tbody > tr.ant-table-row-selected:hover > td) { background: #dfeaff; }
 }

@@ -40,11 +40,17 @@ export default function NativeReview({
   aiResults,
   samples,
   onAiResultsChange,
+  aiSources = [],
+  selectedAiSource,
+  onSelectAiSource,
 }: {
   project: NativeProject;
   samples: NativeSample[];
   aiResults?: DemoResult[];
   onAiResultsChange: (results: DemoResult[]) => Promise<void>;
+  aiSources?: { value: string; label: string }[];
+  selectedAiSource?: string;
+  onSelectAiSource?: (id: string) => void;
   submissions: any[];
   run: (action: () => Promise<void>) => Promise<void>;
   refresh: () => void;
@@ -175,7 +181,7 @@ export default function NativeReview({
   };
   return (
     <div className={ui.nativeReview}>
-      {Boolean(aiResults?.length) && (
+      {(Boolean(aiResults?.length) || aiSources.length > 0) && (
         <Space>
           <Button
             type={resultSource === 'AI' ? 'primary' : 'default'}
@@ -185,6 +191,21 @@ export default function NativeReview({
           >
             AI 候选结果
           </Button>
+          {aiSources.length > 0 && (
+            <Select
+              aria-label="选择 AI 执行来源"
+              placeholder="选择模型批次"
+              value={selectedAiSource}
+              options={aiSources}
+              style={{ minWidth: 220 }}
+              onChange={(id) => {
+                if (guard.current()) {
+                  onSelectAiSource?.(id);
+                  setResultSource('AI');
+                }
+              }}
+            />
+          )}
           <Button
             type={resultSource === 'HUMAN' ? 'primary' : 'default'}
             onClick={() => {
@@ -195,7 +216,9 @@ export default function NativeReview({
           </Button>
         </Space>
       )}
-      {resultSource === 'AI' && aiResults?.length ? (
+      {resultSource === 'AI' && !aiResults?.length ? (
+        <Alert type="info" message="该 AI 批次尚无可核查的候选结果" />
+      ) : resultSource === 'AI' && aiResults?.length ? (
         <>
           <Alert
             type="info"
@@ -403,6 +426,37 @@ export default function NativeReview({
                       ) : (
                         <Empty description="选择一个样本查看结果" />
                       )}
+                      <Space wrap style={{ marginTop: 16 }}>
+                        <Button
+                          icon={<LeftOutlined />}
+                          disabled={busy || visibleIndex <= 0}
+                          onClick={() =>
+                            changeSample(
+                              visibleItems[visibleIndex - 1].sampleId,
+                            )
+                          }
+                        >
+                          上一张
+                        </Button>
+                        <span>
+                          {visibleIndex < 0 ? '—' : visibleIndex + 1} /{' '}
+                          {visibleItems.length}
+                        </span>
+                        <Button
+                          disabled={
+                            busy ||
+                            visibleIndex < 0 ||
+                            visibleIndex >= visibleItems.length - 1
+                          }
+                          onClick={() =>
+                            changeSample(
+                              visibleItems[visibleIndex + 1].sampleId,
+                            )
+                          }
+                        >
+                          下一张 <RightOutlined />
+                        </Button>
+                      </Space>
                     </Card>
                     <Card
                       className={ui.reviewPanel}
@@ -437,37 +491,6 @@ export default function NativeReview({
                         )
                       }
                     >
-                      <Space wrap>
-                        <Button
-                          icon={<LeftOutlined />}
-                          disabled={busy || visibleIndex <= 0}
-                          onClick={() =>
-                            changeSample(
-                              visibleItems[visibleIndex - 1].sampleId,
-                            )
-                          }
-                        >
-                          上一张
-                        </Button>
-                        <span>
-                          {visibleIndex < 0 ? '—' : visibleIndex + 1} /{' '}
-                          {visibleItems.length}
-                        </span>
-                        <Button
-                          disabled={
-                            busy ||
-                            visibleIndex < 0 ||
-                            visibleIndex >= visibleItems.length - 1
-                          }
-                          onClick={() =>
-                            changeSample(
-                              visibleItems[visibleIndex + 1].sampleId,
-                            )
-                          }
-                        >
-                          下一张 <RightOutlined />
-                        </Button>
-                      </Space>
                       <div className={ui.reviewDetails}>
                         <div>
                           <span>标注人</span>

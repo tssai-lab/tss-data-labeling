@@ -197,6 +197,42 @@ export default function NativeAssignment() {
         }),
     });
   };
+  const sampleNavigation = (
+    <div className={styles.sampleNavigation}>
+      <Button
+        icon={<LeftOutlined />}
+        aria-label="上一条样本"
+        disabled={busy || index <= 0}
+        onClick={() => changeSample(work.items[index - 1].sampleId)}
+      />
+      <Select
+        aria-label="当前标注样本"
+        className={styles.sampleSelect}
+        showSearch
+        optionFilterProp="label"
+        value={sampleId || undefined}
+        disabled={!work || busy}
+        onChange={changeSample}
+        options={
+          work?.items.map((item: any) => ({
+            value: item.sampleId,
+            label: displayName(item),
+          })) || []
+        }
+      />
+      <Button
+        icon={<RightOutlined />}
+        aria-label="下一条样本"
+        disabled={busy || !work || index >= work.items.length - 1}
+        onClick={() => changeSample(work.items[index + 1].sampleId)}
+      />
+      {work && (
+        <span className={styles.position}>
+          {index + 1} / {work.items.length}
+        </span>
+      )}
+    </div>
+  );
   return (
     <WorkspaceLayout
       workbench
@@ -209,7 +245,9 @@ export default function NativeAssignment() {
       <div className={styles.workspace}>
         <div className={styles.toolbar}>
           <div className={styles.toolbarGroup}>
-            <Link to="/labeling/assignments">返回我的任务</Link>
+            <Link className={styles.backLink} to="/labeling/assignments">
+              返回我的任务
+            </Link>
             <Button
               icon={<UnorderedListOutlined />}
               aria-label="任务包样本"
@@ -218,38 +256,6 @@ export default function NativeAssignment() {
             >
               任务包样本
             </Button>
-            <Button
-              icon={<LeftOutlined />}
-              aria-label="上一条样本"
-              disabled={busy || index <= 0}
-              onClick={() => changeSample(work.items[index - 1].sampleId)}
-            />
-            <Select
-              aria-label="当前标注样本"
-              className={styles.sampleSelect}
-              showSearch
-              optionFilterProp="label"
-              value={sampleId || undefined}
-              disabled={!work || busy}
-              onChange={changeSample}
-              options={
-                work?.items.map((item: any) => ({
-                  value: item.sampleId,
-                  label: displayName(item),
-                })) || []
-              }
-            />
-            <Button
-              icon={<RightOutlined />}
-              aria-label="下一条样本"
-              disabled={busy || !work || index >= work.items.length - 1}
-              onClick={() => changeSample(work.items[index + 1].sampleId)}
-            />
-            {work && (
-              <span className={styles.position}>
-                {index + 1} / {work.items.length}
-              </span>
-            )}
           </div>
           <div className={styles.toolbarGroup}>
             {work && (
@@ -343,6 +349,7 @@ export default function NativeAssignment() {
                 <NativeEditor
                   key="reference"
                   compact
+                  navigation={sampleNavigation}
                   path={`/assignments/${assignmentId}/samples/${sampleId}/reference-task`}
                   sampleId={sampleId}
                   category={category}
@@ -353,6 +360,7 @@ export default function NativeAssignment() {
                   key="current"
                   refreshKey={`${reload}:${useReference}`}
                   compact
+                  navigation={sampleNavigation}
                   path={`/assignments/${assignmentId}/samples/${sampleId}/task`}
                   sampleId={sampleId}
                   instructions={[
@@ -420,8 +428,21 @@ export default function NativeAssignment() {
                                 : item,
                             ),
                           }));
+                          const next =
+                            done &&
+                            receipt.explicitDone &&
+                            work.items[index + 1];
+                          if (next) {
+                            setSampleId(next.sampleId);
+                            setUseReference(true);
+                            setShowReference(false);
+                          }
                           setNotice(
-                            done ? '当前样本已完成并保存。' : '草稿已保存。',
+                            next
+                              ? '样本已完成并保存，已进入下一张。'
+                              : done
+                                ? '当前样本已完成并保存。'
+                                : '草稿已保存。',
                           );
                         }
                   }

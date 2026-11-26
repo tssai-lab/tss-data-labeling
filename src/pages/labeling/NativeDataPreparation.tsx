@@ -808,6 +808,22 @@ export default function NativeDataPreparation({
                 >
                   已核对文件、字段和样例
                 </Checkbox>
+                {categoryOf(project) === 'Computer Vision' &&
+                  resources.length > 0 &&
+                  imageResourceCount === 0 && (
+                    <Typography.Text type="secondary">
+                      当前文件中没有图片，请上传包含图片的 ZIP
+                      文件后再生成图片样本。
+                    </Typography.Text>
+                  )}
+                {categoryOf(project) === 'Computer Vision' &&
+                  imageResourceCount > 0 &&
+                  parseConfirmed &&
+                  selectedImages.length === 0 && (
+                    <Typography.Text type="secondary">
+                      请先勾选要生成样本的图片。
+                    </Typography.Text>
+                  )}
                 {!parseConfirmed && resources.length > 0 && (
                   <Typography.Text type="secondary">
                     新增或替换文件后，请重新确认解析结果。

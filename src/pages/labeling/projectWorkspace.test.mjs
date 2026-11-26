@@ -24,7 +24,7 @@ function workspace(taskType = 'IMAGE_CLASSIFICATION', { root = false, catalogue 
     '@/services/labeling': { labelingJson: async (path) => { requested.push(path); return path === '/task-templates' ? catalogue : path.startsWith('/ai-executions/') ? execution : project; }, describeLabelingError: (error) => error.message, operationKey: () => 'fixture-key', post: async (path, body) => { requested.push({ path, body }); return path.endsWith('/prelabel-runs') ? execution : project; } },
     '@/services/nativeLabeling': { collectPages: async (path) => { requested.push(path); return path.endsWith('/input-samples') ? [sample] : []; } },
   };
-  for (const name of ['NativeDataPreparation', 'NativeOutcome', 'NativePublish', 'NativeReview', 'NativeAi', 'NativeSpecSettings', 'StatusBadge', 'WorkspaceLayout', 'ProjectManagement', 'ProjectBreadcrumbs']) dependencies[`./${name}`] = { default: name };
+  for (const name of ['NativeDataPreparation', 'NativeOutcome', 'NativePublish', 'ParallelPublish', 'NativeReview', 'NativeAi', 'NativeSpecSettings', 'StatusBadge', 'WorkspaceLayout', 'ProjectManagement', 'ProjectBreadcrumbs']) dependencies[`./${name}`] = { default: name };
   const runtime = renderHooks(new URL('./ServerWorkspace.tsx', import.meta.url), {}, dependencies, { setTimeout, clearTimeout });
   return { runtime, requested, project, spec, sample, location };
 }
@@ -33,8 +33,8 @@ test('historical and native projects use the same five project panels and load e
   for (const taskType of ['IMAGE_CLASSIFICATION', 'TIMESERIES_ANNOTATION', 'COMPUTER_VISION']) {
     const { runtime: r, requested, spec } = workspace(taskType);
     r.render(); await flushHooks(); r.render();
-    assert.equal(r.nodes('Tabs')[0].props.items.map((item) => item.key).join(','), 'data,settings,publish,review,outcome');
-    const publish = r.nodes('NativePublish')[0];
+    assert.equal(r.nodes('Tabs')[0].props.items.map((item) => item.key).join(','), 'data,settings,publish,ai,review,outcome');
+    const publish = r.nodes('ParallelPublish')[0];
     assert.equal(publish.props.version.specVersionId, spec.specVersionId);
     assert.equal(publish.props.version.schemaVersion, spec.schemaVersion);
     assert.equal(publish.props.version.labels[0].id, 'normal');
@@ -43,27 +43,44 @@ test('historical and native projects use the same five project panels and load e
   }
 });
 
-test('live AI publishing sends the frozen selection and preserves execution records when switching publication mode', async () => {
+test('opening a published AI execution preserves the real execution for review', async () => {
   const { runtime: r, spec, sample, location, requested } = workspace();
   r.render(); await flushHooks(); r.render();
-  r.nodes('NativePublish')[0].props.onModeChange('AI'); r.render();
   assert.ok(r.nodes('Tabs')[0].props.items.some((item) => item.key === 'ai'));
-  r.nodes('NativePublish')[0].props.onPublishAi([sample], spec, { modelId: 'qwen-image', instructions: '', reopenAccepted: false });
+  r.nodes('ParallelPublish')[0].props.onOpenExecution({ executionId: 'run-1', projectId: 'historical', specVersionId: 'frozen', status: 'SUCCEEDED', sampleCount: 1, pendingCount: 0 }, [sample], spec, 'Qwen');
   await flushHooks(); r.render(); await flushHooks(); r.render();
   assert.equal(r.nodes('Tabs')[0].props.activeKey, 'ai');
   assert.equal(r.nodes('NativeAi').length, 1);
-  const call = requested.find((item) => item?.path?.endsWith('/prelabel-runs'));
-  assert.deepEqual(call.body.samples.map((item) => item.sampleId), ['sample-1']);
-  assert.equal(call.body.specVersionId, spec.specVersionId);
-  assert.equal(call.body.modelId, 'qwen-image');
-  assert.equal(call.body.reopenAccepted, false);
   location.search = '?panel=publish'; r.render(); r.render();
-  assert.equal(r.nodes('NativePublish')[0].props.mode, 'AI');
-  r.nodes('NativePublish')[0].props.onModeChange('HUMAN'); r.render();
-  assert.equal(r.nodes('Tabs')[0].props.items.some((item) => item.key === 'ai'), false);
+  assert.ok(r.nodes('ParallelPublish')[0]);
+  assert.equal(r.nodes('Tabs')[0].props.items.some((item) => item.key === 'ai'), true);
   assert.equal(r.nodes('NativeAi').length, 1);
   location.search = '?panel=review'; r.render(); r.render();
   assert.ok(Array.isArray(r.nodes('NativeReview')[0].props.aiResults));
+  r.dispose();
+});
+
+test('AI execution tab stays available and displays a demonstration before any run', async () => {
+  const { runtime: r, location, requested } = workspace();
+  location.search = '?panel=ai';
+  r.render(); await flushHooks(); r.render();
+  assert.ok(r.nodes('Tabs')[0].props.items.some((item) => item.key === 'ai'));
+  assert.equal(r.nodes('NativeAi')[0].props.demonstration, true);
+  assert.equal(requested.some((item) => item?.path?.endsWith('/prelabel-runs')), false);
+  r.nodes('NativeAi')[0].props.onStart();
+  assert.equal(location.search, '?panel=publish');
+  r.dispose();
+});
+
+test('publishing selected samples opens settings and retains the selection for publication', async () => {
+  const { runtime: r, location } = workspace();
+  location.search = '?panel=data';
+  r.render(); await flushHooks(); r.render();
+  r.nodes('NativeDataPreparation')[0].props.onPublish(['sample-1']);
+  r.render(); r.render();
+  assert.equal(location.search, '?panel=settings');
+  assert.equal(r.nodes('Tabs')[0].props.activeKey, 'settings');
+  assert.deepEqual(Array.from(r.nodes('ParallelPublish')[0].props.initialSelection), ['sample-1']);
   r.dispose();
 });
 
