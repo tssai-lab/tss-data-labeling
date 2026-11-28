@@ -15,6 +15,7 @@ import { describeLabelingError } from '@/services/labeling';
 import { type LabelingUser, labelingAdmin } from '@/services/labelingAdmin';
 import { type LabelingIdentity, tasks } from '@/services/labelingTasks';
 import AgentRegistration from './AgentRegistration';
+import OnlineModelRegistration from './OnlineModelRegistration';
 import StatusBadge from './StatusBadge';
 import WorkspaceLayout from './WorkspaceLayout';
 import ui from './workspaceUi.less';
@@ -223,6 +224,7 @@ export default function Users() {
         </Form>
       </Modal>
       {me?.labelingAdmin && <AgentRegistration />}
+      {me?.labelingAdmin && <OnlineModelRegistration />}
     </WorkspaceLayout>
   );
 }

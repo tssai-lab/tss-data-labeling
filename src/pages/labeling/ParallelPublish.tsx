@@ -92,7 +92,11 @@ export default function ParallelPublish({
   const [size, setSize] = useState(5),
     [people, setPeople] = useState(1),
     [instructions, setInstructions] = useState('');
-  const [agents, setAgents] = useState<LiveAgent[]>([]),
+  type ModelOption = Pick<
+    LiveAgent,
+    'agentId' | 'displayName' | 'modelVersion' | 'enabled'
+  > & { connectionId?: string };
+  const [agents, setAgents] = useState<ModelOption[]>([]),
     [chosenAgents, setChosenAgents] = useState<string[]>([]);
   const [step, setStep] = useState(0),
     [snapshot, setSnapshot] = useState<Selection>(),
@@ -160,10 +164,23 @@ export default function ParallelPublish({
   useEffect(() => {
     if (!ai) return;
     const controller = new AbortController();
-    ownerApi
-      .agents(controller.signal, project.taskType)
-      .then((data) => {
-        setAgents(data.filter((agent) => agent.enabled));
+    Promise.all([
+      ownerApi.agents(controller.signal, project.taskType),
+      labelingJson<
+        { connectionId: string; displayName: string; modelVersion: string }[]
+      >('/model-connections', { signal: controller.signal }),
+    ])
+      .then(([existing, connections]) => {
+        if (controller.signal.aborted) return;
+        const data = [
+          ...existing.filter((agent) => agent.enabled),
+          ...connections.map((connection) => ({
+            ...connection,
+            agentId: connection.connectionId,
+            enabled: true,
+          })),
+        ];
+        setAgents(data);
         setChosenAgents((ids) =>
           ids.filter((id) =>
             data.some((agent) => agent.enabled && agent.agentId === id),
@@ -245,13 +262,21 @@ export default function ParallelPublish({
   const publish = () =>
     void execute(async () => {
       if (!version || !snapshot) return;
+      const connectionIds = ai
+        ? chosenAgents.filter((id) =>
+            agents.some((agent) => agent.connectionId === id),
+          )
+        : [];
       const body = {
         specVersionId: version.specVersionId,
         selectionId: snapshot.selectionId,
         human,
         packageSize: size,
         annotatorsPerSample: people,
-        agentIds: ai ? chosenAgents : [],
+        agentIds: ai
+          ? chosenAgents.filter((id) => !connectionIds.includes(id))
+          : [],
+        ...(connectionIds.length ? { connectionIds } : {}),
         reopenAccepted: reopen,
         instructions,
       };
@@ -278,8 +303,10 @@ export default function ParallelPublish({
           samples: selectedSamples,
           version,
           model:
+            execution.agentDisplayName ||
             agents.find((agent) => agent.agentId === execution.agentConfigId)
-              ?.displayName || execution.modelVersion,
+              ?.displayName ||
+            execution.modelVersion,
         })),
       );
       setStep(3);
@@ -298,8 +325,10 @@ export default function ParallelPublish({
           samples: selectedSamples,
           version,
           model:
+            execution.agentDisplayName ||
             agents.find((agent) => agent.agentId === execution.agentConfigId)
-              ?.displayName || execution.modelVersion,
+              ?.displayName ||
+            execution.modelVersion,
         })),
       );
     });
@@ -323,8 +352,10 @@ export default function ParallelPublish({
           samples: selectedSamples,
           version,
           model:
+            item.agentDisplayName ||
             agents.find((agent) => agent.agentId === item.agentConfigId)
-              ?.displayName || item.modelVersion,
+              ?.displayName ||
+            item.modelVersion,
         })),
       );
     });
@@ -350,8 +381,10 @@ export default function ParallelPublish({
           samples: fixedSamples,
           version,
           model:
+            execution.agentDisplayName ||
             modelList.find((agent) => agent.agentId === execution.agentConfigId)
-              ?.displayName || execution.modelVersion,
+              ?.displayName ||
+            execution.modelVersion,
         })),
       );
     });
@@ -588,7 +621,7 @@ export default function ParallelPublish({
             )}
             {ai && (
               <Card title="AI 预标注" extra={`已选 ${chosenAgents.length} 个`}>
-                <Table<LiveAgent>
+                <Table<ModelOption>
                   rowKey="agentId"
                   size="small"
                   pagination={false}
@@ -605,7 +638,7 @@ export default function ParallelPublish({
                       render: () => <Tag color="green">可选</Tag>,
                     },
                   ]}
-                  locale={{ emptyText: '当前任务类型没有已启用的模型' }}
+                  locale={{ emptyText: '暂无已启用的模型' }}
                 />
                 <p>
                   同一批样本分别执行：{selected.length} 个样本 ×{' '}
