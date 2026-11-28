@@ -15,16 +15,19 @@ import java.util.*;
 @RequestMapping("/api/labeling/v1")
 public class DeliveryController {
     private final AggregationService aggregation;
+    private final ResultAggregationRegistry aggregationStrategies;
     private final ExportService exports;
     private final IdentityClient identity;
     private final ActorService actors;
 
     public DeliveryController(
             AggregationService aggregation,
+            ResultAggregationRegistry aggregationStrategies,
             ExportService exports,
             IdentityClient identity,
             ActorService actors) {
         this.aggregation = aggregation;
+        this.aggregationStrategies = aggregationStrategies;
         this.exports = exports;
         this.identity = identity;
         this.actors = actors;
@@ -41,20 +44,10 @@ public class DeliveryController {
     @GetMapping("/aggregation-algorithms")
     public ApiResponse<?> algorithms(
             @RequestHeader(value = "Authorization", required = false) String auth,
+            @RequestParam(defaultValue = "") String taskType,
             HttpServletRequest req) {
         actor(auth);
-        return out(
-                List.of(
-                        Map.of(
-                                "algorithmId",
-                                "majority-vote-v1",
-                                "taskType",
-                                "IMAGE_CLASSIFICATION",
-                                "minimumIndependentSources",
-                                2,
-                                "description",
-                                "按独立参与者的原始答案严格过半；平票或不足不生成建议，建议须另行审核")),
-                req);
+        return out(aggregationStrategies.algorithms(taskType), req);
     }
 
     @PostMapping("/projects/{projectId}/aggregations")

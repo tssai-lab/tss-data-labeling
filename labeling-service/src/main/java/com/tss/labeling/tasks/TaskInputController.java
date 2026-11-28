@@ -39,6 +39,13 @@ public class TaskInputController {
         return out(inputs.templates(actor(auth)), req);
     }
 
+    @GetMapping("/annotator-providers")
+    public ApiResponse<JsonNode> annotatorProviders(
+            @RequestHeader(value = "Authorization", required = false) String auth,
+            HttpServletRequest req) {
+        return out(inputs.annotatorProviders(actor(auth)), req);
+    }
+
     @GetMapping("/projects/{projectId}/samples/{sampleId}/data")
     public ApiResponse<JsonNode> owner(
             @RequestHeader(value = "Authorization", required = false) String auth,
