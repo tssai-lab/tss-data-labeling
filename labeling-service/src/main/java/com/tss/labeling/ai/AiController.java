@@ -26,6 +26,7 @@ public class AiController {
     private final AiService ai;
     private final IdentityClient identity;
     private final ActorService actors;
+    private final OnlineModelConnections onlineModels;
 
     @Value("${LABELING_PRELABEL_QWEN_IMAGE_AGENT_ID:}")
     private String qwenImageAgentId;
@@ -36,10 +37,11 @@ public class AiController {
     @Value("${LABELING_PRELABEL_QWEN_TIMESERIES_AGENT_ID:}")
     private String qwenTimeseriesAgentId;
 
-    public AiController(AiService ai, IdentityClient identity, ActorService actors) {
+    public AiController(AiService ai, IdentityClient identity, ActorService actors, OnlineModelConnections onlineModels) {
         this.ai = ai;
         this.identity = identity;
         this.actors = actors;
+        this.onlineModels = onlineModels;
     }
 
     private ActorService.ActorContext actor(String auth) {
@@ -54,6 +56,28 @@ public class AiController {
     public ApiResponse<JsonNode> agents(@RequestHeader(value = "Authorization", required = false) String auth,
             @RequestParam(defaultValue = "") String taskType, HttpServletRequest req) {
         return response(ai.agents(actor(auth), taskType), req);
+    }
+
+    @GetMapping("/model-connections")
+    public ApiResponse<JsonNode> modelConnections(@RequestHeader(value = "Authorization", required = false) String auth,
+            HttpServletRequest req) {
+        return response(onlineModels.list(actor(auth)), req);
+    }
+
+    @PostMapping("/admin/model-connections")
+    @ResponseStatus(HttpStatus.CREATED)
+    public ApiResponse<JsonNode> createModelConnection(@RequestHeader(value = "Authorization", required = false) String auth,
+            @RequestHeader("Idempotency-Key") String key, @RequestBody OnlineModelConnections.Input body,
+            HttpServletRequest req) {
+        return response(onlineModels.create(actor(auth), body, key), req);
+    }
+
+    @DeleteMapping("/admin/model-connections/{id}")
+    public ApiResponse<java.util.Map<String, Boolean>> disableModelConnection(
+            @RequestHeader(value = "Authorization", required = false) String auth,
+            @PathVariable UUID id, HttpServletRequest req) {
+        onlineModels.disable(actor(auth), id);
+        return ApiResponse.success(java.util.Map.of("disabled", true), MeController.requestId(req));
     }
 
     @PostMapping("/admin/agents")

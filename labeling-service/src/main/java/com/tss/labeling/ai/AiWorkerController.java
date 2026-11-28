@@ -21,8 +21,9 @@ public class AiWorkerController {
     }
 
     @PostMapping("/executions/claim")
-    public ResponseEntity<JsonNode> claim(@RequestHeader(value = "X-Worker-Key", required = false) String workerKey) {
-        JsonNode result = ai.claim(workerKey);
+    public ResponseEntity<JsonNode> claim(@RequestHeader(value = "X-Worker-Key", required = false) String workerKey,
+            @RequestParam(defaultValue = "false") boolean onlineModels) {
+        JsonNode result = ai.claim(workerKey, onlineModels);
         if (result == null) {
             return ResponseEntity.noContent().build();
         }

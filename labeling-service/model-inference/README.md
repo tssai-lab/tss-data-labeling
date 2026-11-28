@@ -100,6 +100,19 @@ Qwen3-VL-2B-Instruct 的 GGUF 运行时验证了真实图像分类和能耗时�
 时序样本的部分区间与业务试标规则不符，流程验证不代表准确性验收通过。
 PCB YOLO 在发布者对照图回写了缺陷框，VisA 目标图片的检出覆盖率仍待验证。
 
+## 在线模型连接
+
+在标注管理员的「用户管理」页面新增在线模型连接。正常的联合发布页会显示已启用连接。连接配置只显示密钥的环境变量名，实际密钥注入 Python Worker 进程。
+
+1. Java 标注服务用 `LABELING_ONLINE_IMAGE_AGENT_ID` 和 `LABELING_ONLINE_TIMESERIES_AGENT_ID` 指向各任务类型的执行身份。对应 Worker 使用该执行身份的 `LABELING_MODEL_WORKER_KEY`，模式分别为 `image` 和 `timeseries`。
+2. Worker 使用 `LABELING_ONLINE_MODEL_HOSTS` 配置逗号分隔的上游主机名。在线请求使用 HTTPS，且不跟随重定向。保留原本地 Worker 的配置可以继续处理历史执行。
+3. 百炼连接选择 `openai-chat`，填写工作空间对应的完整 Chat Completions 地址和模型 ID，例如 `qwen3.6-plus`。在 Worker 进程注入 `DASHSCOPE_API_KEY`，在连接中引用该变量并关闭思考模式。[百炼部署地区和接口地址](https://help.aliyun.com/zh/model-studio/compatibility-of-openai-with-dashscope)
+4. 用户自建服务可选 `prediction-v1`。Worker 发出包含 `model`、`input` 和 `outputSchema` 的 JSON，图像任务另有 `image` 字段，值为 JPEG 或 PNG 的 Base64 数据 URL。预测服务直接返回与 `outputSchema` 匹配的 JSON。若需要 Bearer 鉴权，通过独立的 `LABELING_MODEL_API_KEY_` 前缀环境变量提供密钥。
+
+在千问 AI 平台创建的按量付费 Key 使用 `https://maas.qianwenaiapi.com/compatible-mode/v1/chat/completions`，Worker 的主机配置对应 `maas.qianwenaiapi.com`。[千问 AI 平台按量付费接口](https://platform.qianwenai.com/docs/api-reference/preparation/api-key)
+
+新增连接会保留旧配置。切换地址或模型时，新增连接并停用旧连接。每个批次保存提交时的连接配置，重试沿用该配置。先用获准的单样本发布验证连接可用，再扩大批次。
+
 ## Qwen 能耗站点日试标
 
 energy-prelabel.xml 是人工和 Qwen 共用的站点日规范，采用原生时序结果格式。

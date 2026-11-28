@@ -2,6 +2,8 @@ package com.tss.labeling.tasks;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.tss.labeling.ai.AiService;
+import com.tss.labeling.ai.OnlineModelConnections;
+import com.fasterxml.jackson.annotation.JsonInclude;
 import com.tss.labeling.common.WorkflowStore;
 import com.tss.labeling.identity.ActorService.ActorContext;
 import com.tss.labeling.review.ResultScopeService;
@@ -15,14 +17,17 @@ public class PublicationGroupService {
     private final ResultScopeService scopes;
     private final TaskService tasks;
     private final AiService ai;
+    private final OnlineModelConnections onlineModels;
 
-    public PublicationGroupService(WorkflowStore store, ResultScopeService scopes, TaskService tasks, AiService ai) {
+    public PublicationGroupService(WorkflowStore store, ResultScopeService scopes, TaskService tasks, AiService ai,
+                                   OnlineModelConnections onlineModels) {
         this.store = store; this.scopes = scopes; this.tasks = tasks; this.ai = ai;
+        this.onlineModels = onlineModels;
     }
 
     public record Input(UUID specVersionId, UUID selectionId, Boolean human, Integer packageSize,
                         Integer annotatorsPerSample, List<UUID> agentIds, Boolean reopenAccepted,
-                        String instructions) {}
+                        String instructions, @JsonInclude(JsonInclude.Include.NON_NULL) List<UUID> connectionIds) {}
 
     @Transactional
     public JsonNode publish(ActorContext actor, UUID project, Input input, String key) {
@@ -32,14 +37,20 @@ public class PublicationGroupService {
         if (input.specVersionId() == null || input.selectionId() == null || input.reopenAccepted() == null)
             throw WorkflowStore.error(400, "INVALID_REQUEST", "需要规范、固定范围和重开选项");
         var agents = input.agentIds() == null ? List.<UUID>of() : input.agentIds();
-        if ((!Boolean.TRUE.equals(input.human()) && agents.isEmpty()) || agents.size() > 10
-                || agents.contains(null) || new HashSet<>(agents).size() != agents.size())
+        var connections = input.connectionIds() == null ? List.<UUID>of() : input.connectionIds();
+        int modelCount = agents.size() + connections.size();
+        if ((!Boolean.TRUE.equals(input.human()) && modelCount == 0) || modelCount > 10
+                || agents.stream().anyMatch(Objects::isNull) || new HashSet<>(agents).size() != agents.size()
+                || connections.stream().anyMatch(Objects::isNull) || new HashSet<>(connections).size() != connections.size())
             throw WorkflowStore.error(422, "INVALID_REQUEST", "请选择人工或不超过十个不同的模型");
         if (input.instructions() != null && input.instructions().length() > 500)
             throw WorkflowStore.error(422, "INVALID_REQUEST", "任务说明不能超过500字");
         String op = "POST:/projects/" + project + "/publication-groups";
         JsonNode previous = store.replay(actor, op, key, input);
         if (previous != null) return previous;
+        var chosen = new LinkedHashMap<UUID, OnlineModelConnections.Selection>();
+        for (UUID agent : agents) chosen.put(agent, new OnlineModelConnections.Selection(agent, null));
+        for (UUID connection : connections) chosen.put(connection, onlineModels.select(connection, (String) p.get("task_type")));
         var scope = scopes.selection(actor, project, input.selectionId(), "PUBLISH", null);
         if (!scope.specVersionId().equals(input.specVersionId()))
             throw WorkflowStore.error(409, "SPEC_MISMATCH", "范围规范不一致");
@@ -57,11 +68,12 @@ public class PublicationGroupService {
             plan = tasks.publishForGroup(actor, UUID.fromString(created.path("planId").asText()), created.path("selectionHash").asText(), "group-publish-" + group, group);
         }
         var executions = new ArrayList<JsonNode>();
-        for (UUID agent : agents) {
+        for (var choice : chosen.entrySet()) {
+            UUID agent = choice.getValue().workerId();
             var samples = ids.stream().map(id -> new AiService.SelectionSample(id, null)).toList();
             var execution = ai.createExecutionForGroup(actor, project,
                     new AiService.CreateInput(input.specVersionId(), agent, samples, input.instructions(), null, "NONE", input.reopenAccepted()),
-                    "group-ai-" + group + "-" + agent, group);
+                    "group-ai-" + group + "-" + choice.getKey(), group, choice.getValue().configuration());
             store.db.update("INSERT INTO publication_group_execution(publication_group_id,execution_id,agent_id) VALUES (?,?,?)", group, UUID.fromString(execution.path("executionId").asText()), agent);
             ((com.fasterxml.jackson.databind.node.ObjectNode) execution).put("agentConfigId", agent.toString());
             executions.add(execution);

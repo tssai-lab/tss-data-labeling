@@ -470,6 +470,59 @@ class ImportIntegrationTest {
         assertEquals(0, db.queryForObject("SELECT count(*) FROM sample_work_claim WHERE project_id=?", Integer.class, UUID.fromString(project)));
     }
 
+    @Test void onlineConnectionIsVisibleButOnlyOnlineWorkerClaimsItsFrozenConfiguration() throws Exception {
+        JsonNode draft = taskPlan(1);
+        String project = draft.path("projectId").asText();
+        String spec = draft.path("specVersionId").asText();
+        String base = "/projects/" + project;
+        String credential = UUID.randomUUID().toString();
+        String workerId = agent("IMAGE_CLASSIFICATION", credential);
+        var service = context.getBean(com.tss.labeling.ai.OnlineModelConnections.class);
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "imageWorker", workerId);
+        try {
+            var connectionBody = Map.of("displayName", "在线测试模型", "protocol", "openai-chat", "model", "fixture-model",
+                    "endpoint", "https://models.example.test/v1/chat/completions", "apiKeyEnv", "LABELING_MODEL_API_KEY_TEST");
+            taskPost("/admin/model-connections", "owner", UUID.randomUUID().toString(), connectionBody, 403);
+            var connection = taskPost("/admin/model-connections", "admin-test", UUID.randomUUID().toString(), connectionBody, 201);
+            String connectionId = connection.path("connectionId").asText();
+            assertFalse(connection.has("apiKeyEnv"));
+            var items = new java.util.ArrayList<Map<String,Object>>();
+            for (JsonNode row : resultGet(base + "/results?specVersionId=" + spec, "owner", 200).path("items"))
+                items.add(Map.of("sampleId", row.path("sampleId").asText(), "reviewRevision", row.path("reviewRevision").asLong()));
+            var selection = taskPost(base + "/result-selections", "owner", UUID.randomUUID().toString(),
+                    Map.of("purpose", "PUBLISH", "specVersionId", spec, "items", items), 201);
+            var receipt = taskPost(base + "/publication-groups", "owner", UUID.randomUUID().toString(),
+                    Map.of("specVersionId", spec, "selectionId", selection.path("selectionId").asText(),
+                            "human", false, "connectionIds", java.util.List.of(connectionId), "reopenAccepted", false), 201);
+            var execution = receipt.path("executions").get(0);
+            assertEquals(connectionId, execution.path("connectionId").asText());
+            assertEquals("fixture-model", execution.path("modelVersion").asText());
+            assertFalse(execution.has("onlineModel"));
+            mvc.perform(delete(API + "/admin/model-connections/" + connectionId).header("Authorization", "Bearer admin-test"))
+                    .andExpect(status().isOk());
+            worker("POST", "/executions/claim", credential, null, 204);
+            var claim = worker("POST", "/executions/claim?onlineModels=true", credential, null, 200);
+            assertEquals(execution.path("executionId"), claim.path("executionId"));
+            assertEquals("fixture-model", claim.path("onlineModel").path("model").asText());
+            assertEquals(spec, claim.path("specVersionId").asText());
+            String executionId = claim.path("executionId").asText();
+            long generation = claim.path("generation").asLong();
+            for (var item : items) {
+                worker("PUT", "/executions/" + executionId + "/outputs/" + item.get("sampleId"), credential,
+                        Map.of("generation", generation, "status", "FAILED", "errorCode", "MODEL_RATE_LIMITED"), 200);
+            }
+            worker("POST", "/executions/" + executionId + "/finish", credential, Map.of("generation", generation), 200);
+            var finished = resultGet("/ai-executions/" + executionId, "owner", 200);
+            var retried = taskPost("/ai-executions/" + executionId + "/retries", "owner", UUID.randomUUID().toString(),
+                    Map.of("baseRevision", finished.path("revision").asLong()), 201);
+            assertEquals(connectionId, retried.path("connectionId").asText());
+            assertEquals(claim.path("onlineModel"), worker("POST", "/executions/claim?onlineModels=true", credential, null, 200)
+                    .path("onlineModel"));
+        } finally {
+            org.springframework.test.util.ReflectionTestUtils.setField(service, "imageWorker", "");
+        }
+    }
+
     @Test void parallelPublicationRejectsAChangedReviewAfterPreview() throws Exception {
         JsonNode draft = taskPlan(1);
         String project = draft.path("projectId").asText(), spec = draft.path("specVersionId").asText();

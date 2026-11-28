@@ -194,11 +194,17 @@ FROM confidence_policy WHERE round_id=? ORDER BY created_at DESC
 
     @Transactional
     public JsonNode createExecutionForGroup(ActorContext actor, UUID project, CreateInput input, String key, UUID groupId) {
+        return createExecutionForGroup(actor, project, input, key, groupId, null);
+    }
+
+    @Transactional
+    public JsonNode createExecutionForGroup(ActorContext actor, UUID project, CreateInput input, String key, UUID groupId, JsonNode onlineModel) {
         enabled(actor.actorId());
         Map<String,Object> p = project(project, true);
         owner(actor, p);
         writable(p);
-        String op = "POST:/projects/" + project + "/ai-executions", hash = hash(write(input));
+        String op = "POST:/projects/" + project + "/ai-executions";
+        String hash = hash(write(onlineModel == null ? input : List.of(input, onlineModel)));
         JsonNode previous = replay(actor.actorId(), op, key, hash);
         if (previous != null) return previous;
         Map<String,Object> spec = one("SELECT * FROM spec_version WHERE id=? AND project_id=?", input.specVersionId(), project);
@@ -325,11 +331,13 @@ VALUES (?,?,?,NULL,?,?,?,'OPEN',?)
         db.update(
                 """
 INSERT INTO ai_execution(id,round_id,project_id,spec_version_id,agent_actor_id,model_version,status,pending_count,
-  annotator_provider_id,annotator_provider_version,annotator_type)
-VALUES (?,?,?,?,?,?,'QUEUED',?,?,?,?)
-""", executionId, roundId, project, input.specVersionId(), agent.get("actor_id"), agent.get("model_version"),
+  annotator_provider_id,annotator_provider_version,annotator_type,online_model)
+VALUES (?,?,?,?,?,?,'QUEUED',?,?,?,?,?::jsonb)
+""", executionId, roundId, project, input.specVersionId(), agent.get("actor_id"),
+                onlineModel == null ? agent.get("model_version") : onlineModel.path("model").asText(),
                 samples.size(), provider.id(), provider.version(),
-                read(Objects.toString(agent.get("capabilities"), "{}")).path("annotatorType").asText(provider.annotatorType()));
+                read(Objects.toString(agent.get("capabilities"), "{}")).path("annotatorType").asText(provider.annotatorType()),
+                onlineModel == null ? null : write(onlineModel));
         for (var s : samples)
             db.update(
                     "INSERT INTO ai_item_output(execution_id,round_id,sample_id,status) VALUES"
@@ -419,15 +427,16 @@ WHERE o.execution_id=? AND o.sample_id>? ORDER BY o.sample_id LIMIT ?
     // ---------- 内部工作端接口（D 调用） ----------
 
     @Transactional
-    public JsonNode claim(String workerKey) {
+    public JsonNode claim(String workerKey, boolean onlineModels) {
         int leaseSeconds = validatedWorkerLeaseSeconds();
         Map<String,Object> agent = agent(workerKey);
         List<Map<String,Object>> rows = db.queryForList(
                         """
 SELECT id FROM ai_execution
 WHERE agent_actor_id=? AND (status='QUEUED' OR (status='RUNNING' AND lease_until < CURRENT_TIMESTAMP))
+  AND (? OR online_model IS NULL)
 ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED
-""", agent.get("actor_id"));
+""", agent.get("actor_id"), onlineModels);
         if (rows.isEmpty()) return null;
         UUID id = (UUID) rows.get(0).get("id");
         db.update(
@@ -893,7 +902,7 @@ WHERE r.status='OPEN' AND c.project_id=?
         Map<String,Object> e = one(
                 "SELECT e.*,a.id AS agent_config_id,a.display_name AS agent_display_name"
                         + " FROM ai_execution e LEFT JOIN ai_agent_config a ON a.actor_id=e.agent_actor_id"
-                        + " AND a.model_version=e.model_version WHERE e.id=?",
+                        + " AND (a.model_version=e.model_version OR e.online_model IS NOT NULL) WHERE e.id=?",
                 id);
         long sampleCount = db.query("SELECT count(*) FROM round_item WHERE round_id=?", rs -> rs.next() ? rs.getLong(1) : 0L, e.get("round_id"));
         boolean terminal = TERMINAL.contains(e.get("status"));
@@ -913,6 +922,11 @@ WHERE r.status='OPEN' AND c.project_id=?
         out.put("agentId", e.get("agent_config_id"));
         out.put("agentActorId", e.get("agent_actor_id"));
         out.put("agentDisplayName", e.get("agent_display_name"));
+        if (e.get("online_model") != null) {
+            JsonNode connection = read(e.get("online_model").toString());
+            out.put("connectionId", connection.path("connectionId").asText());
+            out.put("agentDisplayName", connection.path("displayName").asText());
+        }
         out.put("modelVersion", e.get("model_version"));
         out.put("annotatorProviderId", e.get("annotator_provider_id"));
         out.put("annotatorProviderVersion", e.get("annotator_provider_version"));
@@ -961,6 +975,7 @@ WHERE r.status='OPEN' AND c.project_id=?
         out.put("resultFormat", validator.format((UUID) e.get("spec_version_id")));
         out.put("editorConfig", read((String) spec.get("editor_config")));
         out.put("specInstructions", spec.get("instructions"));
+        if (e.get("online_model") != null) out.put("onlineModel", read(e.get("online_model").toString()));
         out.put("instructions", one("SELECT instructions FROM publication_round WHERE id=?", e.get("round_id")).get("instructions"));
         out.put("modelVersion", e.get("model_version"));
         out.put("supportsReference", agent.get("supports_reference"));
@@ -1098,10 +1113,10 @@ WHERE r.status='OPEN' AND c.project_id=?
                 (UUID)
                         one(
                                         "SELECT id FROM ai_agent_config WHERE actor_id=? AND"
-                                            + " model_version=? AND enabled=TRUE ORDER BY id LIMIT"
+                                            + " (model_version=? OR ?) AND enabled=TRUE ORDER BY id LIMIT"
                                             + " 1",
                                         original.get("agent_actor_id"),
-                                        original.get("model_version"))
+                                        original.get("model_version"), original.get("online_model") != null)
                                 .get("id");
         List<SelectionSample> retrySamples = new ArrayList<>();
         for (UUID sample : chosen) {
@@ -1136,7 +1151,8 @@ WHERE r.status='OPEN' AND c.project_id=?
                                 agentId,
                                 retrySamples,
                                 instructions, null, null, false),
-                        "retry-" + hash(id + ":" + key), publicationGroup);
+                        "retry-" + hash(id + ":" + key), publicationGroup,
+                        original.get("online_model") == null ? null : read(original.get("online_model").toString()));
         UUID child = UUID.fromString(created.path("executionId").asText());
         db.update("UPDATE ai_execution SET retry_of_execution_id=? WHERE id=?", id, child);
         if (publicationGroup != null) db.update("INSERT INTO publication_group_execution(publication_group_id,execution_id,agent_id) VALUES (?,?,?)", publicationGroup, child, agentId);

@@ -286,6 +286,8 @@ def prompted(request):
     else:
         properties = {"label": label_schema}
         instruction = "Select one configured label. Return JSON with a single label field."
+    if is_series:
+        instruction += " Return one JSON object with only the requested fields."
     prompt = {
         "task": instruction, "labels": binding["labels"],
         "guidelines": request["guidelines"], "sample": sample,
@@ -316,7 +318,12 @@ def prompted(request):
             "required": list(properties), "additionalProperties": False,
         }},
     }
-    if request.get("runtimeUrl"):
+    online = request.get("onlineModel")
+    if online is not None:
+        from online_model import predict
+
+        output = predict(online, completion)
+    elif request.get("runtimeUrl"):
         from urllib.parse import urlsplit
         from urllib.request import Request, urlopen
 
@@ -331,11 +338,12 @@ def prompted(request):
             {"Content-Type": "application/json"},
         ), timeout=180) as response_stream:
             response = json.load(response_stream)
+        output = json.loads(response["choices"][0]["message"]["content"])
     else:
         model = prompted_model(request["weights"], request.get("contextLength", 4096),
                                request["projector"] if request.get("image") else None)
         response = model.create_chat_completion(**completion)
-    output = json.loads(response["choices"][0]["message"]["content"])
+        output = json.loads(response["choices"][0]["message"]["content"])
     if grounded_energy:
         selected = select_energy_candidates(evidence, output["selectedIds"])
         if binding.get("daily"):

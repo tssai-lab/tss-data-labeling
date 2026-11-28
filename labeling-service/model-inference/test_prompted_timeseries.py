@@ -1,8 +1,11 @@
 import json
+from io import BytesIO
 from pathlib import Path
 import unittest
+from urllib.error import HTTPError
 from unittest.mock import Mock, patch
 
+import online_model
 import prelabel
 from worker import Worker
 
@@ -88,6 +91,58 @@ class PromptedTimeseriesTest(unittest.TestCase):
         results = self.infer(self.xml, respond, energyRules={"lowDailyPercent": 60})
         self.assertEqual(results[0]["value"]["choices"], ["低负荷"])
         self.assertIn("60%", results[-1]["value"]["text"][0])
+
+    def test_online_worker_applies_frozen_guidelines_and_writes_native_results(self):
+        xml = self.xml.replace('value="尖峰"', 'value="环比跳升"')
+        endpoint = "https://maas.qianwenaiapi.com/compatible-mode/v1/chat/completions"
+        connection = {"protocol": "openai-chat", "endpoint": endpoint,
+                      "apiKeyEnv": "DASHSCOPE_API_KEY", "model": "qwen3.6-plus", "enableThinking": False}
+        with patch.dict("os.environ", {"LABELING_ONLINE_MODEL_HOSTS": "maas.qianwenaiapi.com", "DASHSCOPE_API_KEY": "fake"}), \
+                patch.object(online_model, "build_opener") as opener:
+            response = {"choices": [{"finish_reason": "stop", "message": {"content": json.dumps(self.output)}}]}
+            opener.return_value.open.return_value = BytesIO(json.dumps(response).encode())
+            results = self.worker.infer("/sample", {"generation": 1}, {
+                "editorConfig": {"labelConfig": xml, "timeseriesPrelabelMode": "instructions"},
+                "specInstructions": self.guidelines, "onlineModel": connection,
+            })
+            request = opener.return_value.open.call_args.args[0]
+        body = json.loads(request.data)
+        prompt = json.loads(body["messages"][0]["content"])
+        self.assertEqual(prompt["guidelines"], self.guidelines)
+        self.assertEqual(prompt["sample"]["context"]["dailyMedian"], 100)
+        self.assertEqual(request.full_url, endpoint)
+        self.assertEqual(body["model"], "qwen3.6-plus")
+        self.assertIs(body["enable_thinking"], False)
+        self.assertEqual(request.get_header("Authorization"), "Bearer fake")
+        self.assertEqual(results[0]["value"]["choices"], ["低负荷"])
+        self.assertEqual(results[1]["value"]["start"], 8)
+
+    def test_online_rate_limit_is_reported_without_provider_response(self):
+        url = "https://models.example.test/predict"
+        with patch.dict("os.environ", {"LABELING_ONLINE_MODEL_HOSTS": "models.example.test"}), \
+                patch.object(online_model, "build_opener") as opener:
+            opener.return_value.open.side_effect = HTTPError(url, 429, "fake provider body", {}, None)
+            with self.assertRaisesRegex(online_model.OnlineModelError, "^MODEL_RATE_LIMITED$"):
+                online_model.predict({"protocol": "prediction-v1", "endpoint": url}, {
+                    "messages": [{"content": '{"labels":["正常"]}'}],
+                    "response_format": {"schema": {"required": ["label"]}},
+                })
+
+    def test_custom_model_receives_image_and_prediction_contract(self):
+        image = "data:image/png;base64,fixture"
+        schema = {"required": ["label"], "properties": {"label": {"enum": ["正常"]}}}
+        with patch.dict("os.environ", {"LABELING_ONLINE_MODEL_HOSTS": "models.example.test"}), \
+                patch.object(online_model, "build_opener") as opener:
+            opener.return_value.open.return_value = BytesIO(json.dumps({"label": "正常"}).encode())
+            result = online_model.predict({"protocol": "prediction-v1", "model": "defect-v1",
+                                           "endpoint": "https://models.example.test/predict"}, {
+                "messages": [{"content": [{"type": "text", "text": '{"labels":["正常"]}'},
+                                          {"type": "image_url", "image_url": {"url": image}}]}],
+                "response_format": {"schema": schema},
+            })
+            sent = json.loads(opener.return_value.open.call_args.args[0].data)
+        self.assertEqual(sent, {"model": "defect-v1", "input": {"labels": ["正常"]}, "image": image, "outputSchema": schema})
+        self.assertEqual(result, {"label": "正常"})
 
 
 if __name__ == "__main__":

@@ -16,6 +16,7 @@ from uuid import UUID
 from xml.etree import ElementTree
 
 import prelabel
+from online_model import OnlineModelError
 
 
 class NoRedirect(HTTPRedirectHandler):
@@ -100,7 +101,9 @@ class Worker:
         config = execution["editorConfig"]
         binding, source, target = binding_for(config, mode)
         task_data = input_data["task"]["data"]
-        request = dict(self.model["options"], binding=binding)
+        request = dict(self.model.get("options", {}), binding=binding)
+        if execution.get("onlineModel") is not None:
+            request["onlineModel"] = execution["onlineModel"]
         spec_instructions = (execution.get("specInstructions") or "").strip()
         batch_notes = (execution.get("instructions") or "").strip()
         request["guidelines"] = spec_instructions or batch_notes or request.get("guidelines", "")
@@ -199,6 +202,10 @@ class Worker:
                         if not candidates:
                             result["emptyReason"] = "模型未生成有依据的标注候选"
                         self.call("PUT", output_path, dict(lease, status="SUCCEEDED", result=result))
+                    except OnlineModelError as error:
+                        if lost.is_set():
+                            return
+                        self.fail_item(output_path, lease, error.code)
                     except HTTPError as error:
                         if error.code != 422:
                             raise
@@ -223,7 +230,9 @@ class Worker:
                                     errorMessage="Model inference or candidate validation failed"))
 
     def run_once(self):
-        execution = self.call("POST", "/executions/claim")
+        online = self.model["mode"] in {"image", "timeseries"} and os.getenv("LABELING_ONLINE_MODEL_HOSTS", "").strip()
+        query = {"onlineModels": "true"} if online else None
+        execution = self.call("POST", "/executions/claim", query=query)
         if execution is None:
             return False
         self.execute(execution)
