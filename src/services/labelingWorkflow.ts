@@ -20,11 +20,15 @@ export type ResultRow = {
   result: import('./labelingTasks').ClassificationResult | null;
   sourceKind: SourceKind | null;
   sourceActor: string | null;
+  sourceActorName?: string | null;
   packageId?: string | null;
   assignmentId?: string | null;
   roundId?: string | null;
   executionId?: string | null;
   modelVersion: string | null;
+  annotatorProviderId?: string | null;
+  annotatorProviderVersion?: string | null;
+  annotatorType?: string | null;
   confidence: number | null;
   reviewStatus: string;
   reviewRevision: number;

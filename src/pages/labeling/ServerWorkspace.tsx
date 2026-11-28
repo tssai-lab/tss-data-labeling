@@ -148,7 +148,7 @@ export default function ServerWorkspace() {
     [suggestion, setSuggestion] = useState(''),
     [rework, setRework] = useState<ReworkScope>();
   const [publishSelection, setPublishSelection] = useState<string[]>([]);
-  const [publishMode, setPublishMode] = useState<'HUMAN' | 'AI'>('HUMAN');
+  const [publishMode, setPublishMode] = useState<'HUMAN' | 'AI' | 'MIXED'>('HUMAN');
   const guard = useRef<() => boolean>(() => true),
     saving = useRef(false),
     internalNavigation = useRef(false);
@@ -847,7 +847,9 @@ export default function ServerWorkspace() {
                     </span>
                   ),
                 },
-                { key: 'ai', label: 'AI 执行' },
+                ...(publishMode !== 'HUMAN' || tab === 'ai' || !!aiSession
+                  ? [{ key: 'ai', label: 'AI 执行' }]
+                  : []),
                 {
                   key: 'review',
                   label: (
@@ -1015,47 +1017,25 @@ export default function ServerWorkspace() {
                 onModeChange={(mode) => {
                   setPublishMode(mode);
                 }}
-                onPublishAi={(selectedSamples, selectedVersion, config) => {
-                  void run(async () => {
-                    const execution = await post<LiveExecution>(
-                      `/projects/${encodeURIComponent(current.projectId)}/prelabel-runs`,
-                      {
-                        specVersionId: selectedVersion.specVersionId,
-                        modelId: config.modelId,
-                        instructions: config.instructions,
-                        reopenAccepted: config.reopenAccepted,
-                        samples: selectedSamples.map(({ sampleId }) => ({
-                          sampleId,
-                        })),
-                      },
-                      operationKey(),
-                    );
+                onAiPublished={(selectedSamples, selectedVersion, plan) => {
+                  const executionId = plan.aiExecutions?.[0]?.executionId;
+                  if (!executionId) return;
+                  void ownerApi.execution(executionId).then((execution) => {
+                    if (execution.projectId !== current.projectId) return;
                     setAiSession({
                       projectId: current.projectId,
                       samples: selectedSamples,
                       version: selectedVersion,
-                      config,
+                      config: {
+                        modelId: execution.agentDisplayName || execution.modelVersion,
+                        instructions: '',
+                      },
                       execution,
                       results: [],
                     });
-                    try {
-                      const receipt: PrelabelReceipt = {
-                        executionId: execution.executionId,
-                        specVersionId: selectedVersion.specVersionId,
-                        sampleIds: selectedSamples.map(
-                          ({ sampleId }) => sampleId,
-                        ),
-                        config,
-                      };
-                      sessionStorage.setItem(
-                        receiptKey(current.projectId),
-                        JSON.stringify(receipt),
-                      );
-                    } catch {
-                      // Storage may be disabled; the active run still works.
-                    }
+                    setTab('ai');
                     navigate(`/labeling/projects/${projectId}?panel=ai`);
-                  });
+                  }).catch((e) => setError(describeLabelingError(e)));
                 }}
                 initialSelection={publishSelection}
                 project={current}

@@ -38,13 +38,32 @@ export type Plan = {
   sampleCount: number;
   packageSampleCounts: number[];
   totalWorkload: number;
+  executionMode?: 'HUMAN_POOL' | 'AI_AGENT' | 'MIXED';
+  annotatorsPerSample?: number;
+  aiAgentIds?: string[];
+  annotatorRoster?: AnnotatorSelection[];
+  assignmentPolicy?: Record<string, unknown>;
+  workflowSnapshot?: Record<string, unknown>;
+  aiExecutions?: {
+    executionId: string;
+    roundId: string;
+    agentActorId: string;
+    modelVersion: string;
+    status: string;
+  }[];
   packages: {
-    packageId: string;
+    packageId: string | null;
     roundId?: string;
     sequenceNo: number;
     sampleCount: number;
     requiredCount: number;
   }[];
+};
+export type AnnotatorSelection = {
+  providerId: string;
+  providerVersion: string;
+  count: number;
+  agentIds: string[];
 };
 export type ClassificationResult = {
   labelId?: string;
@@ -153,6 +172,9 @@ export const tasks = {
       specVersionId: string;
       packageSize: number;
       annotatorsPerSample: number;
+      executionMode?: 'HUMAN_POOL' | 'AI_AGENT' | 'MIXED';
+      aiAgentIds?: string[];
+      annotatorRoster?: AnnotatorSelection[];
     },
     key: string,
   ) =>

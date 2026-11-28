@@ -24,6 +24,7 @@ import {
   assertChosen,
   type ConfidencePolicy,
   executionTerminal,
+  type HistoryRow,
   type LiveAgent,
   type LiveExecution,
   type LiveResult,
@@ -67,7 +68,9 @@ export default function LiveAi({
   const { modal } = App.useApp(),
     action = useOwnerAction(onBusyChange, writeBlocked);
   const [agents, setAgents] = useState<LiveAgent[]>([]),
-    [agentId, setAgentId] = useState<string>();
+    [agentIds, setAgentIds] = useState<string[]>([]);
+  const [openRounds, setOpenRounds] = useState<HistoryRow[]>([]),
+    [humanRoundId, setHumanRoundId] = useState<string>();
   const [reference, setReference] = useState(false),
     [instructions, setInstructions] = useState('');
   const [known, setKnown] = useState(''),
@@ -79,12 +82,14 @@ export default function LiveAi({
     [loading, setLoading] = useState(false),
     [refresh, setRefresh] = useState(0);
   const [policies, setPolicies] = useState<ConfidencePolicy[]>([]);
+  const [groupExecutions, setGroupExecutions] = useState<LiveExecution[]>([]);
   const [lower, setLower] = useState<number | null>(null),
     [upper, setUpper] = useState<number | null>(null),
     [reason, setReason] = useState('');
   const version = useRef(0),
     pollLock = useRef(false),
-    pageCursors = useRef(new Set<string>());
+    pageCursors = useRef(new Set<string>()),
+    groupExecutionKeys = useRef(new Map<string, string>());
   useEffect(() => {
     const abort = new AbortController();
     void ownerApi
@@ -97,12 +102,34 @@ export default function LiveAi({
       });
     return () => abort.abort();
   }, [projectId, refresh, spec.taskType]);
+  useEffect(() => {
+    const abort = new AbortController();
+    void ownerApi
+      .historyList(projectId, 'rounds', null, abort.signal)
+      .then((page) => {
+        if (!abort.signal.aborted)
+          setOpenRounds(page.items.filter((row) =>
+              row.roundId && row.projectId === projectId && row.specVersionId === spec.specVersionId
+              && row.status === 'OPEN' && row.packageId
+              && ['HUMAN_POOL', 'MIXED'].includes(row.mode || ''),
+          ));
+      })
+      .catch((e) => {
+        if (!abort.signal.aborted) setError(describeLabelingError(e));
+      });
+    return () => abort.abort();
+  }, [projectId, spec.specVersionId, refresh]);
   useEffect(
     () => () => {
       ++version.current;
     },
     [projectId],
   );
+  useEffect(() => {
+    setAgentIds([]);
+    setGroupExecutions([]);
+    setHumanRoundId(undefined);
+  }, [projectId, spec.specVersionId]);
   async function load(id: string, append = false) {
     if (pollLock.current || action.busy) return;
     pollLock.current = true;
@@ -170,50 +197,98 @@ export default function LiveAi({
     }, 5000);
     return () => clearInterval(timer);
   }, [active, execution?.executionId, execution?.status, error, action.busy]);
-  const agent = agents.find((item) => item.agentId === agentId);
+  const compatibleAgents = agents.filter(
+    (item) =>
+      item.enabled &&
+      item.taskType === (spec.taskType || 'IMAGE_CLASSIFICATION'),
+  );
+  const selectedAgents = compatibleAgents.filter((item) =>
+    agentIds.includes(item.agentId),
+  );
+  const humanRound = openRounds.find((row) => row.roundId === humanRoundId);
   function create() {
-    if (!agent) return;
+    if (!selectedAgents.length) return;
+    if (!humanRound && !selected.length) return;
+    if (reference && selectedAgents.some((item) => !item.supportsReference)) {
+      action.setError('所选标注员中有不支持参考答案的 Agent');
+      return;
+    }
     modal.confirm({
-      title: `让 ${agent.displayName} 处理 ${selected.length} 个样本？`,
+      title: `让 ${selectedAgents.length} 个标注员分别处理 ${humanRound?.sampleCount ?? selected.length} 个样本？`,
       content:
-        'AI 执行会占用本范围，完成后仍需人工审核。已确认样本重新执行会撤销当前确认。',
+        humanRound
+          ? 'AI 将加入所选人工轮次，与人工共用冻结样本范围。轮次会等人工席位和 AI 执行全部结束后再关闭。'
+          : '每个标注员会产生独立执行与结果快照，共用同一轮冻结范围；结果可在核查页比较或集成。已确认样本重新执行会撤销当前确认。',
       onOk: async () => {
         const value = await action.run(
           'ai-create',
           {
-            selected: selected.map(selectionItem),
+            selected: humanRound ? [] : selected.map(selectionItem),
             spec: spec.specVersionId,
-            agentId,
+            agentIds,
+            roundId: humanRound?.roundId,
             reference,
             instructions,
           },
           async (key, prepare) => {
-            const selection = await prepare(async () => {
-              assertChosen(selected, spec.specVersionId);
-              return ownerApi.select(
-                projectId,
-                {
-                  specVersionId: spec.specVersionId,
-                  purpose: 'PUBLISH',
-                  items: selected.map(selectionItem),
-                },
-                operationKey(),
-              );
-            });
-            return ownerApi.executeSelection(
-              projectId,
-              {
-                specVersionId: spec.specVersionId,
-                agentId: agent.agentId,
-                selectionId: selection.selectionId,
-                referenceMode: reference ? 'SELECTED' : 'NONE',
-                reopenAccepted: true,
-                instructions,
-              },
-              key,
-            );
+            let selectionId: string | undefined;
+            if (!humanRound) {
+              const selection = await prepare(async () => {
+                assertChosen(selected, spec.specVersionId);
+                return ownerApi.select(
+                  projectId,
+                  {
+                    specVersionId: spec.specVersionId,
+                    purpose: 'PUBLISH',
+                    items: selected.map(selectionItem),
+                  },
+                  operationKey(),
+                );
+              });
+              selectionId = selection.selectionId;
+            }
+            const executions: LiveExecution[] = [];
+            let roundId: string | undefined = humanRound?.roundId;
+            try {
+              for (const [index, selectedAgent] of selectedAgents.entries()) {
+                const fingerprint = JSON.stringify([
+                  projectId,
+                  selectionId || roundId,
+                  selectedAgent.agentId,
+                  reference,
+                  instructions,
+                ]);
+                const executionKey = index === 0
+                  ? key
+                  : groupExecutionKeys.current.get(fingerprint) || operationKey();
+                if (index > 0) groupExecutionKeys.current.set(fingerprint, executionKey);
+                const execution = await ownerApi.executeSelection(
+                  projectId,
+                  {
+                    specVersionId: spec.specVersionId,
+                    agentId: selectedAgent.agentId,
+                    ...(selectionId ? {
+                      selectionId,
+                      referenceMode: reference ? 'SELECTED' : 'NONE',
+                      reopenAccepted: true,
+                    } : {}),
+                    instructions,
+                    ...(roundId ? { roundId } : {}),
+                  },
+                  executionKey,
+                );
+                roundId = execution.roundId;
+                executions.push(execution);
+                setGroupExecutions([...executions]);
+              }
+              groupExecutionKeys.current.clear();
+              return executions[0];
+            } catch (e) {
+              setGroupExecutions([...executions]);
+              throw e;
+            }
           },
-          'AI 执行已创建',
+          `已创建 ${selectedAgents.length} 个 AI 标注员执行单元`,
         );
         if (value) {
           setExecution(value);
@@ -283,11 +358,6 @@ export default function LiveAi({
     );
     if (value) setPolicies((old) => [...old, value]);
   }
-  const compatibleAgents = agents.filter(
-    (item) =>
-      item.enabled &&
-      item.taskType === (spec.taskType || 'IMAGE_CLASSIFICATION'),
-  );
   const progressPercent = execution?.sampleCount
     ? Math.min(
         100,
@@ -364,9 +434,9 @@ export default function LiveAi({
       </section>
       <div className={ui.aiMetrics}>
         <div className={ui.aiMetric}>
-          <span>本次选择样本</span>
-          <strong>{selected.length}</strong>
-          <small>执行前固定处理范围</small>
+          <span>{humanRound ? '本轮样本' : '本次选择样本'}</span>
+          <strong>{humanRound?.sampleCount ?? selected.length}</strong>
+          <small>{humanRound ? '人工与 AI 共用范围' : '执行前固定处理范围'}</small>
         </div>
         <div className={ui.aiMetric}>
           <span>可用 AI Agent</span>
@@ -389,44 +459,68 @@ export default function LiveAi({
       {(error || action.error) && (
         <Alert type="error" showIcon message={error || action.error} />
       )}
-      {!selected.length && (
+      {!selected.length && !humanRound && (
         <Alert
           className={ui.aiSelectionPrompt}
           type="info"
           showIcon
-          message="先选择 AI 处理范围"
-          description="返回“结果与审核”勾选样本后，可在这里选择 Agent、设置参考答案并启动执行。运行结果不会自动通过审核。"
+          message="选择 AI 处理范围"
+          description="返回“结果与审核”勾选样本以新建 AI 轮次，或选择一个开放的人工轮次，让人工与 AI 共用同一轮样本。"
         />
       )}
-      <div className={ui.twoColumns} hidden={!selected.length}>
-        <ScopeSummary
+      <div className={selected.length || humanRound ? ui.twoColumns : undefined}>
+        {!humanRound && selected.length > 0 && <ScopeSummary
           projectId={projectId}
           spec={spec}
           selected={selected}
           disabled={action.busy || loading}
-        />
+        />}
         <Card className={ui.aiSetupCard} title="配置 AI 执行">
           <Alert
             type="info"
-            message={`当前明确勾选 ${selected.length} 个样本`}
-            description="Agent 由服务器驱动。运行中的答案只用于查看进度，终态成功结果才可审核；置信度分档不会自动接受答案。"
+            message={humanRound
+              ? `加入第 ${humanRound.roundNo || '—'} 轮人工任务 · ${humanRound.sampleCount || 0} 个样本`
+              : `当前明确勾选 ${selected.length} 个样本`}
+            description={humanRound
+              ? '人工领取与 AI 执行共用同一轮样本范围；双方都完成后才释放样本。'
+              : '可选择多个标注员分别处理同一冻结范围。每个标注员都会生成独立执行与结果快照，结果不会自动通过审核。'}
           />
           <Space direction="vertical" style={{ marginTop: 14, width: '100%' }}>
             <Select
-              aria-label="选择 AI Agent"
+              allowClear
+              aria-label="加入人工轮次"
               style={{ width: '100%' }}
-              value={agentId}
+              value={humanRoundId}
+              disabled={action.busy}
+              placeholder="单独创建 AI 轮次；或加入开放的人工轮次"
+              onChange={(value) => {
+                setHumanRoundId(value);
+                if (value) setReference(false);
+              }}
+              options={openRounds.map((row) => ({
+                value: row.roundId || '',
+                label: `第 ${row.roundNo || '—'} 轮 · ${row.sampleCount || 0} 个样本 · 人工任务`,
+              }))}
+            />
+            <Select
+              aria-label="选择 AI 标注员"
+              mode="multiple"
+              maxCount={10}
+              maxTagCount="responsive"
+              style={{ width: '100%' }}
+              value={agentIds}
               disabled={action.busy}
               placeholder={
-                agents.length ? '选择已启用的 Agent' : '暂无可用 Agent'
+                agents.length ? '选择一个或多个标注员' : '暂无可用 Agent'
               }
               onChange={(value) => {
-                setAgentId(value);
-                setReference(false);
+                setAgentIds(value);
+                if (value.some((id) => !compatibleAgents.find((item) => item.agentId === id)?.supportsReference))
+                  setReference(false);
               }}
               options={compatibleAgents.map((item) => ({
                 value: item.agentId,
-                label: `${item.displayName} · ${item.modelVersion}`,
+                label: `${item.displayName} · ${item.annotatorType} · ${item.modelVersion}`,
               }))}
             />
             <Button
@@ -436,7 +530,7 @@ export default function LiveAi({
               刷新 Agent
             </Button>
             <Checkbox
-              disabled={!agent?.supportsReference || action.busy}
+              disabled={!selectedAgents.length || selectedAgents.some((item) => !item.supportsReference) || action.busy}
               checked={reference}
               onChange={(e) => setReference(e.target.checked)}
             >
@@ -453,16 +547,33 @@ export default function LiveAi({
             />
             <Button
               type="primary"
-              disabled={!agent || !selected.length || loading || action.busy}
+              disabled={!selectedAgents.length || (!selected.length && !humanRound) || loading || action.busy}
               onClick={create}
             >
-              启动 AI 标注
+              {selectedAgents.length
+                ? `启动 ${selectedAgents.length} 个 AI 标注员`
+                : '启动 AI 标注'}
             </Button>
           </Space>
-          {agent && (
+          {selectedAgents.length > 0 && (
             <p>
-              {agent.confidenceDescription || '该 Agent 未提供置信度语义说明'}
+              {selectedAgents.map((item) => `${item.displayName}：${item.confidenceDescription || '未提供置信度语义说明'}`).join('；')}
             </p>
+          )}
+          {groupExecutions.length > 0 && (
+            <div style={{ marginTop: 12 }}>
+              <Typography.Text strong>本轮独立执行</Typography.Text>
+              <Space wrap style={{ display: 'flex', marginTop: 8 }}>
+                {groupExecutions.map((item) => {
+                  const source = agents.find((candidate) => candidate.agentId === item.agentId);
+                  return (
+                    <Button key={item.executionId} size="small" onClick={() => void load(item.executionId)}>
+                      {source?.displayName || item.agentDisplayName || item.agentId} · {item.status}
+                    </Button>
+                  );
+                })}
+              </Space>
+            </div>
           )}
         </Card>
       </div>

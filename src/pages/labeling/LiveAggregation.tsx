@@ -1,9 +1,10 @@
-import { Alert, App, Button, Card, Input, Space, Table } from 'antd';
+import { Alert, App, Button, Card, Input, InputNumber, Select, Space, Table } from 'antd';
 import { useEffect, useRef, useState } from 'react';
 import { describeLabelingError, type SpecVersion } from '@/services/labeling';
 import {
   type Aggregation,
   type AggregationItem,
+  type AggregationAlgorithm,
   type LiveResult,
   ownerApi,
   readAllPages,
@@ -36,6 +37,9 @@ export default function LiveAggregation({
     [error, setError] = useState(''),
     [loading, setLoading] = useState(false);
   const [algorithm, setAlgorithm] = useState('');
+  const [strategyParameters, setStrategyParameters] = useState<Record<string, number>>({});
+  const [algorithms, setAlgorithms] = useState<AggregationAlgorithm[]>([]);
+  const selectedAlgorithm = algorithms.find((item) => item.algorithmId === algorithm);
   const version = useRef(0),
     lock = useRef(false);
   useEffect(() => {
@@ -53,22 +57,19 @@ export default function LiveAggregation({
   useEffect(() => {
     const abort = new AbortController();
     void ownerApi
-      .algorithms(abort.signal)
+      .algorithms(spec.taskType, abort.signal)
       .then((rows) => {
-        if (!abort.signal.aborted)
-          setAlgorithm(
-            rows.find(
-              (r) =>
-                r.algorithmId === 'majority-vote-v1' &&
-                r.taskType === 'IMAGE_CLASSIFICATION',
-            )?.algorithmId || '',
-          );
+        if (!abort.signal.aborted) {
+          setAlgorithms(rows);
+          setAlgorithm(rows[0]?.algorithmId || '');
+          setStrategyParameters({});
+        }
       })
       .catch((e) => {
         if (!abort.signal.aborted) setError(describeLabelingError(e));
       });
     return () => abort.abort();
-  }, []);
+  }, [spec.taskType]);
   async function prepare() {
     if (lock.current) return;
     lock.current = true;
@@ -86,11 +87,10 @@ export default function LiveAggregation({
           (r) => r.resultId || '',
         );
         values.push(
-          ...rows.filter(
-            (r) =>
-              ['HUMAN', 'AI'].includes(r.sourceKind || '') &&
-              r.reviewable &&
-              !r.activeProcessing,
+          ...rows.filter((r) =>
+            (selectedAlgorithm?.acceptedSourceKinds || []).includes(r.sourceKind || '') &&
+            r.reviewable &&
+            !r.activeProcessing,
           ),
         );
       }
@@ -138,8 +138,12 @@ export default function LiveAggregation({
         )
         .map((r) => r.resultId || ''),
     }));
-    if (!inputs.length || inputs.some((i) => i.resultIds.length < 2)) {
-      setError('每个所选样本至少明确勾选两份独立参与者的原始答案');
+    const minimumSources = Math.max(
+      selectedAlgorithm?.minimumIndependentSources || 1,
+      strategyParameters.minimumVotes || 0,
+    );
+    if (!inputs.length || inputs.some((i) => i.resultIds.length < minimumSources)) {
+      setError(`每个所选样本至少明确勾选 ${minimumSources} 份独立参与者的原始答案`);
       return;
     }
     for (const input of inputs) {
@@ -155,11 +159,11 @@ export default function LiveAggregation({
       algorithmId: algorithm,
       specVersionId: spec.specVersionId,
       items: inputs,
+      parameters: strategyParameters,
     };
     modal.confirm({
-      title: `为 ${inputs.length} 个样本计算多数投票建议？`,
-      content:
-        '只使用下方明确勾选的原始答案。严格过半才生成建议，建议仍需单独审核确认。',
+      title: `为 ${inputs.length} 个样本运行「${selectedAlgorithm?.algorithmId}」？`,
+      content: `${selectedAlgorithm?.description || '使用明确勾选的原始答案生成建议。'} 建议仍需单独审核确认。`,
       onOk: async () => {
         const value = await action.run(
           `aggregate:${projectId}`,
@@ -175,13 +179,6 @@ export default function LiveAggregation({
       },
     });
   }
-  if (spec.taskType === 'TIMESERIES_ANNOTATION')
-    return (
-      <Alert
-        type="info"
-        message="能耗任务暂无已注册的集成算法，仍可逐份审核和修订。"
-      />
-    );
   return (
     <Card title="多来源集成建议" style={{ marginTop: 16 }}>
       <p>
@@ -191,16 +188,57 @@ export default function LiveAggregation({
       {(error || action.error) && (
         <Alert type="error" message={error || action.error} />
       )}
+      {!algorithms.length ? (
+        <Alert type="info" message="当前任务类型尚无已注册的集成算法，仍可逐份审核和修订。" />
+      ) : (
+        <Space direction="vertical" style={{ width: '100%', marginBottom: 12 }}>
+          <Select
+            aria-label="选择结果集成算法"
+            value={algorithm}
+            onChange={(value) => {
+              setAlgorithm(value);
+              setChosen([]);
+              setCandidates([]);
+              setStrategyParameters({});
+            }}
+            options={algorithms.map((item) => ({
+              value: item.algorithmId,
+              label: `${item.algorithmId} · 至少 ${item.minimumIndependentSources} 个独立来源`,
+            }))}
+          />
+          {selectedAlgorithm?.description && <span>{selectedAlgorithm.description}</span>}
+          {Object.entries(selectedAlgorithm?.parametersSchema?.properties || {}).map(
+            ([name, schema]) => (
+              <label key={name} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span>{schema.description || name}</span>
+                <InputNumber
+                  aria-label={schema.description || name}
+                  min={schema.minimum}
+                  max={schema.maximum}
+                  precision={schema.type === 'integer' ? 0 : undefined}
+                  value={strategyParameters[name] ?? schema.default}
+                  onChange={(value) => setStrategyParameters((current) => {
+                    const next = { ...current };
+                    if (value == null) delete next[name];
+                    else next[name] = value;
+                    return next;
+                  })}
+                />
+              </label>
+            ),
+          )}
+        </Space>
+      )}
       <Space wrap>
         <Button
-          disabled={!selected.length || loading || action.busy || !algorithm}
+          disabled={!selected.length || loading || action.busy || !selectedAlgorithm}
           onClick={() => void prepare()}
         >
           读取所选 {selected.length} 个样本的候选
         </Button>
         <Button
           type="primary"
-          disabled={!chosen.length || loading || action.busy || !algorithm}
+          disabled={!chosen.length || loading || action.busy || !selectedAlgorithm}
           onClick={create}
         >
           计算明确勾选的候选
@@ -222,8 +260,7 @@ export default function LiveAggregation({
           { title: '参与者', dataIndex: 'sourceActor', ellipsis: true },
           {
             title: '答案',
-            render: (_, r) =>
-              spec.labels.find((l) => l.id === r.result?.labelId)?.name || '—',
+            render: (_, r) => JSON.stringify(r.result || null),
           },
         ]}
       />
@@ -267,9 +304,7 @@ export default function LiveAggregation({
               },
               {
                 title: '建议',
-                render: (_, r) =>
-                  spec.labels.find((l) => l.id === r.result?.labelId)?.name ||
-                  '—',
+                render: (_, r) => JSON.stringify(r.result || null),
               },
               { title: '票数', render: (_, r) => JSON.stringify(r.votes) },
             ]}

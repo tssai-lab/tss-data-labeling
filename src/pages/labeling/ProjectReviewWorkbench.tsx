@@ -212,7 +212,8 @@ export default function ProjectReviewWorkbench({
           {!scope.length && (
             <Alert
               type="info"
-              message="创建 AI 任务前，请先选择样本；已有任务可在下方查询。"
+              message="可以新建 AI 轮次，也可以把 AI 加入开放的人工轮次。"
+              description="新建 AI 轮次需先在结果与审核中选择样本；加入人工轮次会直接使用该轮冻结的样本范围。"
               action={
                 <Button disabled={busy} onClick={() => changeView('review')}>
                   去选择样本

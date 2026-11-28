@@ -203,6 +203,7 @@ test('an outdated republish preview response cannot re-enable a plan for a diffe
       Checkbox: 'Checkbox',
       Input: 'Input',
       InputNumber: 'InputNumber',
+      Radio: { Group: 'RadioGroup' },
       Space: 'Space',
       Table: 'Table',
     },
@@ -215,6 +216,7 @@ test('an outdated republish preview response cannot re-enable a plan for a diffe
       selectionItem: (value) => value,
       publishSamples: (values) => values,
       ownerApi: {
+        agents: async () => [],
         select: async () => ({ selectionId: 'scope' }),
         planSelection: () =>
           new Promise((resolve) => {

@@ -198,6 +198,7 @@ function publisher(overrides = {}, saved = new Map()) {
         Card: 'Card',
         Form,
         InputNumber: 'InputNumber',
+        Radio: { Group: 'RadioGroup' },
         Space: 'Space',
         Table: 'Table',
         Typography: { Paragraph: 'Paragraph', Text: 'Text' },
@@ -266,7 +267,10 @@ test('缺规范或只读项目不能生成预览，更换规范后旧预览不�
   p.button('调整打包参数').props.onClick();
   p.runtime.render();
   await p.preview();
-  assert.equal(p.calls.at(-1)[2].specVersionId, 'spec-2');
+  assert.equal(
+    p.calls.filter(([method]) => method === 'plan').at(-1)[2].specVersionId,
+    'spec-2',
+  );
   assert.equal(p.button('确认发布此预览').props.disabled, false);
 });
 

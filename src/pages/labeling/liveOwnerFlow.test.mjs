@@ -40,6 +40,7 @@ function boundary() {
       'Input',
       'InputNumber',
       'Progress',
+      'Radio',
       'Select',
       'Space',
       'Table',
@@ -53,6 +54,7 @@ function boundary() {
     Password: 'Password',
   });
   ui.Typography = { Paragraph: 'Paragraph' };
+  ui.Radio = { Group: 'RadioGroup' };
   ui.App = {
     useApp: () => ({
       modal: { confirm: (value) => confirms.push(value) },
@@ -204,7 +206,7 @@ test('publication preview invalidates on parameter changes and successful receip
           sampleId: item.sampleId,
           referenceResultId: null,
         })),
-      ownerApi: { select: async () => ({}), planSelection: async () => draft },
+      ownerApi: { agents: async () => [], select: async () => ({}), planSelection: async () => draft },
     },
     '@/services/labelingTasks': {
       tasks: {
@@ -323,6 +325,7 @@ test('AI reads reject mismatched terminal snapshots and never expose provisional
       '@/services/labelingOwner': {
         executionTerminal: (status) => status === 'SUCCEEDED',
         ownerApi: {
+          historyList: async () => ({ items: [], nextCursor: null }),
           agents: async () => [],
           execution: async () => ({
             executionId: 'e',
@@ -610,6 +613,7 @@ test('AI retry targets the immutable original execution with its current revisio
       '@/services/labelingOwner': {
         executionTerminal: (s) => ['PARTIAL', 'QUEUED'].includes(s),
         ownerApi: {
+          historyList: async () => ({ items: [], nextCursor: null }),
           agents: async () => [],
           execution: async (id) =>
             id === 'old'

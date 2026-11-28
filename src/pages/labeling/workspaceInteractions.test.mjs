@@ -68,6 +68,7 @@ test('publish selects and deselects only the filtered samples and sends an expli
           return { sampleCount: 2, packageSampleCounts: [2], totalWorkload: 2 };
         },
       },
+      '@/services/labelingOwner': { ownerApi: { agents: async () => [] } },
     },
   );
   r.render();
@@ -105,8 +106,8 @@ test('publish selects and deselects only the filtered samples and sends an expli
   r.dispose();
 });
 
-test('AI prelabel forwards the choice to reopen accepted samples', () => {
-  let config;
+test('AI publication can reopen an accepted sample when explicitly selected', async () => {
+  let sent;
   const input = Object.assign(() => {}, { Search: 'Search' });
   const r = renderHooks(new URL('./NativePublish.tsx', import.meta.url), {
     project: { projectId: 'p', status: 'OPEN' },
@@ -114,23 +115,37 @@ test('AI prelabel forwards the choice to reopen accepted samples', () => {
     version: { specVersionId: 'v', labels: [], editorConfig: {} },
     specVersions: [], reviews: [{ sampleId: 'a', specVersionId: 'v', status: 'ACCEPTED' }],
     run: async (fn) => fn(), refresh() {}, busy: false, mode: 'AI',
-    onModeChange() {}, onVersionChange() {}, onPublishAi: (_samples, _version, value) => { config = value; },
+    onModeChange() {}, onVersionChange() {},
   }, {
     antd: { Alert: 'Alert', Button: 'Button', Card: 'Card', Checkbox: 'Checkbox', Input: input,
       InputNumber: 'InputNumber', Radio: { Group: 'RadioGroup' }, Select: 'Select', Space: 'Space', Table: 'Table',
       Typography: { Text: 'Text', Title: 'Title', Paragraph: 'Paragraph' } },
     './workspaceUi.less': { default: {} }, './NativeAi': { default: 'NativeAi' },
-    '@/services/labeling': { operationKey: () => 'key', post: async () => ({}) },
+    '@/services/labeling': {
+      operationKey: () => 'key',
+      post: async (_path, body) => {
+        sent = body;
+        return { planId: 'plan', sampleCount: 1, packageSampleCounts: [1], totalWorkload: 1 };
+      },
+    },
+    '@/services/labelingOwner': {
+      ownerApi: {
+        agents: async () => [{ agentId: 'agent', taskType: 'IMAGE_CLASSIFICATION', displayName: '演示模型', modelVersion: '1' }],
+      },
+    },
   }, { window: { scrollTo() {} } });
+  r.render(); await flushHooks(); r.render();
+  r.nodes('Select').find((node) => node.props['aria-label'] === '选择本轮 AI 标注员').props.onChange(['agent']);
   r.render();
   r.nodes('Checkbox')[0].props.onChange({ target: { checked: true } });
   r.render();
   r.nodes('Table')[0].props.rowSelection.columnTitle.props.onChange({ target: { checked: true } });
   r.render();
-  r.nodes('Button').find((node) => node.props.type === 'primary').props.onClick();
-  r.render();
-  r.nodes('NativeAi')[0].props.onPublish({ modelId: 'qwen-image', instructions: '' });
-  assert.equal(config.reopenAccepted, true);
+  r.nodes('Button').find((node) => text(node).includes('生成发布计划')).props.onClick();
+  await flushHooks();
+  assert.equal(sent.executionMode, 'AI_AGENT');
+  assert.equal(sent.reopenAccepted, true);
+  assert.equal(sent.samples.map((item) => item.sampleId).join(','), 'a');
   r.dispose();
 });
 

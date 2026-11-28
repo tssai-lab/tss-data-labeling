@@ -1311,6 +1311,7 @@ export default function Labeling() {
                   key={`${project.projectId}:${batch.batchId}`}
                   projectId={project.projectId}
                   batchId={batch.batchId}
+                  taskType={project.taskType}
                   specVersionId={
                     selectedSpecId || project.specVersions?.[0]?.specVersionId
                   }
