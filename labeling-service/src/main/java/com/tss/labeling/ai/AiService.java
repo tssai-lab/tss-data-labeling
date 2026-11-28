@@ -37,19 +37,27 @@ public class AiService {
     private final com.tss.labeling.review.ReferenceService references;
     private final com.tss.labeling.review.ResultScopeService scopes;
     private final com.tss.labeling.plugins.TaskPluginRegistry plugins;
+    private final com.tss.labeling.annotators.AnnotatorProviderRegistry annotators;
+    private final com.tss.labeling.usage.UsageEventRecorder usageEvents;
     private final int maxSamples;
     private final NativeTaskService nativeTasks;
+
+    @Value("${labeling.ai.worker-lease-seconds:120}")
+    private int workerLeaseSeconds = 120;
 
     public AiService(JdbcTemplate db, ObjectMapper json, ImportStorage storage, OutcomeService outcomes,
             com.tss.labeling.tasks.TaskResultValidator validator,
             com.tss.labeling.review.ResultScopeService scopes,
             com.tss.labeling.review.ReferenceService references,
             com.tss.labeling.plugins.TaskPluginRegistry plugins,
+            com.tss.labeling.annotators.AnnotatorProviderRegistry annotators,
+            com.tss.labeling.usage.UsageEventRecorder usageEvents,
             NativeTaskService nativeTasks,
             @Value("${labeling.tasks.max-samples:10000}") int maxSamples) {
         this.db = db;
         this.json = json;
-        this.validator = validator; this.plugins = plugins;
+        this.validator = validator; this.plugins = plugins; this.annotators = annotators;
+        this.usageEvents = usageEvents;
         this.storage = storage;
         this.outcomes = outcomes;
         this.scopes = scopes;
@@ -63,13 +71,21 @@ public class AiService {
     @Transactional
     public JsonNode agents(ActorContext actor, String taskType) {
         enabled(actor.actorId());
-        return json.valueToTree(db.queryForList(
+        var rows = db.queryForList(
                         """
 SELECT id AS "agentId", display_name AS "displayName", task_type AS "taskType",
   model_version AS "modelVersion", supports_reference AS "supportsReference",
-  confidence_description AS "confidenceDescription", enabled
+  confidence_description AS "confidenceDescription", capabilities::text AS "capabilitiesJson", enabled
 FROM ai_agent_config WHERE enabled=TRUE AND (? = '' OR task_type = ?) ORDER BY display_name
-""", taskType, taskType));
+""", taskType, taskType);
+        rows.forEach(row -> {
+            JsonNode capabilities = read((String) row.remove("capabilitiesJson"));
+            row.put("providerId", "ai-agent-worker");
+            row.put("providerVersion", annotators.forExecutionMode("AI_AGENT").descriptor().version());
+            row.put("annotatorType", capabilities.path("annotatorType").asText("MODEL"));
+            row.put("capabilities", capabilities);
+        });
+        return json.valueToTree(rows);
     }
 
     @Transactional
@@ -128,11 +144,14 @@ VALUES (?,?,?,?,?,?::jsonb,?::jsonb,?,?,?)
                         "SELECT r.*, p.owner_actor_id FROM publication_round r JOIN project p ON"
                                 + " p.id=r.project_id WHERE r.id=? FOR UPDATE", roundId);
         if (!actor.actorId().equals(r.get("owner_actor_id"))) throw error(404,"RESOURCE_NOT_FOUND","轮次不存在");
-        if (!"AI_AGENT".equals(r.get("mode"))) throw error(422,"INVALID_EXECUTION_MODE","仅 AI 轮次可设置置信度分档");
-        Map<String,Object> e = one("SELECT * FROM ai_execution WHERE round_id=?", roundId);
+        if (!(annotators.executionMode("ai-agent-worker").equals(r.get("mode"))
+                || "MIXED".equals(r.get("mode")))) throw error(422,"INVALID_EXECUTION_MODE","仅含 AI 执行的轮次可设置置信度分档");
+        Map<String,Object> e = one(
+                "SELECT e.* FROM ai_execution e JOIN ai_result_snapshot s ON s.execution_id=e.id"
+                        + " WHERE e.round_id=? AND s.id=?",
+                roundId, input.snapshotId());
         if (!TERMINAL.contains(e.get("status"))) throw error(409,"AI_RESULTS_NOT_READY","执行尚未终结");
         Map<String,Object> snap = one("SELECT * FROM ai_result_snapshot WHERE execution_id=?", e.get("id"));
-        if (!input.snapshotId().equals(snap.get("id"))) throw error(409,"SNAPSHOT_MISMATCH","快照不属于该执行");
         if (input.lowerThreshold() == null || input.upperThreshold() == null
                 || !(input.lowerThreshold() >= 0 && input.lowerThreshold() < input.upperThreshold() && input.upperThreshold() <= 1))
             throw error(422,"INVALID_THRESHOLDS","阈值需满足 0≤L<H≤1");
@@ -188,15 +207,37 @@ FROM confidence_policy WHERE round_id=? ORDER BY created_at DESC
         if (agentRows.isEmpty()) throw error(422,"AGENT_UNAVAILABLE","所选模型不存在或已停用，请刷新模型列表后重新选择");
         Map<String,Object> agent = agentRows.get(0);
         if (!spec.get("task_type").equals(agent.get("task_type"))) throw error(422,"AGENT_INCOMPATIBLE","Agent 不支持该项目任务类型");
-        if ((input.samples() == null) == (input.selectionId() == null))
+        UUID roundId = input.roundId();
+        Map<String, Object> attachedRound = null;
+        if (roundId == null && ((input.samples() == null) == (input.selectionId() == null)))
             throw error(422, "INVALID_REQUEST", "samples 与 selectionId 必须二选一");
         if (input.referenceMode() != null
                 && !Set.of("NONE", "SELECTED").contains(input.referenceMode()))
             throw error(422, "INVALID_REFERENCE_MODE", "referenceMode 仅支持 NONE 或 SELECTED");
-        if ("SELECTED".equals(input.referenceMode()) && input.selectionId() == null)
+        if (roundId == null && "SELECTED".equals(input.referenceMode()) && input.selectionId() == null)
             throw error(422, "INVALID_REFERENCE_MODE", "SELECTED 参考模式需要 selectionId");
         List<SelectionSample> selected = input.samples();
-        if (input.selectionId() != null) {
+        if (roundId != null) {
+            attachedRound = one(
+                    "SELECT * FROM publication_round WHERE id=? AND project_id=? FOR UPDATE",
+                    roundId, project);
+            if (!input.specVersionId().equals(attachedRound.get("spec_version_id")))
+                throw error(409, "SPEC_MISMATCH", "执行单元必须使用轮次绑定的标注规范");
+            if (!Set.of("AI_AGENT", "HUMAN_POOL", "MIXED").contains(attachedRound.get("mode")))
+                throw error(409, "INVALID_ROUND_MODE", "该轮次不支持 AI 执行");
+            if (!"OPEN".equals(attachedRound.get("status"))
+                    && !("AI_AGENT".equals(attachedRound.get("mode"))
+                            && "CLOSED".equals(attachedRound.get("status"))))
+                throw error(409, "ROUND_CLOSED", "只能向开放轮次添加 AI 执行");
+            selected = db.query(
+                    "SELECT sample_id,reference_result_id,reference_candidate_id FROM round_item"
+                            + " WHERE round_id=? ORDER BY ordinal",
+                    (rs, row) -> new SelectionSample(
+                            rs.getObject("sample_id", UUID.class),
+                            rs.getObject("reference_result_id", UUID.class),
+                            rs.getObject("reference_candidate_id", UUID.class)),
+                    roundId);
+        } else if (input.selectionId() != null) {
             var scope = scopes.selection(actor, project, input.selectionId(), "PUBLISH", null);
             if (!scope.specVersionId().equals(input.specVersionId()))
                 throw error(409, "SPEC_MISMATCH", "范围规范不一致");
@@ -223,40 +264,78 @@ FROM confidence_policy WHERE round_id=? ORDER BY created_at DESC
             throw error(422, "REFERENCE_UNSUPPORTED", "Agent 不支持参考答案");
         List<UUID> sampleIds = new ArrayList<>();
         for (var s : samples) sampleIds.add((UUID) s.get("id"));
-        scopes.checkReopen(project, input.specVersionId(), sampleIds, input.reopenAccepted());
-        checkClaimConflict(project, sampleIds, groupId);
-        int roundNo = db.queryForObject(
-                        "SELECT COALESCE(MAX(round_no),0)+1 FROM publication_round WHERE"
-                            + " project_id=?", Integer.class, project);
-        UUID roundId = UUID.randomUUID();
-        db.update(
-                """
-INSERT INTO publication_round(id,project_id,spec_version_id,package_id,round_no,mode,instructions,status)
-VALUES (?,?,?,NULL,?,'AI_AGENT',?,'OPEN')
-""", roundId, project, input.specVersionId(), roundNo, input.instructions());
-        if (groupId != null) db.update("UPDATE publication_round SET publication_group_id=? WHERE id=?", groupId, roundId);
-        int ordinal = 1;
-        for (var s : samples) {
-            UUID sampleId = (UUID) s.get("id");
+        var provider = annotators.forExecutionMode("AI_AGENT").descriptor();
+        String aiMode = provider.executionMode();
+        if (roundId == null)
+            scopes.checkReopen(project, input.specVersionId(), sampleIds, input.reopenAccepted());
+        boolean newRound = roundId == null;
+        if (roundId == null) {
+            checkClaimConflict(project, sampleIds, groupId, null);
+            int roundNo = db.queryForObject(
+                            "SELECT COALESCE(MAX(round_no),0)+1 FROM publication_round WHERE"
+                                + " project_id=?", Integer.class, project);
+            roundId = UUID.randomUUID();
             db.update(
-                    "INSERT INTO"
-                        + " round_item(round_id,project_id,spec_version_id,sample_id,ordinal,reference_result_id,reference_candidate_id)"
-                        + " VALUES (?,?,?,?,?,?,?)",
-                    roundId, project, input.specVersionId(), sampleId, ordinal++, s.get("referenceResultId"),
-                    s.get("referenceCandidateId"));
-            db.update("INSERT INTO sample_work_claim(project_id,sample_id,round_id) VALUES (?,?,?)", project, sampleId, roundId);
+                    """
+INSERT INTO publication_round(id,project_id,spec_version_id,package_id,round_no,mode,instructions,status,publication_group_id)
+VALUES (?,?,?,NULL,?,?,?,'OPEN',?)
+""", roundId, project, input.specVersionId(), roundNo, aiMode, input.instructions(), groupId);
+            int ordinal = 1;
+            for (var sample : samples) {
+                UUID sampleId = (UUID) sample.get("id");
+                db.update(
+                        "INSERT INTO"
+                            + " round_item(round_id,project_id,spec_version_id,sample_id,ordinal,reference_result_id,reference_candidate_id)"
+                            + " VALUES (?,?,?,?,?,?,?)",
+                        roundId, project, input.specVersionId(), sampleId, ordinal++, sample.get("referenceResultId"),
+                        sample.get("referenceCandidateId"));
+                db.update("INSERT INTO sample_work_claim(project_id,sample_id,round_id) VALUES (?,?,?)", project, sampleId, roundId);
+            }
+        } else {
+            Map<String, Object> round = attachedRound == null
+                    ? one("SELECT * FROM publication_round WHERE id=? AND project_id=? FOR UPDATE", roundId, project)
+                    : attachedRound;
+            boolean reopenRound = "CLOSED".equals(round.get("status"));
+            if (!(aiMode.equals(round.get("mode"))
+                            || "HUMAN_POOL".equals(round.get("mode"))
+                            || "MIXED".equals(round.get("mode")))
+                    || (!"OPEN".equals(round.get("status")) && !reopenRound))
+                throw error(409, "ROUND_CLOSED", "只能向开放轮次增加标注员执行单元");
+            if (reopenRound && !aiMode.equals(round.get("mode")))
+                throw error(409, "ROUND_CLOSED", "已完成的混合轮次不能重新打开");
+            int existingExecutions = db.queryForObject(
+                    "SELECT count(*) FROM ai_execution WHERE round_id=?", Integer.class, roundId);
+            if (existingExecutions >= 10)
+                throw error(422, "ANNOTATOR_LIMIT_REACHED", "每轮最多配置 10 个 AI 标注员");
+            if (Boolean.TRUE.equals(db.queryForObject(
+                    "SELECT EXISTS(SELECT 1 FROM ai_execution WHERE round_id=? AND agent_actor_id=?)",
+                    Boolean.class, roundId, agent.get("actor_id"))))
+                throw error(409, "ANNOTATOR_ALREADY_ADDED", "该 Agent 已在本轮执行");
+            checkClaimConflict(project, sampleIds, (UUID) round.get("publication_group_id"), roundId);
+            if (reopenRound) {
+                db.update("UPDATE publication_round SET status='OPEN',revision=revision+1 WHERE id=?", roundId);
+                for (UUID sampleId : sampleIds)
+                    db.update("INSERT INTO sample_work_claim(project_id,sample_id,round_id) VALUES (?,?,?)",
+                            project, sampleId, roundId);
+            } else if ("HUMAN_POOL".equals(round.get("mode"))) {
+                db.update("UPDATE publication_round SET mode='MIXED',revision=revision+1 WHERE id=?", roundId);
+            }
         }
         UUID executionId = UUID.randomUUID();
         db.update(
                 """
-INSERT INTO ai_execution(id,round_id,project_id,spec_version_id,agent_actor_id,model_version,status,pending_count)
-VALUES (?,?,?,?,?,?,'QUEUED',?)
-""", executionId, roundId, project, input.specVersionId(), agent.get("actor_id"), agent.get("model_version"), samples.size());
+INSERT INTO ai_execution(id,round_id,project_id,spec_version_id,agent_actor_id,model_version,status,pending_count,
+  annotator_provider_id,annotator_provider_version,annotator_type)
+VALUES (?,?,?,?,?,?,'QUEUED',?,?,?,?)
+""", executionId, roundId, project, input.specVersionId(), agent.get("actor_id"), agent.get("model_version"),
+                samples.size(), provider.id(), provider.version(),
+                read(Objects.toString(agent.get("capabilities"), "{}")).path("annotatorType").asText(provider.annotatorType()));
         for (var s : samples)
             db.update(
                     "INSERT INTO ai_item_output(execution_id,round_id,sample_id,status) VALUES"
                             + " (?,?,?,'PENDING')", executionId, roundId, s.get("id"));
-        outcomes.resetAcceptedForRepublish(project, input.specVersionId(), sampleIds, actor.actorId());
+        if (newRound)
+            outcomes.resetAcceptedForRepublish(project, input.specVersionId(), sampleIds, actor.actorId());
         db.update(
                 "UPDATE project SET status='OPEN',revision=revision+1,updated_at=CURRENT_TIMESTAMP"
                     + " WHERE id=?",
@@ -331,8 +410,6 @@ WHERE o.execution_id=? AND o.sample_id>? ORDER BY o.sample_id LIMIT ?
         db.update(
                 "UPDATE ai_item_output SET status='CANCELLED' WHERE execution_id=? AND"
                     + " status='PENDING'", id);
-        db.update("UPDATE publication_round SET status='CANCELLED', revision=revision+1 WHERE id=?", e.get("round_id"));
-        db.update("DELETE FROM sample_work_claim WHERE round_id=?", e.get("round_id"));
         finalizeSnapshot(id, "CANCELLED");
         JsonNode response = execView(id);
         remember(actor.actorId(), op, key, hash, id, response);
@@ -343,6 +420,7 @@ WHERE o.execution_id=? AND o.sample_id>? ORDER BY o.sample_id LIMIT ?
 
     @Transactional
     public JsonNode claim(String workerKey) {
+        int leaseSeconds = validatedWorkerLeaseSeconds();
         Map<String,Object> agent = agent(workerKey);
         List<Map<String,Object>> rows = db.queryForList(
                         """
@@ -355,22 +433,29 @@ ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED
         db.update(
                 """
 UPDATE ai_execution SET status='RUNNING', generation=generation+1, revision=revision+1, lease_owner=?,
-  lease_until=CURRENT_TIMESTAMP + interval '120 seconds', started_at=COALESCE(started_at,CURRENT_TIMESTAMP)
+  lease_until=CURRENT_TIMESTAMP + (? * INTERVAL '1 second'), started_at=COALESCE(started_at,CURRENT_TIMESTAMP)
 WHERE id=?
-""", agent.get("actor_id"), id);
+""", agent.get("actor_id"), leaseSeconds, id);
         return claimView(id);
     }
 
     @Transactional
     public JsonNode heartbeat(String workerKey, UUID id, long generation) {
+        int leaseSeconds = validatedWorkerLeaseSeconds();
         Map<String,Object> agent = agent(workerKey);
         Map<String,Object> e = one("SELECT * FROM ai_execution WHERE id=? FOR UPDATE", id);
         checkLease(agent, e, generation);
         db.update(
-                "UPDATE ai_execution SET lease_until=CURRENT_TIMESTAMP + interval '120 seconds'"
-                    + " WHERE id=?", id);
+                "UPDATE ai_execution SET lease_until=CURRENT_TIMESTAMP + (? * INTERVAL '1 second')"
+                    + " WHERE id=?", leaseSeconds, id);
         Map<String,Object> updated = one("SELECT lease_until::text AS \"leaseUntil\" FROM ai_execution WHERE id=?", id);
         return json.valueToTree(Map.of("executionId", id, "generation", generation, "leaseUntil", updated.get("leaseUntil")));
+    }
+
+    private int validatedWorkerLeaseSeconds() {
+        if (workerLeaseSeconds < 10 || workerLeaseSeconds > 3600)
+            throw new IllegalStateException("labeling.ai.worker-lease-seconds 必须在 10 到 3600 秒之间");
+        return workerLeaseSeconds;
     }
 
     @Transactional
@@ -661,16 +746,18 @@ WHERE si.submission_id=? AND si.sample_id=? AND s.project_id=? AND s.spec_versio
         return rows;
     }
 
-    private void checkClaimConflict(UUID project, List<UUID> sampleIds) {
-        checkClaimConflict(project, sampleIds, null);
-    }
     private void checkClaimConflict(UUID project, List<UUID> sampleIds, UUID groupId) {
+        checkClaimConflict(project, sampleIds, groupId, null);
+    }
+    private void checkClaimConflict(UUID project, List<UUID> sampleIds, UUID groupId, UUID exceptRoundId) {
         Set<UUID> wanted = new HashSet<>(sampleIds);
         var claimed = db.queryForList(
                         """
 SELECT c.sample_id FROM sample_work_claim c JOIN publication_round r ON r.id=c.round_id
-WHERE r.status='OPEN' AND c.project_id=? AND (CAST(? AS uuid) IS NULL OR r.publication_group_id IS DISTINCT FROM CAST(? AS uuid))
-""", project, groupId, groupId);
+WHERE r.status='OPEN' AND c.project_id=?
+  AND (?::uuid IS NULL OR r.publication_group_id IS DISTINCT FROM ?::uuid)
+  AND (?::uuid IS NULL OR r.id<>?::uuid)
+""", project, groupId, groupId, exceptRoundId, exceptRoundId);
         for (var row : claimed) if (wanted.contains((UUID) row.get("sample_id"))) throw error(409,"SAMPLE_BUSY","所选样本存在进行中的轮次");
     }
 
@@ -723,13 +810,91 @@ WHERE r.status='OPEN' AND c.project_id=? AND (CAST(? AS uuid) IS NULL OR r.publi
                     + " pending_count=0, cancelled_count=?, revision=revision+1,"
                     + " ended_at=CURRENT_TIMESTAMP WHERE id=?",
                 status, success, failed, cancelled, id);
-        db.update("UPDATE publication_round SET status=?, revision=revision+1 WHERE id=?",
-                "CANCELLED".equals(status) ? "CANCELLED" : "CLOSED", e.get("round_id"));
-        db.update("DELETE FROM sample_work_claim WHERE round_id=?", e.get("round_id"));
+        Map<String, Object> dimensions = Map.of(
+                "modelVersion", e.get("model_version"),
+                "executionStatus", status,
+                "successCount", success,
+                "failedCount", failed,
+                "cancelledCount", cancelled);
+        usageEvents.record(
+                "ai-execution:" + id + ":finished",
+                (UUID) e.get("project_id"),
+                (UUID) e.get("agent_actor_id"),
+                "ai.execution.finished",
+                1,
+                "execution",
+                "AI_EXECUTION",
+                id,
+                (String) e.get("annotator_provider_id"),
+                (String) e.get("annotator_provider_version"),
+                (String) e.get("annotator_type"),
+                dimensions);
+        usageEvents.record(
+                "ai-execution:" + id + ":succeeded",
+                (UUID) e.get("project_id"),
+                (UUID) e.get("agent_actor_id"),
+                "ai.samples.succeeded",
+                success,
+                "sample",
+                "AI_EXECUTION",
+                id,
+                (String) e.get("annotator_provider_id"),
+                (String) e.get("annotator_provider_version"),
+                (String) e.get("annotator_type"),
+                dimensions);
+        usageEvents.record(
+                "ai-execution:" + id + ":failed",
+                (UUID) e.get("project_id"),
+                (UUID) e.get("agent_actor_id"),
+                "ai.samples.failed",
+                failed,
+                "sample",
+                "AI_EXECUTION",
+                id,
+                (String) e.get("annotator_provider_id"),
+                (String) e.get("annotator_provider_version"),
+                (String) e.get("annotator_type"),
+                dimensions);
+        usageEvents.record(
+                "ai-execution:" + id + ":cancelled",
+                (UUID) e.get("project_id"),
+                (UUID) e.get("agent_actor_id"),
+                "ai.samples.cancelled",
+                cancelled,
+                "sample",
+                "AI_EXECUTION",
+                id,
+                (String) e.get("annotator_provider_id"),
+                (String) e.get("annotator_provider_version"),
+                (String) e.get("annotator_type"),
+                dimensions);
+        boolean unfinished = Boolean.TRUE.equals(db.queryForObject(
+                "SELECT EXISTS(SELECT 1 FROM ai_execution WHERE round_id=? AND status NOT IN"
+                        + " ('SUCCEEDED','PARTIAL','FAILED','CANCELLED'))",
+                Boolean.class, e.get("round_id")));
+        boolean humanActive = Boolean.TRUE.equals(db.queryForObject(
+                "SELECT EXISTS(SELECT 1 FROM assignment WHERE round_id=? AND status IN ('CLAIMED','IN_PROGRESS'))",
+                Boolean.class, e.get("round_id")));
+        boolean humanClaimable = Boolean.TRUE.equals(db.queryForObject(
+                "SELECT EXISTS(SELECT 1 FROM package_slot s WHERE s.round_id=? AND NOT EXISTS"
+                        + " (SELECT 1 FROM assignment a WHERE a.slot_id=s.id AND a.status='SUBMITTED'))",
+                Boolean.class, e.get("round_id")));
+        if (!unfinished && !humanActive && !humanClaimable) {
+            boolean hasNonCancelled = Boolean.TRUE.equals(db.queryForObject(
+                    "SELECT EXISTS(SELECT 1 FROM ai_execution WHERE round_id=? AND status<>'CANCELLED')",
+                    Boolean.class, e.get("round_id")));
+            db.update("UPDATE publication_round SET status=?, revision=revision+1 WHERE id=?",
+                    hasNonCancelled ? "CLOSED" : "CANCELLED", e.get("round_id"));
+            db.update("DELETE FROM sample_work_claim WHERE round_id=?", e.get("round_id"));
+        }
     }
 
     private JsonNode execView(UUID id) {
-        Map<String,Object> e = one("SELECT * FROM ai_execution WHERE id=?", id);
+        Map<String,Object> e = one(
+                "SELECT e.*,a.id AS agent_config_id,a.display_name AS agent_display_name"
+                        + " FROM ai_execution e LEFT JOIN ai_agent_config a ON a.actor_id=e.agent_actor_id"
+                        + " AND a.model_version=e.model_version WHERE e.id=?",
+                id);
         long sampleCount = db.query("SELECT count(*) FROM round_item WHERE round_id=?", rs -> rs.next() ? rs.getLong(1) : 0L, e.get("round_id"));
         boolean terminal = TERMINAL.contains(e.get("status"));
         UUID snapshotId = terminal ? (UUID) db.queryForObject(
@@ -745,8 +910,13 @@ WHERE r.status='OPEN' AND c.project_id=? AND (CAST(? AS uuid) IS NULL OR r.publi
         out.put("roundId", e.get("round_id"));
         out.put("projectId", e.get("project_id"));
         out.put("specVersionId", e.get("spec_version_id"));
-        out.put("agentId", e.get("agent_actor_id"));
+        out.put("agentId", e.get("agent_config_id"));
+        out.put("agentActorId", e.get("agent_actor_id"));
+        out.put("agentDisplayName", e.get("agent_display_name"));
         out.put("modelVersion", e.get("model_version"));
+        out.put("annotatorProviderId", e.get("annotator_provider_id"));
+        out.put("annotatorProviderVersion", e.get("annotator_provider_version"));
+        out.put("annotatorType", e.get("annotator_type"));
         out.put("status", e.get("status"));
         out.put("revision", e.get("revision"));
         out.put("generation", e.get("generation"));
@@ -772,6 +942,9 @@ WHERE r.status='OPEN' AND c.project_id=? AND (CAST(? AS uuid) IS NULL OR r.publi
         Map<String,Object> out = new LinkedHashMap<>();
         out.put("executionId", id);
         out.put("generation", e.get("generation"));
+        out.put("annotatorProviderId", e.get("annotator_provider_id"));
+        out.put("annotatorProviderVersion", e.get("annotator_provider_version"));
+        out.put("annotatorType", e.get("annotator_type"));
         out.put("leaseUntil", e.get("lease_until"));
         out.put("specVersionId", e.get("spec_version_id"));
         out.put("labels", read((String) e.get("labels")));
@@ -876,13 +1049,19 @@ WHERE r.status='OPEN' AND c.project_id=? AND (CAST(? AS uuid) IS NULL OR r.publi
     public record CreateInput(UUID specVersionId, UUID agentId, List<SelectionSample> samples, String instructions,
             UUID selectionId,
             String referenceMode,
-            Boolean reopenAccepted) {
+            Boolean reopenAccepted,
+            UUID roundId) {
+        public CreateInput(UUID specVersionId, UUID agentId, List<SelectionSample> samples, String instructions,
+                UUID selectionId, String referenceMode, Boolean reopenAccepted) {
+            this(specVersionId, agentId, samples, instructions, selectionId, referenceMode, reopenAccepted, null);
+        }
+
         public CreateInput(
                 UUID specVersionId,
                 UUID agentId,
                 List<SelectionSample> samples,
                 String instructions) {
-            this(specVersionId, agentId, samples, instructions, null, null, null);
+            this(specVersionId, agentId, samples, instructions, null, null, null, null);
         }
     }
 

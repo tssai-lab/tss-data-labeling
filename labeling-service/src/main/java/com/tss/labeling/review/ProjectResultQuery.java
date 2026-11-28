@@ -53,9 +53,13 @@ WITH scope AS (
            COALESCE(candidate.candidate_count, 0) AS "candidateCount",
            candidate.result_id AS "resultId", candidate.result::text AS result,
            candidate.source_kind AS "sourceKind", candidate.source_actor AS "sourceActor",
+           source_actor.display_name AS "sourceActorName",
            candidate.submission_id AS "submissionId", candidate.package_id AS "packageId", candidate.assignment_id AS "assignmentId",
            candidate.round_id AS "roundId", candidate.execution_id AS "executionId",
            candidate.model_version AS "modelVersion", candidate.confidence, candidate.band,
+           candidate.annotator_provider_id AS "annotatorProviderId",
+           candidate.annotator_provider_version AS "annotatorProviderVersion",
+           candidate.annotator_type AS "annotatorType",
            failed.error_code AS "errorCode"
     FROM scope x
     LEFT JOIN LATERAL (
@@ -85,6 +89,7 @@ WITH scope AS (
         ORDER BY (c.result_id=selected.result_id) DESC NULLS LAST, c.result_id
         LIMIT 1
     ) candidate ON true
+    LEFT JOIN actor source_actor ON source_actor.id=candidate.source_actor
     LEFT JOIN ai_item_output failed ON failed.execution_id=:executionId
         AND failed.sample_id=x.id AND failed.status='FAILED'
 ), filtered AS (

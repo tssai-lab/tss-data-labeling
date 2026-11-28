@@ -8,7 +8,11 @@ import java.util.*;
 public class TaskPluginRegistry {
     private final Map<String, TaskPlugin> versions = new LinkedHashMap<>();
     private final Map<String, TaskPlugin> defaults = new LinkedHashMap<>();
-    public TaskPluginRegistry(List<TaskPlugin> plugins) {
+    private final TaskCapabilityRegistry capabilities;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public TaskPluginRegistry(List<TaskPlugin> plugins, TaskCapabilityRegistry capabilities) {
+        this.capabilities = capabilities;
         for (TaskPlugin plugin : plugins) {
             var d = plugin.descriptor();
             if (versions.putIfAbsent(d.id() + "@" + d.version(), plugin) != null)
@@ -20,15 +24,22 @@ public class TaskPluginRegistry {
         }
         if (versions.isEmpty()) throw new IllegalStateException("至少需要注册一个任务插件");
     }
+
+    public TaskPluginRegistry(List<TaskPlugin> plugins) {
+        this(plugins, new TaskCapabilityRegistry());
+    }
     public List<Map<String, Object>> templates() {
         return versions.values().stream().map(plugin -> {
             var d = plugin.descriptor();
             var view = new LinkedHashMap<>(d.binding());
-            view.put("name", d.name()); view.put("enabled", d.enabled() && d.capabilities().ready());
-            view.put("capabilities", d.capabilities()); view.put("schemaDigest", d.digest());
+            var capabilityList = capabilities.describe(d.capabilities());
+            view.put("name", d.name()); view.put("enabled", d.enabled() && capabilities.ready(d.capabilities()));
+            view.put("capabilities", d.capabilities());
+            view.put("capabilityContracts", capabilityList);
+            view.put("schemaDigest", d.digest());
             view.put("defaultVersion", d.defaultVersion()); view.put("exportFormats", plugin.exportFormats());
             // 保留旧契约以处理历史项目，新界面仅开放通用数据类型入口。
-            view.put("creationAvailable", d.enabled() && d.capabilities().ready()
+            view.put("creationAvailable", d.enabled() && capabilities.ready(d.capabilities())
                     && !Set.of("IMAGE_CLASSIFICATION", "TIMESERIES_ANNOTATION").contains(d.taskType()));
             return (Map<String, Object>) view;
         }).toList();
@@ -49,7 +60,7 @@ public class TaskPluginRegistry {
         return writable(plugin);
     }
     public TaskPlugin writable(TaskPlugin plugin) {
-        if (!plugin.descriptor().enabled() || !plugin.descriptor().capabilities().ready())
+        if (!plugin.descriptor().enabled() || !capabilities.ready(plugin.descriptor().capabilities()))
             throw error(422, "TEMPLATE_UNSUPPORTED", "插件尚未启用或必要能力未就绪");
         return plugin;
     }

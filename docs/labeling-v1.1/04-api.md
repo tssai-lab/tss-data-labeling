@@ -280,7 +280,7 @@ node examples/image-import.mjs $projectId $imageZip $downloadDir
 
 | 接口 | 请求 | 响应 |
 |---|---|---|
-| POST /projects/{id}/package-plans | batchId 或 samples[]（二选一）、specVersionId、packageSize、annotatorsPerSample、instructions，幂等键 | 201 planId、status、selectionHash、sampleCount、packageSampleCounts、totalWorkload、packages |
+| POST /projects/{id}/package-plans | batchId 或 samples[]（二选一）、specVersionId、packageSize、annotatorRoster（新）；兼容 executionMode、annotatorsPerSample、aiAgentIds、instructions，幂等键 | 201 返回 planId、执行清单、冻结的 assignmentPolicy 和 workflowSnapshot，以及样本/包信息 |
 | GET /package-plans/{id} | owner | 计划对象 |
 | POST /package-plans/{id}/publish | selectionHash，幂等键 | 200，PUBLISHED 与包列表（含 packageId/roundId）；首次使项目 OPEN |
 | GET /task-pool?taskType=IMAGE_CLASSIFICATION | 启用人工，limit/cursor | 包摘要、sampleCount、requiredCount、roundId、remainingSlots，无原图和答案 |
@@ -289,7 +289,7 @@ node examples/image-import.mjs $projectId $imageZip $downloadDir
 | GET /assignments/{id}/items | 本人领取 | assignmentId、packageId、roundId、status、readOnly、specification、items（含 referenceResult）、nextCursor |
 | GET /assignments/{id}/samples/{sampleId}/file | 本人有权范围 | 授权原图流 |
 
-packageSize 默认10，人数默认1。当前实现支持多席位，但本轮产品默认只开放1人；任务成员和规范冻结。同人重复领取 ALREADY_CLAIMED、满额 SLOT_FULL。当前同包行锁串行，不宣称已实现 SKIP LOCKED。同一样本同一时间只能属于一个 OPEN 轮次，重叠发布 409 SAMPLE_BUSY。
+packageSize 默认10，执行模式默认纯人工、人工人数默认1。发布前可选纯人工、纯 AI 或人工 + AI，并自定义每样本人工人数和 AI Agent 数（每轮最多10个Agent）；任务成员、执行模式和规范在确认发布后冻结。同人重复领取 ALREADY_CLAIMED、满额 SLOT_FULL。当前同包行锁串行，不宣称已实现 SKIP LOCKED。同一样本同一时间只能属于一个 OPEN 轮次，重叠发布 409 SAMPLE_BUSY。
 
 ## 5. 人工草稿与整包提交（已有）
 
@@ -321,7 +321,7 @@ POST /assignments/{id}/release（本人）和 POST /admin/assignments/{id}/revok
 
 ## 6. 人工范围选择、打包与再发布
 
-发布轮次由 `publication_round` 表示：首次发布和再次发布都会冻结本轮样本范围（`round_item`），同一样本同一时间只能属于一个 OPEN 轮次（`sample_work_claim`）。本轮全部提交后轮次自动关闭并释放样本占用，需求方即可再次发布这些样本。历史结果不覆盖。
+发布轮次由 `publication_round` 表示：首次发布和再次发布都会冻结本轮样本范围（`round_item`），同一样本同一时间只能属于一个 OPEN 轮次（`sample_work_claim`）。AI 可加入开放的人工轮次并将其转为 `MIXED`，共用任务包、样本范围和占用记录。本轮所有人工席位和 AI 执行都结束后才自动关闭并释放样本占用；历史结果不覆盖。
 
 选择快照 `result_selection` 的创建和预览见第 8 节。按范围发布同时支持显式 `samples[]` 和固定 `selectionId`，后者在 publish 时再次校验。
 
@@ -329,7 +329,7 @@ POST /assignments/{id}/release（本人）和 POST /admin/assignments/{id}/revok
 
 POST /projects/{id}/package-plans，owner、幂等键，`batchId`、`samples`、`selectionId` 三选一：
 
-首次发布：
+首次发布（兼容的纯人工请求）：
 
 ```json
 {"batchId":"<UUID>","specVersionId":"<UUID>","packageSize":10,"annotatorsPerSample":1}
@@ -347,6 +347,8 @@ POST /projects/{id}/package-plans，owner、幂等键，`batchId`、`samples`、
 }
 ```
 
+需要 AI 时，请在计划创建请求中一并提交 `executionMode` 和 `aiAgentIds`。例如混合执行：`{"executionMode":"MIXED","annotatorsPerSample":2,"aiAgentIds":["<Agent UUID>"]}` 表示每个样本由 2 名人工作业和 1 个 AI Agent 处理。纯 AI 使用 `executionMode:"AI_AGENT"`、`annotatorsPerSample:0`；纯人工使用 `executionMode:"HUMAN_POOL"`、空 Agent 数组。确认发布时，这些执行单元会与人工/AI共用同一发布轮次和样本范围创建，不需要发布后再补加。
+
 `referenceResultId` 指向同一项目内该样本的已提交结果（submission ID），作为下一轮参考，不自动计入本轮完成。新参考字段 `referenceCandidateId` 使用真正的 resultId，可引用 HUMAN/AI/OWNER/AGGREGATION 的不可变答案；不得与旧 referenceResultId 同时传。两种参考都必须属于同一项目、样本和规范。计划预览返回 projectId、specVersionId、sampleCount、packageSampleCounts、selectionHash、packages；publish 后创建包及各自 HUMAN_POOL round，返回各 packageId/roundId。
 
 ### 6.2 在同一人工包再次发布
@@ -359,7 +361,7 @@ GET /assignments/{id}/items 返回 roundId 和每样本 referenceResult（result
 
 GET /rounds/{id}：owner 或本轮参与者；返回 mode、status、specVersionId、packageId、roundNo、sampleCount、submittedCount、revision。
 
-POST /rounds/{id}/claims：仅人工轮次，空body＋幂等键，当前身份原子领取，201 assignmentId/roundId/packageId/slotNo/status/revision。AI 轮次 422 INVALID_EXECUTION_MODE。
+POST /rounds/{id}/claims：人工或混合轮次，空body＋幂等键，当前身份原子领取，201 assignmentId/roundId/packageId/slotNo/status/revision。纯 AI 轮次 422 INVALID_EXECUTION_MODE。
 
 POST /rounds/{id}/cancel：owner，baseRevision、reason；结束活动工作、释放样本占用并拒绝迟到写入（有已提交时状态为 CLOSED，否则 CANCELLED）。已提交结果不撤回。重叠活动范围 409 SAMPLE_BUSY。
 
@@ -369,7 +371,7 @@ POST /rounds/{id}/cancel：owner，baseRevision、reason；结束活动工作、
 
 ### 7.1 Agent 与创建执行
 
-GET /agents?taskType=IMAGE_CLASSIFICATION：data 是数组，含 agentId、displayName、taskType（单数）、modelVersion、supportsReference、confidenceDescription、enabled；不含模型密钥。服务端仍需校验能力和规范匹配。
+GET /agents?taskType=IMAGE_CLASSIFICATION：data 是数组，含 agentId、displayName、taskType（单数）、modelVersion、supportsReference、confidenceDescription、enabled、providerId、providerVersion、annotatorType 和 capabilities；不含模型密钥。服务端仍需校验能力和规范匹配。
 
 注册 Agent 时 `capabilities` 可省略（按空对象保存），`supportedLabels` 可省略（按空数组保存）；非对象/数组分别返回422 `INVALID_AGENT_CONFIG`。Worker 凭据摘要全局唯一，重复密钥拒绝注册。
 
@@ -385,7 +387,9 @@ POST /projects/{id}/ai-executions，owner、幂等键，无需 packageId/assignm
 }
 ```
 
-202 返回 executionId、roundId、status=QUEUED、sampleCount、modelVersion、revision。AI 创建同样支持 reopenAccepted（false 阻止重开已确认样本，省略兼容旧行为）；selectionId 与显式 samples 二选一。选样可来自未打包数据、多个已结束人工包；项目、规范、参考结果和活动占用需校验。模型不支持参考模式时422 REFERENCE_UNSUPPORTED，不静默忽略参考。
+202 返回 executionId、roundId、status=QUEUED、sampleCount、modelVersion、revision，以及冻结的 annotatorProviderId、annotatorProviderVersion、annotatorType。AI 创建同样支持 reopenAccepted（false 阻止重开已确认样本，省略兼容旧行为）；selectionId 与显式 samples 二选一。选样可来自未打包数据、多个已结束人工包；项目、规范、参考结果和活动占用需校验。模型不支持参考模式时422 REFERENCE_UNSUPPORTED，不静默忽略参考。
+
+AI 也可在发布前通过 `POST /projects/{id}/package-plans` 固定到本轮：`executionMode` 取 `HUMAN_POOL`、`AI_AGENT` 或 `MIXED`，`annotatorsPerSample` 是每样本人工人数（纯 AI 固定为 0），`aiAgentIds` 是本轮 Agent ID 列表（纯人工传空数组）。纯人工要求人数大于 0 且 Agent 列表为空；纯 AI 要求人数为 0 且至少一个 Agent；混合要求两者都大于 0。每轮最多 10 个不同 Agent。计划预览返回执行模式、人工人数、Agent ID、各轮样本数和工作量；确认发布时在同一事务中创建对应人工席位和 AI 执行，全部绑定同一轮冻结的样本与规范。省略新字段仍按旧兼容规则创建纯人工计划。混合轮次在人工席位和全部 AI 执行都结束后关闭；正在执行 AI 时不能取消整个混合轮次。纯 AI 轮次不创建人工任务包，但仍有独立发布轮次和 AI 执行记录。
 
 GET /ai-executions/{id}，owner：返回上述字段及 revision、successCount/failedCount/pendingCount/cancelledCount、errorSummary、resultSnapshotId（未终结为null）。`errorSummary` 为 `{failedCount, byCode:[{errorCode,count}]}`，不返回可能含敏感信息的逐条错误文本；详细失败原因在结果列表中按权限查看。SUCCEEDED/PARTIAL/FAILED/CANCELLED 为终态。批次终结时固定成功结果和失败清单；PARTIAL 的成功结果可以先交需求方处理，失败项由需求方之后决定重试、换 Agent 或转人工。批次终态只表示 AI 已交回，不表示需求方审核通过或整个任务完成。
 
@@ -604,7 +608,7 @@ POST `/projects/{id}/final-snapshots`，owner + 幂等键：`{name,specVersionId
 
 ## 10. 批量结果集成（已实现）
 
-GET `/aggregation-algorithms`：启用用户；返回数组，当前仅 `majority-vote-v1`，图片分类、至少两名独立参与者、严格过半。GET 不运行集成。
+GET `/aggregation-algorithms?taskType=IMAGE_CLASSIFICATION`：启用用户；从结果集成策略注册表返回算法目录，可按任务类型筛选，省略筛选时返回全部已注册算法。目录包含参数 JSON Schema。当前内置 `majority-vote-v1`，适用于 `IMAGE_CLASSIFICATION` / `image-classification-v1`，至少两名独立参与者，严格过半；可设置 `minimumVotes`（2—100）。GET 不运行集成。
 
 POST `/projects/{id}/aggregations`，owner + 幂等键：
 
@@ -612,9 +616,11 @@ POST `/projects/{id}/aggregations`，owner + 幂等键：
 {"algorithmId":"majority-vote-v1","specVersionId":"<UUID>","items":[{"sampleId":"<UUID>","resultIds":["<答案UUID1>","<答案UUID2>"]}]}
 ```
 
-有界同步计算，201 `{aggregationId,projectId,specVersionId,algorithmId,status:"SUCCEEDED",createdAt}`；每次最多10000个不同样本，每样本1—100个明确当前答案。不接受演示 inputs/parameters 字段作为实际输入。每样本同 sourceActor 只能一票，重复结果、同一参与者跨轮次答案、OWNER/AGGREGATION 派生答案均422 DUPLICATE_SOURCE。输入及所有投票持久保存。
+有界同步计算，201 返回作业标识、状态及所选参数；每次最多10000个不同样本，每样本1—100个明确当前答案。服务依据规范冻结的任务类型和结果格式查找算法实现，并校验参数 Schema。每样本同 sourceActor 只能一票，重复结果、同一参与者跨轮次答案、该算法不接受的来源以及 OWNER/AGGREGATION 派生答案均422。输入、参数及策略返回的证据持久保存。
 
-GET `/aggregations/{id}` 返回上述作业；GET `/aggregations/{id}/items?limit&cursor` 返回 `{sampleId,resultId,outcome,votes,result}`。outcome 为 SUGGESTED/TIE/INSUFFICIENT_INPUT；少于两名参与者不给建议；没有严格过半（含平票）不给建议。resultId/result 此时为 null。建议是 AGGREGATION 候选，不能当成已接受成果；需 owner 用9.2明确审核。votes 是各 labelId 的票数，不是模型 confidence。
+发布计划可提交提供方清单：`{"annotatorRoster":[{"providerId":"human-pool","providerVersion":"1.0.0","count":2,"agentIds":[]},{"providerId":"ai-agent-worker","providerVersion":"1.0.0","count":1,"agentIds":["<Agent UUID>"]}]}`。计划会冻结清单及版本。V35 的 `assignmentPolicy` 和 `workflowSnapshot` 记录当前运行规则与阶段，属于可审计的计划快照；本版本仍只执行开放领取和现有标准工作流，不接受任意客户端传入的新运行规则。
+
+GET `/aggregations/{id}` 返回上述作业；GET `/aggregations/{id}/items?limit&cursor` 返回 `{sampleId,resultId,outcome,votes,result}`。当前 `majority-vote-v1` 的 outcome 为 SUGGESTED/TIE/INSUFFICIENT_INPUT；少于两名参与者不给建议；没有严格过半（含平票）不给建议。resultId/result 此时为 null。`votes` 是策略产生的证据；对当前多数投票实现，它是各 labelId 的票数，不是模型 confidence。建议是 AGGREGATION 候选，不能当成已接受成果；需 owner 用9.2明确审核。
 
 ## 11. 正式成果导出（已实现）
 
@@ -661,7 +667,7 @@ GET `/exports/{id}/download` 每次重新检查 owner，返回真正 `applicatio
 
 AI链路：上传READY→选择样本（不用包）→agents→ai-executions→轮询至终态→看结果→手动policy→选择快照预览→reviews→final-snapshots→exports。
 
-混合链路：AI结束→owner选择待修正结果→打人工包并携带参考→领取且整包提交→owner审核；反向为人工提交后选样创建AI批次。最终验收必须有真实模型和真实接口，不能用Mock或旧编辑器服务代替。
+混合链路：发布前选择人工 + AI、设置每样本人数及 Agent → 预览并发布为同一轮 → 人工领取与 AI 执行共用冻结样本 → 人工提交、AI 回报 → owner 审核各来源结果。后续也可独立选择结果进行重标或补充 AI 执行。最终验收必须有真实模型和真实接口，不能用 Mock 或旧编辑器服务代替。
 
 ## 14. 历史审查记录
 
@@ -695,9 +701,13 @@ GET `/task-templates`：启用身份，data 为内置模板数组；字段 templ
 
 `GET /task-templates` 现在由后端 `TaskPluginRegistry` 产生，包含已登记插件的 `name`、五项 `capabilities`、有效 `enabled`、`defaultVersion`、`schemaDigest` 与 `exportFormats`，并保留已有模板标识和格式字段。前端创建项目必须同时检查后端能力及本地组件版本；未知版本不能回退。
 
+`GET /annotator-providers` 返回随服务注册的标注员执行提供方描述。首批为 `human-pool@1.0.0`（HUMAN/HUMAN_POOL）和 `ai-agent-worker@1.0.0`（MODEL/AI_AGENT）。Agent 列表额外返回提供方 ID/版本、标注员类型及能力描述。同一轮最多可添加 10 个模型 Agent；混合轮次通过 `MIXED` 模式同时保留人工席位和 AI 执行。
+
+`GET /aggregation-algorithms?taskType=...` 返回已注册结果集成策略描述。策略按 algorithmId、任务类型和结果格式精确匹配；当前 `majority-vote-v1` 仅处理图片单标签结果。新策略的证据存入现有 `aggregation_item.votes` 字段，响应结构兼容现有作业与条目接口。
+
 2026-11-21 新增 `creationAvailable`，表示当前项目创建界面是否开放此契约。新项目仅选择 `COMPUTER_VISION`（图像标注）或 `TIME_SERIES`（时序标注），分别绑定 `computer-vision@1.0.0`、`time-series@1.0.0`。`IMAGE_CLASSIFICATION` 和 `TIMESERIES_ANNOTATION` 目录项保留且 `creationAvailable=false`，用于历史项目及旧客户端兼容；不改其冻结格式。具体分类、框选、时间点/区间由后续规范中的模板/XML 配置，业务细分不注册为独立项目类型。`GET /label-configs/task-types` 返回两个通用类别。
 
-项目详情新增 `templateId`、`templateVersion`；创建项目传入这两个字段后，由 V24 持久绑定。导入批次也在创建时固定版本。历史规范和成果继续按其冻结版本读取与校验，修改规范不覆盖旧版本。不兼容输入 schema 的升级返回 `PLUGIN_INPUT_MIGRATION_REQUIRED`。
+项目详情新增 `templateId`、`templateVersion`；创建项目传入这两个字段后，由 V24 持久绑定。导入批次也在创建时固定版本。V28 冻结成果审核来源，V29 支持同一发布组并行发布；V30 将标注员提供方版本固定到提交、AI 执行和成果快照，V31 允许同一 AI 轮次包含多个独立 Agent 执行，V32 支持人工与 AI 共用一轮。历史规范和成果继续按其冻结版本读取与校验，修改规范不覆盖旧版本。不兼容输入 schema 的升级返回 `PLUGIN_INPUT_MIGRATION_REQUIRED`。
 
 开发说明、接口边界与新增插件步骤见 [24-task-plugins.md](08-task-plugins.md)。此机制只运行随平台发布的可信代码，不提供上传后执行任意代码的接口。
 

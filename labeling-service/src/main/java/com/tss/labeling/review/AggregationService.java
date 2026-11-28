@@ -5,6 +5,7 @@ import static com.tss.labeling.common.WorkflowStore.error;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.tss.labeling.common.WorkflowStore;
 import com.tss.labeling.identity.ActorService.ActorContext;
+import com.tss.labeling.plugins.TaskPluginRegistry;
 
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -15,15 +16,24 @@ import java.util.*;
 public class AggregationService {
     private final WorkflowStore s;
     private final ResultScopeService scopes;
+    private final ResultAggregationRegistry strategies;
+    private final TaskPluginRegistry plugins;
 
-    public AggregationService(WorkflowStore s, ResultScopeService scopes) {
+    public AggregationService(WorkflowStore s, ResultScopeService scopes, ResultAggregationRegistry strategies,
+                              TaskPluginRegistry plugins) {
         this.s = s;
         this.scopes = scopes;
+        this.strategies = strategies;
+        this.plugins = plugins;
     }
 
     public record SampleInput(UUID sampleId, List<UUID> resultIds) {}
 
-    public record Input(UUID specVersionId, String algorithmId, List<SampleInput> items) {}
+    public record Input(UUID specVersionId, String algorithmId, List<SampleInput> items, JsonNode parameters) {
+        public Input(UUID specVersionId, String algorithmId, List<SampleInput> items) {
+            this(specVersionId, algorithmId, items, null);
+        }
+    }
 
     @Transactional
     public JsonNode create(ActorContext actor, UUID project, Input input, String key) {
@@ -32,28 +42,36 @@ public class AggregationService {
         var replay = s.replay(actor, op, key, input);
         if (replay != null) return replay;
         WorkflowStore.requireMutable(projectState);
-        if (!"majority-vote-v1".equals(input.algorithmId()))
-            throw error(422, "UNSUPPORTED_ALGORITHM", "不支持该算法");
         var spec =
                 s.one(
-                        "SELECT task_type FROM spec_version WHERE id=? AND project_id=?",
+                        "SELECT * FROM spec_version WHERE id=? AND project_id=?",
                         input.specVersionId(),
                         project);
-        if (!"IMAGE_CLASSIFICATION".equals(spec.get("task_type")))
-            throw error(422, "UNSUPPORTED_FORMAT", "多数表决仅支持图片单标签分类");
+        String resultFormat = plugins.frozen(spec).descriptor().resultFormat();
+        ResultAggregationStrategy strategy = strategies.resolve(
+                input.algorithmId(), (String) spec.get("task_type"), resultFormat);
+        var descriptor = strategy.descriptor();
+        JsonNode parameters = input.parameters() == null || input.parameters().isNull()
+                ? s.json.createObjectNode() : input.parameters();
+        try {
+            strategy.validateParameters(parameters);
+        } catch (IllegalArgumentException invalid) {
+            throw error(422, "INVALID_AGGREGATION_PARAMETERS", invalid.getMessage());
+        }
         if (input.items() == null || input.items().isEmpty() || input.items().size() > 10000)
             throw error(422, "INVALID_REQUEST", "集成范围应为 1 至 10000 个样本");
         UUID id = UUID.randomUUID();
         s.db.update(
                 "INSERT INTO"
-                    + " aggregation_job(id,project_id,spec_version_id,algorithm,input_json,created_by,status)"
-                    + " VALUES (?,?,?,?,?::jsonb,?,'SUCCEEDED')",
+                    + " aggregation_job(id,project_id,spec_version_id,algorithm,input_json,created_by,status,parameters)"
+                    + " VALUES (?,?,?,?,?::jsonb,?,'SUCCEEDED',?::jsonb)",
                 id,
                 project,
                 input.specVersionId(),
                 input.algorithmId(),
                 s.write(input.items()),
-                actor.actorId());
+                actor.actorId(),
+                s.write(parameters));
         Set<UUID> samples = new HashSet<>();
         for (var item : input.items()) {
             if (item == null
@@ -64,27 +82,31 @@ public class AggregationService {
                     || item.resultIds().isEmpty())
                 throw error(422, "INVALID_REQUEST", "样本不可重复，每个样本需要 1 至 100 个明确答案");
             Set<UUID> actors = new HashSet<>(), ids = new HashSet<>();
-            Map<String, Integer> votes = new TreeMap<>();
+            List<ResultAggregationStrategy.Candidate> candidates = new ArrayList<>();
             for (UUID result : item.resultIds()) {
                 if (result == null || !ids.add(result))
                     throw error(422, "DUPLICATE_SOURCE", "答案不可重复");
                 var c = scopes.candidate(project, input.specVersionId(), item.sampleId(), result);
-                if (!Set.of("HUMAN", "AI").contains(c.get("source_kind"))
-                        || !actors.add((UUID) c.get("source_actor")))
+                String sourceKind = (String) c.get("source_kind");
+                UUID sourceActor = (UUID) c.get("source_actor");
+                if (sourceActor == null
+                        || !descriptor.acceptedSourceKinds().contains(sourceKind)
+                        || !actors.add(sourceActor))
                     throw error(422, "DUPLICATE_SOURCE", "每个独立参与者最多贡献一个原始答案，修订和集成结果不能计票");
-                String label = s.read((String) c.get("content")).path("labelId").asText();
-                votes.merge(label, 1, Integer::sum);
+                candidates.add(new ResultAggregationStrategy.Candidate(
+                        sourceActor, sourceKind, s.read((String) c.get("content"))));
             }
-            var winner =
-                    votes.entrySet().stream()
-                            .filter(e -> e.getValue() > actors.size() / 2)
-                            .findFirst();
-            String outcome =
-                    actors.size() < 2
-                            ? "INSUFFICIENT_INPUT"
-                            : winner.isEmpty() ? "TIE" : "SUGGESTED";
+            ResultAggregationStrategy.Evaluation evaluation = strategy.aggregate(candidates, parameters);
+            if (evaluation == null
+                    || evaluation.outcome() == null
+                    || !Set.of("SUGGESTED", "TIE", "INSUFFICIENT_INPUT").contains(evaluation.outcome())
+                    || evaluation.evidence() == null) {
+                throw error(500, "INVALID_AGGREGATION_RESULT", "集成策略返回了无效结果");
+            }
             UUID resultId = null;
-            if ("SUGGESTED".equals(outcome)) {
+            if ("SUGGESTED".equals(evaluation.outcome())) {
+                if (evaluation.result() == null || evaluation.result().isNull())
+                    throw error(500, "INVALID_AGGREGATION_RESULT", "集成策略未返回建议结果");
                 resultId = UUID.randomUUID();
                 s.db.update(
                         "INSERT INTO"
@@ -95,8 +117,8 @@ public class AggregationService {
                         input.specVersionId(),
                         item.sampleId(),
                         actor.actorId(),
-                        s.write(Map.of("labelId", winner.orElseThrow().getKey())),
-                        "majority-vote-v1:" + id);
+                        s.write(evaluation.result()),
+                        input.algorithmId() + ":" + id);
             }
             s.db.update(
                     "INSERT INTO aggregation_item(aggregation_id,sample_id,result_id,outcome,votes)"
@@ -104,8 +126,8 @@ public class AggregationService {
                     id,
                     item.sampleId(),
                     resultId,
-                    outcome,
-                    s.write(votes));
+                    evaluation.outcome(),
+                    s.write(evaluation.evidence()));
         }
         return s.remember(actor, op, key, input, id, view(actor, id));
     }
@@ -115,10 +137,11 @@ public class AggregationService {
         var job =
                 s.one(
                         "SELECT id AS \"aggregationId\",project_id AS \"projectId\",spec_version_id"
-                            + " AS \"specVersionId\",algorithm AS \"algorithmId\",status,created_at"
+                            + " AS \"specVersionId\",algorithm AS \"algorithmId\",parameters::text AS parameters,status,created_at"
                             + " AS \"createdAt\" FROM aggregation_job WHERE id=?",
                         id);
         s.owner(actor, (UUID) job.get("projectId"), false);
+        job.put("parameters", s.read((String) job.get("parameters")));
         return s.json.valueToTree(job);
     }
 

@@ -18,8 +18,17 @@ public class ResultService {
     private final JdbcTemplate db;
     private final ObjectMapper json;
     private final TaskResultValidator validator;
-    public ResultService(JdbcTemplate db, ObjectMapper json, TaskResultValidator validator) { this.db = db; this.json = json;
-        this.validator = validator; }
+    private final com.tss.labeling.annotators.AnnotatorProviderRegistry annotators;
+    private final com.tss.labeling.usage.UsageEventRecorder usageEvents;
+    public ResultService(JdbcTemplate db, ObjectMapper json, TaskResultValidator validator,
+            com.tss.labeling.annotators.AnnotatorProviderRegistry annotators,
+            com.tss.labeling.usage.UsageEventRecorder usageEvents) {
+        this.db = db;
+        this.json = json;
+        this.validator = validator;
+        this.annotators = annotators;
+        this.usageEvents = usageEvents;
+    }
 
     @Transactional
     public JsonNode save(ActorContext actor, UUID assignment, UUID sample, ResultController.DraftInput input) {
@@ -99,16 +108,32 @@ WHERE i.package_id=? ORDER BY i.sample_id
                     (UUID) row.get("sample_id"),(String)row.get("result_format"),read((String)row.get("result")),true);
         }
         UUID id=UUID.randomUUID();
+        var provider = annotators.forExecutionMode("HUMAN_POOL").descriptor();
         db.update(
                 """
-INSERT INTO submission(id,assignment_id,round_id,package_id,plan_id,project_id,spec_version_id,submitted_by,content_hash)
-VALUES (?,?,?,?,?,?,?,?,?)
-""",id,assignment,a.get("round_id"),a.get("package_id"),a.get("plan_id"),a.get("project_id"),a.get("spec_version_id"),actor.actorId(),hash(write(rows)));
+INSERT INTO submission(id,assignment_id,round_id,package_id,plan_id,project_id,spec_version_id,submitted_by,content_hash,
+  annotator_provider_id,annotator_provider_version,annotator_type)
+VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+""",id,assignment,a.get("round_id"),a.get("package_id"),a.get("plan_id"),a.get("project_id"),a.get("spec_version_id"),
+                actor.actorId(),hash(write(rows)),provider.id(),provider.version(),provider.annotatorType());
         db.update(
                 """
 INSERT INTO submission_item(submission_id,package_id,sample_id,draft_revision,result_format,result)
 SELECT ?,package_id,sample_id,revision,result_format,result FROM annotation_draft WHERE assignment_id=?
 """,id,assignment);
+        usageEvents.record(
+                "human-submission:" + id,
+                (UUID) a.get("project_id"),
+                actor.actorId(),
+                "annotation.samples.submitted",
+                rows.size(),
+                "sample",
+                "HUMAN_SUBMISSION",
+                id,
+                provider.id(),
+                provider.version(),
+                provider.annotatorType(),
+                Map.of("assignmentId", assignment, "roundId", a.get("round_id"), "packageId", a.get("package_id")));
         db.update(
                 "UPDATE assignment SET"
                     + " status='SUBMITTED',revision=revision+1,ended_at=CURRENT_TIMESTAMP WHERE"
@@ -129,6 +154,8 @@ SELECT ?,package_id,sample_id,revision,result_format,result FROM annotation_draf
                         """
 SELECT s.id AS "submissionId",s.assignment_id AS "assignmentId",s.package_id AS "packageId",
   s.project_id AS "projectId",s.spec_version_id AS "specVersionId",s.submitted_by AS "submittedBy",
+  s.annotator_provider_id AS "annotatorProviderId",s.annotator_provider_version AS "annotatorProviderVersion",
+  s.annotator_type AS "annotatorType",
   COALESCE(a.display_name, a.identity_user_id) AS "submittedByName",
   s.submitted_at::text AS "submittedAt",s.content_hash AS "contentHash"
 FROM submission s JOIN project p ON p.id=s.project_id
@@ -157,7 +184,9 @@ WHERE s.id=? AND (s.submitted_by=? OR p.owner_actor_id=?)
         var rows=db.queryForList(
                         "SELECT s.id AS \"submissionId\",s.assignment_id AS \"assignmentId\",s.package_id"
                             + " AS \"packageId\",s.submitted_by AS \"submittedBy\",COALESCE(a.display_name,a.identity_user_id)"
-                            + " AS \"submittedByName\",s.submitted_at::text AS \"submittedAt\""
+                            + " AS \"submittedByName\",s.annotator_provider_id AS \"annotatorProviderId\","
+                            + "s.annotator_provider_version AS \"annotatorProviderVersion\",s.annotator_type AS \"annotatorType\","
+                            + "s.submitted_at::text AS \"submittedAt\""
                             + " FROM submission s LEFT JOIN actor a ON a.id=s.submitted_by"
                             + " WHERE s.project_id=? AND s.id>? ORDER BY s.id LIMIT ?",project,after,limit+1);
         boolean more=rows.size()>limit;
@@ -196,7 +225,11 @@ WHERE a.id=? AND a.actor_id=?
                                 "SELECT EXISTS(SELECT 1 FROM package_slot s WHERE s.round_id=? AND"
                                     + " NOT EXISTS(SELECT 1 FROM assignment a WHERE a.slot_id=s.id"
                                     + " AND a.status='SUBMITTED'))", Boolean.class, roundId));
-        if (!active && !claimable) {
+        boolean aiActive = Boolean.TRUE.equals(db.queryForObject(
+                "SELECT EXISTS(SELECT 1 FROM ai_execution WHERE round_id=? AND status NOT IN"
+                        + " ('SUCCEEDED','PARTIAL','FAILED','CANCELLED'))",
+                Boolean.class, roundId));
+        if (!active && !claimable && !aiActive) {
             db.update(
                     "UPDATE publication_round SET status='CLOSED', revision=revision+1 WHERE id=?"
                         + " AND status='OPEN'", roundId);
