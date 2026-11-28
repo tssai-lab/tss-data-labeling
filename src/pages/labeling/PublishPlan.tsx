@@ -5,6 +5,8 @@ import {
   Card,
   Form,
   InputNumber,
+  Radio,
+  Select,
   Space,
   Table,
   Typography,
@@ -13,17 +15,20 @@ import { useEffect, useRef, useState } from 'react';
 import { describeLabelingError, operationKey } from '@/services/labeling';
 import type { Plan } from '@/services/labelingTasks';
 import { tasks } from '@/services/labelingTasks';
+import { type LiveAgent, ownerApi } from '@/services/labelingOwner';
 import ui from './workspaceUi.less';
 
 export default function PublishPlan({
   projectId,
   batchId,
+  taskType,
   specVersionId,
   writable,
   onPublished,
 }: {
   projectId: string;
   batchId: string;
+  taskType: string;
   specVersionId?: string;
   writable: boolean;
   onPublished: () => void;
@@ -34,9 +39,12 @@ export default function PublishPlan({
   const draftSpecChanged =
     plan?.status === 'DRAFT' && previewSpecId !== specVersionId;
   const incompatibleDraft =
-    plan?.status === 'DRAFT' && plan.totalWorkload !== plan.sampleCount;
+    plan?.status === 'DRAFT' && !plan.executionMode && plan.totalWorkload !== plan.sampleCount;
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [executionMode, setExecutionMode] = useState<'HUMAN_POOL' | 'AI_AGENT' | 'MIXED'>('HUMAN_POOL');
+  const [agents, setAgents] = useState<LiveAgent[]>([]);
+  const [aiAgentIds, setAiAgentIds] = useState<string[]>([]);
   const [form] = Form.useForm<{
     packageSize: number;
     annotatorsPerSample: number;
@@ -46,6 +54,15 @@ export default function PublishPlan({
   );
   const alive = useRef(true);
   const bookmark = `labeling:plan:${projectId}:${batchId}`;
+  useEffect(() => {
+    const abort = new AbortController();
+    void ownerApi.agents(abort.signal, taskType).then((value) => {
+      if (!abort.signal.aborted) setAgents(value.filter((agent) => agent.enabled));
+    }).catch((e) => {
+      if (!abort.signal.aborted) setError(describeLabelingError(e));
+    });
+    return () => abort.abort();
+  }, [projectId, taskType]);
   useEffect(() => {
     alive.current = true;
     const abort = new AbortController();
@@ -64,6 +81,11 @@ export default function PublishPlan({
             if (value.projectId !== projectId)
               throw new Error('计划不属于当前项目');
             setPlan(value);
+            setExecutionMode(value.executionMode || 'HUMAN_POOL');
+            setAiAgentIds(value.aiAgentIds || []);
+            form.setFieldsValue({
+              annotatorsPerSample: value.annotatorsPerSample ?? 1,
+            });
             if (value.status === 'PUBLISHED') onPublished();
             try {
               setPreviewSpecId(value.specVersionId);
@@ -83,7 +105,7 @@ export default function PublishPlan({
       alive.current = false;
       abort.abort();
     };
-  }, [bookmark]);
+  }, [bookmark, form]);
 
   async function preview() {
     if (!specVersionId || busyRef.current || busy || !writable) return;
@@ -93,7 +115,27 @@ export default function PublishPlan({
       busyRef.current = false;
       return;
     }
-    const body = { ...values, batchId, specVersionId };
+    if (executionMode !== 'HUMAN_POOL' && !aiAgentIds.length) {
+      setError('请选择至少一个 AI 标注员。');
+      busyRef.current = false;
+      return;
+    }
+    const body = {
+      ...values,
+      annotatorsPerSample: executionMode === 'AI_AGENT' ? 0 : values.annotatorsPerSample,
+      executionMode,
+      aiAgentIds: executionMode === 'HUMAN_POOL' ? [] : aiAgentIds,
+      annotatorRoster: [
+        ...(executionMode !== 'AI_AGENT'
+          ? [{ providerId: 'human-pool', providerVersion: '1.0.0', count: values.annotatorsPerSample, agentIds: [] }]
+          : []),
+        ...(executionMode !== 'HUMAN_POOL'
+          ? [{ providerId: 'ai-agent-worker', providerVersion: '1.0.0', count: aiAgentIds.length, agentIds: aiAgentIds }]
+          : []),
+      ],
+      batchId,
+      specVersionId,
+    };
     const payload = JSON.stringify(body);
     if (attempt.current?.payload !== payload)
       attempt.current = { payload, key: operationKey() };
@@ -169,8 +211,20 @@ export default function PublishPlan({
       </Typography.Paragraph>
       <Alert
         type="info"
-        message="每包由一名标注人领取并完整提交。默认每包 10 个样本，最后一包保留剩余样本；需要重新标注部分样本时，请到结果工作台选择。"
+        message="发布前选择纯人工、纯 AI 或人工 + AI，并设置每个样本的执行人数。"
       />
+      <Radio.Group
+        value={executionMode}
+        disabled={busy || !!plan}
+        onChange={(event) => {
+          setExecutionMode(event.target.value);
+          setError('');
+        }}
+      >
+        <Radio value="HUMAN_POOL">纯人工</Radio>
+        <Radio value="AI_AGENT">纯 AI</Radio>
+        <Radio value="MIXED">人工 + AI</Radio>
+      </Radio.Group>
       <div className={ui.twoColumns}>
         <section className={ui.section}>
           <h3>打包参数</h3>
@@ -194,13 +248,29 @@ export default function PublishPlan({
                   disabled={busy || !writable}
                 />
               </Form.Item>
-              <Form.Item
+              {executionMode !== 'AI_AGENT' && <Form.Item
                 name="annotatorsPerSample"
-                label="本轮每包人工人数"
+                label="每个样本的人工标注人数"
                 rules={[{ required: true }]}
               >
-                <InputNumber min={1} max={1} precision={0} disabled />
-              </Form.Item>
+                <InputNumber min={1} max={10} precision={0} disabled={busy || !writable} />
+              </Form.Item>}
+              {(executionMode === 'AI_AGENT' || executionMode === 'MIXED') && (
+                <Form.Item label="本轮 AI 标注员">
+                  <Select
+                    mode="multiple"
+                    maxCount={10}
+                    value={aiAgentIds}
+                    disabled={busy || !!plan}
+                    placeholder="选择 AI 标注员（最多 10 个）"
+                    onChange={setAiAgentIds}
+                    options={agents.map((agent) => ({
+                      value: agent.agentId,
+                      label: `${agent.displayName} · ${agent.modelVersion}`,
+                    }))}
+                  />
+                </Form.Item>
+              )}
               <Button
                 htmlType="submit"
                 loading={busy}
@@ -234,27 +304,38 @@ export default function PublishPlan({
           {plan && (
             <>
               <Typography.Paragraph style={{ marginTop: 20 }}>
-                共 {plan.sampleCount} 个样本，{plan.packageSampleCounts.length}{' '}
-                个任务包，总工作量 {plan.totalWorkload} 次标注。各包样本数：
+                本轮方式：{plan.executionMode === 'AI_AGENT' ? '纯 AI' : plan.executionMode === 'MIXED' ? '人工 + AI' : '纯人工'}；
+                共 {plan.sampleCount} 个样本，{plan.packages.length}{' '}
+                个任务轮次，总工作量 {plan.totalWorkload} 次执行。各轮样本数：
                 {plan.packageSampleCounts.join(' / ')}。
               </Typography.Paragraph>
+              <Typography.Paragraph type="secondary">
+                {plan.executionMode !== 'AI_AGENT' && `每个样本 ${plan.annotatorsPerSample ?? 1} 名人工作业`}
+                {plan.executionMode === 'MIXED' && '；'}
+                {plan.executionMode !== 'HUMAN_POOL' && `每个样本由 ${plan.aiAgentIds?.length ?? 0} 个 AI 标注员处理`}
+              </Typography.Paragraph>
+              {!!plan.aiExecutions?.length && (
+                <Typography.Paragraph type="secondary">
+                  已创建 {plan.aiExecutions.length} 个 AI 执行单元。
+                </Typography.Paragraph>
+              )}
               {plan.status === 'PUBLISHED' ? (
                 <>
                   <Alert
                     type="success"
                     showIcon
-                    message="任务包已发布，包成员和分类规范已冻结"
+                    message="任务已发布，标注员和分类规范已冻结"
                   />
                   <Table
                     size="small"
                     pagination={false}
-                    rowKey="packageId"
+                    rowKey="roundId"
                     scroll={{ x: 450 }}
                     dataSource={plan.packages}
                     columns={[
-                      { title: '包序号', dataIndex: 'sequenceNo' },
+                      { title: '轮次序号', dataIndex: 'sequenceNo' },
                       { title: '样本数', dataIndex: 'sampleCount' },
-                      { title: '标注人数', dataIndex: 'requiredCount' },
+                      { title: '每样本人工人数', dataIndex: 'requiredCount' },
                     ]}
                   />
                   <Link to="/labeling/tasks">前往任务广场领取</Link>

@@ -13,12 +13,13 @@ import {
 } from 'antd';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { operationKey, post } from '@/services/labeling';
+import { type LiveAgent, ownerApi } from '@/services/labelingOwner';
+import type { Plan } from '@/services/labelingTasks';
 import type {
   NativeProject,
   NativeSample,
   NativeSpec,
 } from '@/services/nativeLabeling';
-import NativeAi from './NativeAi';
 import ui from './workspaceUi.less';
 export type ReworkScope = {
   ids: string[];
@@ -38,18 +39,14 @@ export default function NativePublish({
   refresh,
   busy,
   initialSelection,
-  onPublishAi,
+  onAiPublished,
   mode,
   onModeChange,
 }: {
-  mode: 'HUMAN' | 'AI';
-  onModeChange: (mode: 'HUMAN' | 'AI') => void;
+  mode: 'HUMAN' | 'AI' | 'MIXED';
+  onModeChange: (mode: 'HUMAN' | 'AI' | 'MIXED') => void;
   initialSelection?: string[];
-  onPublishAi: (
-    samples: NativeSample[],
-    version: NativeSpec,
-    config: { modelId: string; instructions: string; reopenAccepted: boolean },
-  ) => void;
+  onAiPublished?: (samples: NativeSample[], version: NativeSpec, plan: Plan) => void;
   project: NativeProject;
   samples: NativeSample[];
   version?: NativeSpec;
@@ -66,13 +63,14 @@ export default function NativePublish({
   const [selected, setSelected] = useState<React.Key[]>([]),
     [size, setSize] = useState(10),
     [people, setPeople] = useState(1),
-    [plan, setPlan] = useState<any>(),
-    [publishedPlan, setPublishedPlan] = useState<any>();
+    [plan, setPlan] = useState<Plan>(),
+    [publishedPlan, setPublishedPlan] = useState<Plan>();
+  const [agents, setAgents] = useState<LiveAgent[]>([]),
+    [agentIds, setAgentIds] = useState<string[]>([]);
   const [reopen, setReopen] = useState(false);
   const planAttempt = useRef<{ signature: string; key: string } | undefined>(
     undefined,
   );
-  const [aiPage, setAiPage] = useState(false);
   const [search, setSearch] = useState('');
   const [pageSize, setPageSize] = useState(10);
   const [reviewFilter, setReviewFilter] = useState('ALL');
@@ -144,41 +142,25 @@ export default function NativePublish({
     Boolean(version) &&
     selected.length > 0 &&
     selected.length <= 10000 &&
+    (mode === 'HUMAN' || people > 0) &&
+    (mode === 'HUMAN' || agentIds.length > 0) &&
     !busy;
+  const aiMode = mode === 'AI' ? 'AI_AGENT' : mode === 'MIXED' ? 'MIXED' : 'HUMAN_POOL';
   useEffect(() => {
     setSelected(rework?.ids || initialSelection || []);
     setPlan(undefined);
     setPublishedPlan(undefined);
-    setAiPage(false);
+    setAgentIds([]);
   }, [project.projectId, rework, version?.specVersionId, initialSelection]);
-  if (aiPage) {
-    return (
-      <div className={ui.aiConsole}>
-        <header className={ui.aiPageHeader}>
-          <div>
-            <span>
-              AI 标注 · 规范 v{version?.versionNo} · 已选{' '}
-              {selectedSamples.length} 个样本
-            </span>
-          </div>
-          <Button onClick={() => setAiPage(false)}>返回选择范围</Button>
-        </header>
-        <NativeAi
-          project={project}
-          selectedSamples={selectedSamples}
-          version={version}
-          submitting={busy}
-          onPublish={(config) => {
-            if (version)
-              onPublishAi(selectedSamples, version, {
-                ...config,
-                reopenAccepted: reopen,
-              });
-          }}
-        />
-      </div>
-    );
-  }
+  useEffect(() => {
+    const abort = new AbortController();
+    void ownerApi.agents(abort.signal, project.taskType).then((value) => {
+      if (!abort.signal.aborted) setAgents(value.filter((agent) => agent.enabled));
+    }).catch(() => {
+      if (!abort.signal.aborted) setAgents([]);
+    });
+    return () => abort.abort();
+  }, [project.projectId, project.taskType]);
   return (
     <Card>
       <Space direction="vertical" size="middle" style={{ width: '100%' }}>
@@ -187,13 +169,13 @@ export default function NativePublish({
           <Alert
             type="success"
             showIcon
-            message={`已发布 ${publishedPlan.packages.length} 个任务包，共 ${publishedPlan.sampleCount} 个样本`}
-            description={publishedPlan.packages
+            message={`已发布${publishedPlan.executionMode === 'AI_AGENT' ? '纯 AI' : publishedPlan.executionMode === 'MIXED' ? '人工 + AI' : '纯人工'}任务：${publishedPlan.packages.length} 个轮次，共 ${publishedPlan.sampleCount} 个样本`}
+            description={`${publishedPlan.executionMode !== 'AI_AGENT' ? `每样本 ${publishedPlan.annotatorsPerSample ?? 1} 名人工作业；` : ''}${publishedPlan.aiExecutions?.length ? `已创建 ${publishedPlan.aiExecutions.length} 个 AI 执行单元；` : ''}${publishedPlan.packages
               .map(
                 (pkg: { sequenceNo: number; sampleCount: number }) =>
-                  `第 ${pkg.sequenceNo} 包：${pkg.sampleCount} 个样本`,
+                  `第 ${pkg.sequenceNo} 轮：${pkg.sampleCount} 个样本`,
               )
-              .join('；')}
+              .join('；')}`}
           />
         )}
         {rework && (
@@ -218,21 +200,22 @@ export default function NativePublish({
           value={mode}
           onChange={(event) => {
             onModeChange(event.target.value);
-            setAiPage(false);
             setPlan(undefined);
             setPublishedPlan(undefined);
+            if (event.target.value === 'HUMAN') setAgentIds([]);
           }}
           disabled={locked || !!plan}
         >
           <Radio value="HUMAN">人工标注</Radio>
           <Radio value="AI">AI 标注</Radio>
+          <Radio value="MIXED">人工 + AI</Radio>
         </Radio.Group>
-        {mode === 'AI' && (
+        {(mode === 'AI' || mode === 'MIXED') && (
           <Alert
             type="info"
             showIcon
-            message="AI 预标注"
-            description="选择本轮样本后，配置模型并提交后台执行，完成后核查候选结果。"
+            message="AI 标注员将在发布时加入本轮"
+            description="选择 AI 标注员后再生成发布预览；人工与 AI 会共用本轮样本范围。"
           />
         )}
         <Checkbox
@@ -323,7 +306,7 @@ export default function NativePublish({
             },
           ]}
         />
-        {mode === 'HUMAN' && (
+        {
           <Space wrap>
             <label htmlFor={sizeId}>
               每包样本数{' '}
@@ -337,7 +320,7 @@ export default function NativePublish({
                 onChange={(v) => setSize(v || 1)}
               />
             </label>
-            <label htmlFor={peopleId}>
+            {(mode === 'HUMAN' || mode === 'MIXED') && <label htmlFor={peopleId}>
               每个样本标注人数{' '}
               <InputNumber
                 id={peopleId}
@@ -348,15 +331,25 @@ export default function NativePublish({
                 disabled={!!plan}
                 onChange={(v) => setPeople(v || 1)}
               />
-            </label>
+            </label>}
+            {(mode === 'AI' || mode === 'MIXED') && (
+              <Select
+                mode="multiple"
+                maxCount={10}
+                style={{ minWidth: 300 }}
+                aria-label="选择本轮 AI 标注员"
+                value={agentIds}
+                disabled={!!plan || busy}
+                placeholder="选择 AI 标注员（最多 10 个）"
+                onChange={setAgentIds}
+                options={agents.filter((agent) => agent.taskType === project.taskType).map((agent) => ({
+                  value: agent.agentId,
+                  label: `${agent.displayName} · ${agent.modelVersion}`,
+                }))}
+              />
+            )}
             <Button
-              disabled={
-                locked ||
-                !version ||
-                !selected.length ||
-                selected.length > 10000 ||
-                !!plan
-              }
+              disabled={!canConfigureAi || !!plan}
               loading={busy}
               onClick={() =>
                 void run(async () => {
@@ -364,7 +357,17 @@ export default function NativePublish({
                   const body = {
                     specVersionId: version.specVersionId,
                     packageSize: size,
-                    annotatorsPerSample: people,
+                    annotatorsPerSample: mode === 'AI' ? 0 : people,
+                    executionMode: aiMode,
+                    aiAgentIds: mode === 'HUMAN' ? [] : agentIds,
+                    annotatorRoster: [
+                      ...(mode !== 'AI'
+                        ? [{ providerId: 'human-pool', providerVersion: '1.0.0', count: people, agentIds: [] }]
+                        : []),
+                      ...(mode !== 'HUMAN'
+                        ? [{ providerId: 'ai-agent-worker', providerVersion: '1.0.0', count: agentIds.length, agentIds }]
+                        : []),
+                    ],
                     reopenAccepted: reopen,
                     samples: selected.map((id) => ({
                       sampleId: id,
@@ -377,7 +380,7 @@ export default function NativePublish({
                   if (planAttempt.current?.signature !== signature) {
                     planAttempt.current = { signature, key: operationKey() };
                   }
-                  const result = await post(
+                  const result = await post<Plan>(
                     `/projects/${project.projectId}/package-plans`,
                     body,
                     planAttempt.current.key,
@@ -389,8 +392,8 @@ export default function NativePublish({
               生成发布计划
             </Button>
           </Space>
-        )}
-        {mode === 'HUMAN' && selected.length > 0 && (
+        }
+        {selected.length > 0 && (
           <Typography.Text type="secondary">
             预计生成 {Math.ceil(selected.length / size)} 个任务包，每包最多{' '}
             {size} 个样本
@@ -398,49 +401,6 @@ export default function NativePublish({
               ? `，最后一包 ${selected.length % size} 个样本。剩余样本会单独成包。`
               : '。'}
           </Typography.Text>
-        )}
-        {mode === 'AI' && (
-          <div className={ui.aiNextStep}>
-            <div>
-              <strong>本轮使用 AI 标注</strong>
-              <span>
-                已选 {selected.length} 个样本 · 下一步选择模型与执行要求
-              </span>
-            </div>
-            <Button
-              className={`${ui.aiDemoCta} ${!canConfigureAi ? ui.aiDemoCtaDisabled : ''}`}
-              size="large"
-              type="primary"
-              style={
-                canConfigureAi
-                  ? {
-                      backgroundColor: '#1c3faa',
-                      borderColor: '#1c3faa',
-                      color: '#fff',
-                    }
-                  : undefined
-              }
-              disabled={!canConfigureAi}
-              onClick={() => {
-                setAiPage(true);
-                window.scrollTo({ top: 0, behavior: 'smooth' });
-              }}
-            >
-              <span
-                style={
-                  canConfigureAi
-                    ? {
-                        color: '#fff',
-                        WebkitTextFillColor: '#fff',
-                        fontWeight: 700,
-                      }
-                    : undefined
-                }
-              >
-                下一步：配置 AI 标注
-              </span>
-            </Button>
-          </div>
         )}
         {plan && (
           <Card size="small" title="确认发布范围">
@@ -532,12 +492,14 @@ export default function NativePublish({
                 disabled={locked}
                 onClick={() =>
                   void run(async () => {
-                    const published = await post<any>(
+                    const published = await post<Plan>(
                       `/package-plans/${plan.planId}/publish`,
                       { selectionHash: plan.selectionHash },
                       `publish-${plan.planId}`,
                     );
                     setPublishedPlan(published);
+                    if (published.aiExecutions?.length && version)
+                      onAiPublished?.(selectedSamples, version, published);
                     setPlan(undefined);
                     planAttempt.current = undefined;
                     refresh();

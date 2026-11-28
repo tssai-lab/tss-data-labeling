@@ -29,11 +29,11 @@ function workspace(taskType = 'IMAGE_CLASSIFICATION', { root = false, catalogue 
   return { runtime, requested, project, spec, sample, location };
 }
 
-test('historical and native projects use the same five project panels and load every data source', async () => {
+test('historical and native projects use the same workflow panels and load every data source', async () => {
   for (const taskType of ['IMAGE_CLASSIFICATION', 'TIMESERIES_ANNOTATION', 'COMPUTER_VISION']) {
     const { runtime: r, requested, spec } = workspace(taskType);
     r.render(); await flushHooks(); r.render();
-    assert.equal(r.nodes('Tabs')[0].props.items.map((item) => item.key).join(','), 'data,settings,publish,ai,review,outcome');
+    assert.equal(r.nodes('Tabs')[0].props.items.map((item) => item.key).join(','), 'data,settings,publish,review,outcome');
     const publish = r.nodes('ParallelPublish')[0];
     assert.equal(publish.props.version.specVersionId, spec.specVersionId);
     assert.equal(publish.props.version.schemaVersion, spec.schemaVersion);
@@ -46,9 +46,9 @@ test('historical and native projects use the same five project panels and load e
 test('opening a published AI execution preserves the real execution for review', async () => {
   const { runtime: r, spec, sample, location, requested } = workspace();
   r.render(); await flushHooks(); r.render();
-  assert.ok(r.nodes('Tabs')[0].props.items.some((item) => item.key === 'ai'));
   r.nodes('ParallelPublish')[0].props.onOpenExecution({ executionId: 'run-1', projectId: 'historical', specVersionId: 'frozen', status: 'SUCCEEDED', sampleCount: 1, pendingCount: 0 }, [sample], spec, 'Qwen');
   await flushHooks(); r.render(); await flushHooks(); r.render();
+  assert.ok(r.nodes('Tabs')[0].props.items.some((item) => item.key === 'ai'));
   assert.equal(r.nodes('Tabs')[0].props.activeKey, 'ai');
   assert.equal(r.nodes('NativeAi').length, 1);
   location.search = '?panel=publish'; r.render(); r.render();

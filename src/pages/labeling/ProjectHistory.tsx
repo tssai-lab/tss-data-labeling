@@ -99,7 +99,9 @@ export default function ProjectHistory({
               (kind === 'rounds'
                 ? r.mode === 'AI_AGENT'
                   ? 'AI 轮次'
-                  : '人工轮次'
+                  : r.mode === 'MIXED'
+                    ? '人工 + AI 轮次'
+                    : '人工轮次'
                 : '分包计划'),
           },
           {

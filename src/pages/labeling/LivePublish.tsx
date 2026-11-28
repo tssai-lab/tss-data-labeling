@@ -6,6 +6,8 @@ import {
   Checkbox,
   Input,
   InputNumber,
+  Radio,
+  Select,
   Space,
   Table,
 } from 'antd';
@@ -43,6 +45,10 @@ export default function LivePublish({
   const [size, setSize] = useState(50),
     [instructions, setInstructions] = useState(''),
     [reference, setReference] = useState(false);
+  const [executionMode, setExecutionMode] = useState<'HUMAN_POOL' | 'AI_AGENT' | 'MIXED'>('HUMAN_POOL'),
+    [people, setPeople] = useState(1),
+    [agents, setAgents] = useState<import('@/services/labelingOwner').LiveAgent[]>([]),
+    [agentIds, setAgentIds] = useState<string[]>([]);
   const [plan, setPlan] = useState<Plan>();
   const [receipt, setReceipt] = useState<Plan>();
   const context = JSON.stringify([
@@ -51,6 +57,9 @@ export default function LivePublish({
     size,
     instructions,
     reference,
+    executionMode,
+    people,
+    agentIds,
   ]);
   const contextRef = useRef(context);
   contextRef.current = context;
@@ -62,13 +71,25 @@ export default function LivePublish({
       size,
       instructions,
       reference,
+      executionMode,
+      people,
+      agentIds,
     ],
   );
+  useEffect(() => {
+    const abort = new AbortController();
+    void ownerApi.agents(abort.signal, spec.taskType).then((value) => {
+      if (!abort.signal.aborted) setAgents(value.filter((agent) => agent.enabled));
+    }).catch(() => {
+      if (!abort.signal.aborted) setAgents([]);
+    });
+    return () => abort.abort();
+  }, [projectId, spec.taskType]);
   async function preview() {
     const current = context;
     const result = await action.run(
       'sample-plan',
-      { selected, spec: spec.specVersionId, size, reference, instructions },
+      { selected, spec: spec.specVersionId, size, reference, instructions, executionMode, people, agentIds },
       async (key, prepare) => {
         const selection = await prepare(async () => {
           assertChosen(selected, spec.specVersionId);
@@ -87,7 +108,17 @@ export default function LivePublish({
           {
             specVersionId: spec.specVersionId,
             packageSize: size,
-            annotatorsPerSample: 1,
+            annotatorsPerSample: executionMode === 'AI_AGENT' ? 0 : people,
+            executionMode,
+            aiAgentIds: executionMode === 'HUMAN_POOL' ? [] : agentIds,
+            annotatorRoster: [
+              ...(executionMode !== 'AI_AGENT'
+                ? [{ providerId: 'human-pool', providerVersion: '1.0.0', count: people, agentIds: [] }]
+                : []),
+              ...(executionMode !== 'HUMAN_POOL'
+                ? [{ providerId: 'ai-agent-worker', providerVersion: '1.0.0', count: agentIds.length, agentIds }]
+                : []),
+            ],
             selectionId: selection.selectionId,
             referenceMode: reference ? 'SELECTED' : 'NONE',
             reopenAccepted: true,
@@ -106,13 +137,13 @@ export default function LivePublish({
     modal.confirm({
       title: `发布 ${captured.sampleCount} 个样本？`,
       content:
-        '按预览的固定成员发布，每个样本一名标注人。已确认样本再次发布后会撤销当前确认，历史记录和既有成果快照保留。',
+        '按预览的固定成员和人工/AI配置发布。已确认样本再次发布后会撤销当前确认，历史记录和既有成果快照保留。',
       onOk: async () => {
         const result = await action.run(
           `publish:${captured.planId}`,
           { selectionHash: captured.selectionHash },
           (key) => tasks.publish(captured, key),
-          '人工任务已发布，可到任务广场领取',
+          '任务已发布，执行轮次已建立',
         );
         if (result) {
           setReceipt(result);
@@ -159,11 +190,20 @@ export default function LivePublish({
         <Alert
           type="info"
           message={`当前明确勾选 ${selected.length} 个样本；请先在“结果与审核”中选择范围。`}
-          description="将这些样本重新分包给人工标注。每个样本由一人处理；重新发布会撤销所选样本当前的审核确认，历史结果保留。"
+          description="在发布前选择纯人工、纯 AI 或人工 + AI，并设置本轮每个样本的执行人数；重新发布会撤销所选样本当前的审核确认，历史结果保留。"
         />
         {action.error && <Alert type="error" message={action.error} />}
         <div hidden={!selected.length}>
           <Space direction="vertical" style={{ marginTop: 14, width: '100%' }}>
+            <Radio.Group
+              value={executionMode}
+              disabled={action.busy || !!plan}
+              onChange={(event) => setExecutionMode(event.target.value)}
+            >
+              <Radio value="HUMAN_POOL">纯人工</Radio>
+              <Radio value="AI_AGENT">纯 AI</Radio>
+              <Radio value="MIXED">人工 + AI</Radio>
+            </Radio.Group>
             <span>每包样本数</span>
             <InputNumber
               aria-label="再次发布每包样本数"
@@ -173,6 +213,25 @@ export default function LivePublish({
               disabled={action.busy}
               onChange={(value) => setSize(value || 1)}
             />
+            {(executionMode === 'HUMAN_POOL' || executionMode === 'MIXED') && (
+              <label>
+                每个样本的人工标注人数{' '}
+                <InputNumber min={1} max={10} value={people} disabled={action.busy || !!plan}
+                  onChange={(value) => setPeople(value || 1)} />
+              </label>
+            )}
+            {(executionMode === 'AI_AGENT' || executionMode === 'MIXED') && (
+              <Select
+                aria-label="选择本轮 AI 标注员"
+                mode="multiple"
+                maxCount={10}
+                value={agentIds}
+                disabled={action.busy || !!plan}
+                placeholder="选择 AI 标注员（最多 10 个）"
+                onChange={setAgentIds}
+                options={agents.map((agent) => ({ value: agent.agentId, label: `${agent.displayName} · ${agent.modelVersion}` }))}
+              />
+            )}
             <Checkbox
               checked={reference}
               disabled={action.busy}
@@ -192,7 +251,7 @@ export default function LivePublish({
             <Button
               type="primary"
               loading={action.busy}
-              disabled={!selected.length}
+              disabled={!selected.length || (executionMode !== 'HUMAN_POOL' && !agentIds.length)}
               onClick={() => void preview()}
             >
               预览分包
@@ -202,24 +261,25 @@ export default function LivePublish({
         {plan && (
           <>
             <p>
-              当前预览：{plan.sampleCount} 个样本 ·{' '}
-              {plan.packageSampleCounts.length} 个包 · 工作量{' '}
-              {plan.totalWorkload}
+              当前预览：{plan.executionMode === 'AI_AGENT' ? '纯 AI' : plan.executionMode === 'MIXED' ? '人工 + AI' : '纯人工'}
+              {' · '}{plan.sampleCount} 个样本 · {plan.packages.length} 个轮次 · 工作量{' '}
+              {plan.totalWorkload} 次执行
+            </p>
+            <p>
+              {plan.executionMode !== 'AI_AGENT' && `每个样本 ${plan.annotatorsPerSample ?? 1} 名人工作业`}
+              {plan.executionMode === 'MIXED' && '；'}
+              {plan.executionMode !== 'HUMAN_POOL' && `每个样本 ${plan.aiAgentIds?.length ?? 0} 个 AI 标注员`}
             </p>
             <p>各包样本数：{plan.packageSampleCounts.join('、')}</p>
             <Table
-              rowKey="sequenceNo"
-              dataSource={plan.packageSampleCounts.map((count, index) => ({
-                sequenceNo: index + 1,
-                sampleCount: count,
-                requiredCount: 1,
-              }))}
+              rowKey="roundId"
+              dataSource={plan.packages}
               pagination={false}
               scroll={{ x: 600 }}
               columns={[
                 { title: '包序号', dataIndex: 'sequenceNo' },
                 { title: '样本数', dataIndex: 'sampleCount' },
-                { title: '人数', dataIndex: 'requiredCount' },
+                { title: '每样本人工人数', dataIndex: 'requiredCount' },
               ]}
             />
             <Button

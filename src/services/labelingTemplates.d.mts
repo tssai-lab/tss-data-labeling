@@ -40,6 +40,13 @@ export type RegisteredTaskPlugin = TaskBinding & {
   defaultVersion?: boolean;
   creationAvailable?: boolean;
   capabilities?: { importer: boolean; inputReader: boolean; resultValidator: boolean; completion: boolean; exporter: boolean };
+  capabilityContracts?: {
+    id: string;
+    version: string;
+    name: string;
+    required: boolean;
+    status: 'READY' | 'UNAVAILABLE';
+  }[];
 };
 export type AvailableTaskPlugin = RegisteredTaskPlugin & { key: string; name: string; installed: boolean; unavailableReason: string };
 export function availableTaskPlugins(catalogue: RegisteredTaskPlugin[]): AvailableTaskPlugin[];

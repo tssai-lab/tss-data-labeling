@@ -5,7 +5,7 @@ import {
   pageQuery,
   post,
 } from './labeling';
-import type { ClassificationResult, Plan } from './labelingTasks';
+import type { AnnotatorSelection, ClassificationResult, Plan } from './labelingTasks';
 import type { ResultRow, Selection, SelectionItem } from './labelingWorkflow';
 
 /** Real contracts verified against backend f68b8a8 (2026-11-17). */
@@ -40,6 +40,9 @@ export type LiveAgent = {
   supportsReference: boolean;
   confidenceDescription: string;
   enabled: boolean;
+  providerId: string;
+  providerVersion: string;
+  annotatorType: string;
 };
 export type LiveExecution = {
   executionId: string;
@@ -47,7 +50,12 @@ export type LiveExecution = {
   projectId: string;
   specVersionId: string;
   agentId: string;
+  agentDisplayName?: string | null;
+  agentActorId?: string;
   modelVersion: string;
+  annotatorProviderId: string;
+  annotatorProviderVersion: string;
+  annotatorType: string;
   status: string;
   revision: number;
   generation: number;
@@ -152,6 +160,12 @@ export type LiveSnapshot = SnapshotSummary & {
     sourceKind: string;
     submissionId: string | null;
     executionId: string | null;
+    sourceActorId?: string | null;
+    sourceActorName?: string | null;
+    modelVersion?: string | null;
+    annotatorProviderId?: string | null;
+    annotatorProviderVersion?: string | null;
+    annotatorType?: string | null;
     result: ClassificationResult;
     reviewRevision: number;
     sourcePath: string;
@@ -209,6 +223,24 @@ export type Aggregation = {
   status: string;
   createdAt: string;
 };
+export type AggregationAlgorithm = {
+  algorithmId: string;
+  taskType: string;
+  resultFormat: string;
+  minimumIndependentSources: number;
+  acceptedSourceKinds: string[];
+  description: string;
+  parametersSchema?: {
+    type?: string;
+    properties?: Record<string, {
+      type?: string;
+      minimum?: number;
+      maximum?: number;
+      default?: number;
+      description?: string;
+    }>;
+  };
+};
 export type AggregationItem = {
   sampleId: string;
   resultId: string | null;
@@ -226,6 +258,8 @@ export type HistoryRow = {
   validSampleCount?: number;
   planId?: string;
   sampleCount?: number;
+  roundNo?: number;
+  packageId?: string | null;
   roundId?: string;
   mode?: string;
   executionId?: string;
@@ -255,6 +289,13 @@ export type RegisteredTemplate = {
   resultSchemaId?: string;
   editorKey: string;
   enabled: boolean;
+  capabilityContracts?: {
+    id: string;
+    version: string;
+    name: string;
+    required: boolean;
+    status: 'READY' | 'UNAVAILABLE';
+  }[];
 };
 export const ownerApi = {
   templates: (signal?: AbortSignal) =>
@@ -322,12 +363,23 @@ export const ownerApi = {
     }>(`/projects/${id(project)}/results/${id(result)}/revisions`, body, key),
   planSelection: (
     project: string,
-    body: ScopeInput & { packageSize: number; annotatorsPerSample: 1 },
+    body: ScopeInput & {
+      packageSize: number;
+      annotatorsPerSample: number;
+      executionMode?: 'HUMAN_POOL' | 'AI_AGENT' | 'MIXED';
+      aiAgentIds?: string[];
+      annotatorRoster?: AnnotatorSelection[];
+    },
     key: string,
   ) => post<Plan>(`/projects/${id(project)}/package-plans`, body, key),
   executeSelection: (
     project: string,
-    body: ScopeInput & { agentId: string },
+    body: Partial<ScopeInput> & {
+      specVersionId: string;
+      agentId: string;
+      roundId?: string;
+      samples?: SelectedSample[];
+    },
     key: string,
   ) => post<LiveExecution>(`/projects/${id(project)}/ai-executions`, body, key),
   retry: (
@@ -342,21 +394,20 @@ export const ownerApi = {
     key: string,
   ) =>
     post<LiveSnapshot>(`/projects/${id(project)}/final-snapshots`, body, key),
-  algorithms: (signal?: AbortSignal) =>
-    labelingJson<
-      {
-        algorithmId: string;
-        taskType: string;
-        minimumIndependentSources: number;
-        description: string;
-      }[]
-    >('/aggregation-algorithms', { signal }),
+  algorithms: (taskType?: string, signal?: AbortSignal) =>
+    labelingJson<AggregationAlgorithm[]>(
+      taskType
+        ? `/aggregation-algorithms?taskType=${encodeURIComponent(taskType)}`
+        : '/aggregation-algorithms',
+      { signal },
+    ),
   aggregate: (
     project: string,
     body: {
       algorithmId: string;
       specVersionId: string;
       items: { sampleId: string; resultIds: string[] }[];
+      parameters?: Record<string, unknown>;
     },
     key: string,
   ) => post<Aggregation>(`/projects/${id(project)}/aggregations`, body, key),

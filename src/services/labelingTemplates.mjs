@@ -133,17 +133,27 @@ export function availableTaskPlugins(catalogue) {
     } catch (error) {
       reason = error.message;
     }
-    const ready = [
-      "importer",
-      "inputReader",
-      "resultValidator",
-      "completion",
-      "exporter",
-    ].every((key) => registered.capabilities?.[key] === true);
+    const contracts = registered.capabilityContracts;
+    const missingCapabilities = Array.isArray(contracts)
+      ? contracts
+          .filter((capability) => capability.required && capability.status !== "READY")
+          .map((capability) => capability.name || capability.id)
+      : [];
+    const ready = Array.isArray(contracts)
+      ? contracts.some((capability) => capability.required) && missingCapabilities.length === 0
+      : [
+          "importer",
+          "inputReader",
+          "resultValidator",
+          "completion",
+          "exporter",
+        ].every((key) => registered.capabilities?.[key] === true);
     if (!reason && !registered.capabilities)
       reason = "后端插件目录缺少能力信息，请更新标注后端后重试";
     else if (!reason && (!registered.enabled || !ready))
-      reason = "插件未启用或必要能力未就绪";
+      reason = missingCapabilities.length
+        ? `缺少必要能力：${missingCapabilities.join("、")}`
+        : "插件未启用或必要能力未就绪";
     return {
       ...registered,
       key: `${registered.templateId}@${registered.templateVersion}`,
