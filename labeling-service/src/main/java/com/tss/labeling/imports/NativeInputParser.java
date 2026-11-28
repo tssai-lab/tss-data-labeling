@@ -91,7 +91,7 @@ public class NativeInputParser {
         } else if (value.isTextual()) {
             String path = value.asText();
             if (!path.startsWith("/") && !path.contains(":") && !path.contains("\\")
-                    && path.toLowerCase(Locale.ROOT).matches(".*[.](png|jpe?g|csv)$")) {
+                    && (ImageFormats.isReference(path) || path.toLowerCase(Locale.ROOT).endsWith(".csv"))) {
                 files.add(path);
             }
         }

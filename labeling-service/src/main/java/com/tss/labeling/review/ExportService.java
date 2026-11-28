@@ -217,8 +217,9 @@ FROM final_snapshot_item f JOIN sample s ON s.id=f.sample_id WHERE f.snapshot_id
                     if (includeOriginals) {
                         UUID sampleId = (UUID) row.get("sampleId");
                         String sourcePath = (String) row.get("sourcePath");
-                        String extension = sourcePath != null && sourcePath.lastIndexOf('.') >= 0
-                                ? sourcePath.substring(sourcePath.lastIndexOf('.') + 1).replaceAll("[^A-Za-z0-9]", "")
+                        String originalSource = ((JsonNode)row.get("input")).path("originalSourcePath").asText(sourcePath);
+                        String extension = originalSource != null && originalSource.lastIndexOf('.') >= 0
+                                ? originalSource.substring(originalSource.lastIndexOf('.') + 1).replaceAll("[^A-Za-z0-9]", "")
                                 : "bin";
                         if (extension.isBlank() || extension.length() > 10) extension = "bin";
                         String archivePath = "originals/" + sampleId + "." + extension;

@@ -138,7 +138,7 @@ public class SourceExportService {
         Map<String,Path> resources=new LinkedHashMap<>();
                 source.writeExportZipPrepared(xml(snapshot),format,sink->db.query(connection->{
                     var statement=connection.prepareStatement("""
-                            SELECT f.*,s.batch_id,s.media_type FROM final_snapshot_item f JOIN sample s ON s.id=f.sample_id
+                            SELECT f.*,s.batch_id,s.media_type,s.metadata::text AS sample_metadata FROM final_snapshot_item f JOIN sample s ON s.id=f.sample_id
                             WHERE f.snapshot_id=? AND f.spec_version_id=? ORDER BY f.sample_id
                             """);
                     statement.setObject(1,snapshotId);statement.setObject(2,spec);statement.setFetchSize(100);return statement;
@@ -154,19 +154,20 @@ public class SourceExportService {
                             for(JsonNode resource:context.path("resources")) {
                                 UUID resourceId=UUID.fromString(resource.path("resourceId").asText());
                                 String media=resource.path("mediaType").asText();
-                                String ext=extension(media);
-                                String name=("YOLO".equals(format)&&media.startsWith("image/")?"images/"+sample:"resources/"+resourceId)+ext;
-                                NativeTaskService.set(data,resource.path("field").asText(),json.getNodeFactory().textNode(name));
-                                var stored=one("SELECT batch_id,content_sha256,source_path FROM input_resource WHERE id=? UNION ALL SELECT batch_id,content_sha256,source_path FROM sample WHERE id=?",resourceId,resourceId);
+                                String prefix="YOLO".equals(format)&&media.startsWith("image/")?"images/"+sample:"resources/"+resourceId;
+                                var stored=one("SELECT batch_id,content_sha256,source_path,metadata::text AS metadata FROM input_resource WHERE id=? UNION ALL SELECT batch_id,content_sha256,source_path,metadata::text AS metadata FROM sample WHERE id=?",resourceId,resourceId);
                                 try{Path file=storage.sample((UUID)stored.get("batch_id"),resourceId);
                                     if(!stored.get("content_sha256").equals(ImportStorage.sha256(file)))throw error(409,"INPUT_HASH_MISMATCH","引用资源与导入摘要不一致");
-                                    resources.put(name,file);
+                                    String name=exportResource(resources,(UUID)stored.get("batch_id"),resourceId,media,prefix,
+                                            read((String)stored.get("metadata")),importMeta,resource.path("field").asText());
+                                    NativeTaskService.set(data,resource.path("field").asText(),json.getNodeFactory().textNode(name));
                                 }
                                 catch(IOException exc){throw new UncheckedIOException(exc);}
                             }
                         } else {
-                            data=json.createObjectNode();String name="resources/"+sample+extension(rs.getString("media_type"));data.put("image",name);
-                            try{resources.put(name,storage.sample(rs.getObject("batch_id",UUID.class),sample));}
+                            data=json.createObjectNode();
+                            try{String name=exportResource(resources,rs.getObject("batch_id",UUID.class),sample,rs.getString("media_type"),
+                                    "resources/"+sample,read(rs.getString("sample_metadata")),importMeta,"image");data.put("image",name);}
                             catch(IOException exc){throw new UncheckedIOException(exc);}
                         }
                         JsonNode frozen=read(rs.getString("result"));
@@ -238,7 +239,32 @@ public class SourceExportService {
         return xml.append("</Choices></View>").toString();
     }
     private String escape(String value){return value.replace("&","&amp;").replace("\"","&quot;").replace("<","&lt;").replace(">","&gt;");}
-    private String extension(String media){return switch(media){case "image/png"->".png";case "image/jpeg"->".jpg";case "text/csv"->".csv";default->".json";};}
+    /** Converter inputs use the exact page shown in the editor; originals travel alongside them. */
+    private String exportResource(Map<String,Path> resources,UUID batch,UUID id,String media,String prefix,
+                                  JsonNode metadata,ObjectNode meta,String field)throws IOException {
+        var original=storage.sample(batch,id);
+        var display=storage.displayFile(batch,id,media,Files.size(original));
+        String name=prefix+extension(display.mediaType());
+        var imageFormat=com.tss.labeling.imports.ImageFormats.fromMediaType(media);
+        if(imageFormat!=null && imageFormat.requiresPreview()) {
+            String previewHash=ImportStorage.sha256(display.path());
+            if(!previewHash.equals(metadata.path("previewSha256").asText()))
+                throw error(409,"INPUT_HASH_MISMATCH","图片预览与导入摘要不一致");
+            String originalName="originals/"+id+extension(media);
+            resources.put(originalName,original);
+            var item=meta.withArray("platformImageSources").addObject();
+            item.put("field",field).put("image",name).put("original",originalName).put("originalMediaType",media)
+                    .put("originalSourcePath",metadata.path("originalSourcePath").asText())
+                    .put("pageIndex",metadata.path("pageIndex").asInt()).put("pageCount",metadata.path("pageCount").asInt(1))
+                    .put("sha256",ImportStorage.sha256(original)).put("previewSha256",previewHash);
+        }
+        resources.put(name,display.path());
+        return name;
+    }
+    private String extension(String media){
+        var image=com.tss.labeling.imports.ImageFormats.fromMediaType(media);
+        return image!=null?image.extension():"text/csv".equals(media)?".csv":".json";
+    }
     private void enabled(ActorContext actor){if(!"ENABLED".equals(one("SELECT status FROM actor WHERE id=?",actor.actorId()).get("status")))throw error(403,"LABELING_DISABLED","当前账号已停用");}
     private Map<String,Object> one(String sql,Object...args){var rows=db.queryForList(sql,args);if(rows.isEmpty())throw error(404,"RESOURCE_NOT_FOUND","请求资源不存在");return rows.get(0);}
     private JsonNode read(String value){try{return json.readTree(value);}catch(IOException exc){throw new IllegalStateException(exc);}}

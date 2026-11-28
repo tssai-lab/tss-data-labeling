@@ -209,3 +209,10 @@ mvn -o -f labeling-service/pom.xml \
 ## 2026-11-25 记录插件扩展
 
 结构化、半结构化的格式、校验、结果契约、样例及配套发布步骤详见 [10-record-data-plugins.md](10-record-data-plugins.md)。
+
+
+## 图片格式扩展
+
+图片分类和 COMPUTER_VISION 共用 `ImageFormats` 与导入层，支持 JPG/JPEG、PNG、TIFF/TIF、静态 WebP、BMP，不按扩展名单独注册任务插件。新格式使用原文件摘要和原始 MIME 类型保存输入，通过授权文件接口提供同尺寸 PNG。TIFF 多页标识、预览元数据、导出关联及限制统一见 [接口契约](04-api.md) 第 3 节。
+
+解码依赖 `com.twelvemonkeys.imageio:imageio-webp` 和 `imageio-tiff` 3.15.0，通过 Maven 打入 Spring Boot 可执行 JAR，不需要服务器额外安装本地解码器。数据库新增 V36 扩展图片 MIME 约束；历史迁移保持不变。

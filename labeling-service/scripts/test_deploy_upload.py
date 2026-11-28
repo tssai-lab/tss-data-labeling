@@ -10,7 +10,7 @@ import unittest
 class DeployUploadTests(unittest.TestCase):
     def run_upload(self, fail_always: bool) -> tuple[subprocess.CompletedProcess, list[str]]:
         workflow = Path(__file__).resolve().parents[2] / '.github/workflows/labeling-backend-deploy.yml'
-        source = workflow.read_text()
+        source = workflow.read_text(encoding='utf-8')
         start = source.index('          upload_file() {')
         end = source.index('\n          upload_file "$artifact"', start)
         function = textwrap.dedent(source[start:end])
@@ -29,10 +29,14 @@ class DeployUploadTests(unittest.TestCase):
                 executable.write_text(body)
                 executable.chmod(0o700)
             result = subprocess.run(
-                ['bash', '-c', 'set -Eeuo pipefail\n' + function + '\nupload_file "$1" "$2" 300s',
-                 'upload-test', 'release bundle.tar.gz', '/var/tmp/release.tar.gz'],
+                ['bash', '-c', 'set -Eeuo pipefail\n'
+                 + 'mock_root="$(cd "$3" && pwd)"\nexport PATH="$mock_root:$PATH"\n'
+                 + 'test "$(command -v scp)" = "$mock_root/scp"\n'
+                 + 'test "$(command -v timeout)" = "$mock_root/timeout"\n'
+                 + function + '\nupload_file "$1" "$2" 300s',
+                 'upload-test', 'release bundle.tar.gz', '/var/tmp/release.tar.gz', root.as_posix()],
                 env={**os.environ, 'PATH': str(root) + os.pathsep + os.environ['PATH'],
-                     'UPLOAD_TEST_LOG': str(log), 'UPLOAD_TEST_MARKER': str(root / 'retried'),
+                     'UPLOAD_TEST_LOG': log.as_posix(), 'UPLOAD_TEST_MARKER': (root / 'retried').as_posix(),
                      'UPLOAD_TEST_FAIL_ALWAYS': '1' if fail_always else '0'},
                 capture_output=True, text=True, timeout=10,
             )

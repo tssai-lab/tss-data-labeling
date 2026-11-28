@@ -106,8 +106,7 @@ public class NativeTaskService {
         for(JsonNode item:context.path("resources"))if(resource.toString().equals(item.path("resourceId").asText()))allowed=true;
         if(!allowed)throw error(404,"RESOURCE_NOT_FOUND","参考资源不存在");
         var row=media(resource);try{
-            Path path=storage.sample((UUID)row.get("batch_id"),resource);long size=Long.parseLong((String)row.get("size"));
-            if(Files.size(path)!=size)throw new IOException();return new ImportService.SampleFile(new FileSystemResource(path),(String)row.get("media_type"),size);
+            return storage.display((UUID)row.get("batch_id"),resource,(String)row.get("media_type"),Long.parseLong((String)row.get("size")));
         }catch(IOException exc){throw error(503,"STORAGE_UNAVAILABLE","参考资源暂不可读取");}
     }
 
@@ -124,10 +123,7 @@ public class NativeTaskService {
         if(!permitted) throw error(404,"RESOURCE_NOT_FOUND","输入资源不存在");
         var row=media(resource);
         try {
-            Path path=storage.sample((UUID)row.get("batch_id"),resource);
-            long size=Long.parseLong((String)row.get("size"));
-            if(Files.size(path)!=size) throw new IOException();
-            return new ImportService.SampleFile(new FileSystemResource(path),(String)row.get("media_type"),size);
+            return storage.display((UUID)row.get("batch_id"),resource,(String)row.get("media_type"),Long.parseLong((String)row.get("size")));
         } catch(IOException exc) { throw error(503,"STORAGE_UNAVAILABLE","样本存储不可用"); }
     }
 
@@ -176,7 +172,7 @@ public class NativeTaskService {
             var keys=node.fieldNames();while(keys.hasNext()){String key=keys.next();collectResources(node.get(key),field.isEmpty()?key:field+"."+key,batch,source,project,resources);}
         } else if(node.isArray()) {
             for(int i=0;i<node.size();i++)collectResources(node.get(i),field+"."+i,batch,source,project,resources);
-        } else if(node.isTextual() && node.asText().toLowerCase(Locale.ROOT).matches(".*\\.(csv|png|jpg|jpeg|json)$")) {
+        } else if(node.isTextual() && (ImageFormats.isReference(node.asText()) || node.asText().toLowerCase(Locale.ROOT).matches(".*\\.(csv|json)$"))) {
             String value=node.asText();
             if(value.contains(":") || value.startsWith("/") || value.contains("\\"))return;
             String path=source.split("#task-",2)[0];Path base=Path.of(path).getParent();
@@ -380,10 +376,7 @@ public class NativeTaskService {
         one("SELECT id FROM input_resource WHERE id=? AND project_id=?",resource,project);
         var row=media(resource);
         try {
-            Path path=storage.sample((UUID)row.get("batch_id"),resource);
-            long size=Long.parseLong((String)row.get("size"));
-            if(Files.size(path)!=size)throw new IOException();
-            return new ImportService.SampleFile(new FileSystemResource(path),(String)row.get("media_type"),size);
+            return storage.display((UUID)row.get("batch_id"),resource,(String)row.get("media_type"),Long.parseLong((String)row.get("size")));
         }catch(IOException exc){throw error(503,"STORAGE_UNAVAILABLE","输入资源不可读取");}
     }
 

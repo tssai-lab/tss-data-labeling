@@ -205,7 +205,7 @@ public class LsSourceAdapter {
                         String name=resource.getKey();
                         Path relative=Path.of(name).normalize();
                         if(relative.isAbsolute() || relative.startsWith("..") || name.contains("\\")
-                                || !(name.startsWith("resources/") || name.startsWith("images/")))
+                                || !(name.startsWith("resources/") || name.startsWith("images/") || name.startsWith("originals/")))
                             throw failure(HttpStatus.UNPROCESSABLE_ENTITY,"LS_INVALID_RESOURCE_NAME","导出资源名称无效");
                         zip.putNextEntry(new ZipEntry(name));
                         Files.copy(resource.getValue(),zip);zip.closeEntry();
