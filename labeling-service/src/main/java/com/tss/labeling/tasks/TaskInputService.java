@@ -15,15 +15,23 @@ import java.util.*;
 public class TaskInputService {
     private final WorkflowStore s;
     private final com.tss.labeling.plugins.TaskPluginRegistry plugins;
+    private final com.tss.labeling.annotators.AnnotatorProviderRegistry annotators;
 
-    public TaskInputService(WorkflowStore s, com.tss.labeling.plugins.TaskPluginRegistry plugins) {
-        this.s = s; this.plugins = plugins;
+    public TaskInputService(WorkflowStore s, com.tss.labeling.plugins.TaskPluginRegistry plugins,
+            com.tss.labeling.annotators.AnnotatorProviderRegistry annotators) {
+        this.s = s; this.plugins = plugins; this.annotators = annotators;
     }
 
     @Transactional
     public JsonNode templates(ActorContext actor) {
         s.enabled(actor);
         return s.json.valueToTree(plugins.templates());
+    }
+
+    @Transactional
+    public JsonNode annotatorProviders(ActorContext actor) {
+        s.enabled(actor);
+        return s.json.valueToTree(annotators.descriptors());
     }
 
     @Transactional

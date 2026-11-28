@@ -20,9 +20,11 @@ public class ExportService {
     private final WorkflowStore s;
     private final com.tss.labeling.plugins.TaskPluginRegistry plugins;
     private final ImportStorage storage;
+    private final com.tss.labeling.usage.UsageEventRecorder usageEvents;
 
-    public ExportService(WorkflowStore s, com.tss.labeling.plugins.TaskPluginRegistry plugins, ImportStorage storage) {
-        this.s = s; this.plugins = plugins; this.storage = storage;
+    public ExportService(WorkflowStore s, com.tss.labeling.plugins.TaskPluginRegistry plugins,
+            ImportStorage storage, com.tss.labeling.usage.UsageEventRecorder usageEvents) {
+        this.s = s; this.plugins = plugins; this.storage = storage; this.usageEvents = usageEvents;
     }
 
     public record Input(String format, boolean includeOriginals, List<UUID> finalSnapshotIds) {}
@@ -137,7 +139,21 @@ public class ExportService {
     public byte[] download(ActorContext actor, UUID id) {
         var row = owned(actor, id);
         if (!"SUCCEEDED".equals(row.get("status"))) throw error(409, "EXPORT_NOT_READY", "导出未成功完成");
-        return (byte[]) row.get("archive");
+        byte[] archive = (byte[]) row.get("archive");
+        usageEvents.record(
+                "export-download:" + id + ":" + UUID.randomUUID(),
+                (UUID) row.get("project_id"),
+                actor.actorId(),
+                "export.archive.downloaded",
+                archive.length,
+                "byte",
+                "EXPORT_JOB",
+                id,
+                null,
+                null,
+                null,
+                Map.of("format", row.get("format"), "includeOriginals", row.get("include_originals")));
+        return archive;
     }
 
     private Map<String, Object> owned(ActorContext actor, UUID id) {
@@ -182,6 +198,8 @@ public class ExportService {
                                 """
 SELECT f.snapshot_id AS "finalSnapshotId",f.sample_id AS "sampleId",f.spec_version_id AS "specVersionId",f.result_id AS "resultId",
 f.source_kind AS "sourceKind",f.submission_id AS "submissionId",f.execution_id AS "executionId",f.result::text AS result,
+f.annotator_provider_id AS "annotatorProviderId",f.annotator_provider_version AS "annotatorProviderVersion",f.annotator_type AS "annotatorType",
+f.source_actor_id AS "sourceActorId",f.source_actor_name AS "sourceActorName",f.model_version AS "modelVersion",
 f.review_revision AS "reviewRevision",f.source_path AS "sourcePath",f.content_hash AS "inputHash",s.metadata::text AS input,
 s.batch_id AS "batchId",s.media_type AS "mediaType",f.annotation_provenance::text AS "annotationProvenance"
 FROM final_snapshot_item f JOIN sample s ON s.id=f.sample_id WHERE f.snapshot_id=? ORDER BY f.sample_id
@@ -212,7 +230,7 @@ FROM final_snapshot_item f JOIN sample s ON s.id=f.sample_id WHERE f.snapshot_id
                                 "sha256", WorkflowStore.digest(original), "sizeBytes", original.length));
                     }
                     if(row.get("resultId")!=null){
-                        var provenance=s.db.queryForList("SELECT c.source_actor AS \"sourceActor\",c.model_version AS \"modelVersion\",c.confidence,o.parent_result_id AS \"parentResultId\" FROM project_result_candidate c LEFT JOIN owner_result o ON o.id=c.result_id WHERE c.result_id=?",row.get("resultId"));
+                        var provenance=s.db.queryForList("SELECT c.source_actor AS \"sourceActor\",a.display_name AS \"sourceActorName\",c.model_version AS \"modelVersion\",c.confidence,c.annotator_provider_id AS \"annotatorProviderId\",c.annotator_provider_version AS \"annotatorProviderVersion\",c.annotator_type AS \"annotatorType\",o.parent_result_id AS \"parentResultId\" FROM project_result_candidate c LEFT JOIN actor a ON a.id=c.source_actor LEFT JOIN owner_result o ON o.id=c.result_id WHERE c.result_id=?",row.get("resultId"));
                         row.put("provenance",provenance.isEmpty()?null:provenance.get(0));
                     }
                     rows.add(row);

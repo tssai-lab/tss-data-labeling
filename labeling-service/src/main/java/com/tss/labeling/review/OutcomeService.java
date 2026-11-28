@@ -197,27 +197,29 @@ ORDER BY r.sample_id,r.spec_version_id LIMIT ?
                                                 sampleId, (String) rev.get("source_kind"),
                     (UUID) rev.get("submission_id"), (UUID) rev.get("execution_id"))
                                         .get("result_id");
-            JsonNode result =
-                    read(
-                            (String)
-                                    scopes.candidate(
-                                                    project,
-                                                    itemSpec, sampleId,
-                                                    resultId)
-                                            .get("content"));
+            Map<String, Object> candidate = scopes.candidate(project, itemSpec, sampleId, resultId);
+            JsonNode result = read((String) candidate.get("content"));
             var provenance = new LinkedHashMap<String,Object>();
             provenance.put("reviewer",rev.get("reviewed_by"));
             provenance.put("updated_at",String.valueOf(rev.get("updated_at")));
-            var author=db.queryForList("SELECT source_actor FROM project_result_candidate WHERE result_id=?",resultId);
-            provenance.put("annotator",author.isEmpty()?null:author.get(0).get("source_actor"));
+            provenance.put("annotator",candidate.get("source_actor"));
+            provenance.put("annotatorProviderId",candidate.get("annotator_provider_id"));
+            provenance.put("annotatorProviderVersion",candidate.get("annotator_provider_version"));
+            provenance.put("annotatorType",candidate.get("annotator_type"));
+            provenance.put("modelVersion",candidate.get("model_version"));
             db.update(
                     """
-INSERT INTO final_snapshot_item(snapshot_id,project_id,sample_id,spec_version_id,source_kind,submission_id,execution_id,result,review_revision,source_path,content_hash,result_id,annotation_provenance)
-VALUES (?,?,?,?,?,?,?,?::jsonb,?,?,?,?,?::jsonb)
+INSERT INTO final_snapshot_item(snapshot_id,project_id,sample_id,spec_version_id,source_kind,submission_id,execution_id,
+  result,review_revision,source_path,content_hash,result_id,annotation_provenance,annotator_provider_id,
+  annotator_provider_version,annotator_type,source_actor_id,source_actor_name,model_version)
+VALUES (?,?,?,?,?,?,?,?::jsonb,?,?,?,?,?::jsonb,?,?,?,?,?,?)
 """, snapshotId, project, sampleId, itemSpec, rev.get("source_kind"),
                     rev.get("submission_id"), rev.get("execution_id"), write(result), ((Number) rev.get("revision")).longValue(),
                     sample.get("source_path"), sample.get("content_sha256"),
-                    resultId,write(provenance));
+                    resultId, write(provenance), candidate.get("annotator_provider_id"),
+                    candidate.get("annotator_provider_version"), candidate.get("annotator_type"),
+                    candidate.get("source_actor"), candidate.get("source_actor_name"),
+                    candidate.get("model_version"));
         }
         UUID duplicate = db.query("""
 SELECT previous.id FROM final_snapshot previous
@@ -443,6 +445,9 @@ VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
                         """
 SELECT sample_id AS "sampleId", source_kind AS "sourceKind", submission_id AS "submissionId",
   execution_id AS "executionId", spec_version_id AS "specVersionId",
+  annotator_provider_id AS "annotatorProviderId",annotator_provider_version AS "annotatorProviderVersion",
+  annotator_type AS "annotatorType",source_actor_id AS "sourceActorId",source_actor_name AS "sourceActorName",
+  model_version AS "modelVersion",
   result::text AS result, review_revision AS "reviewRevision",
   result_id AS "resultId", source_path AS "sourcePath", content_hash AS "contentHash"
 FROM final_snapshot_item WHERE snapshot_id=? ORDER BY sample_id

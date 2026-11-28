@@ -74,7 +74,8 @@ public class AiController {
                 new AiService.CreateInput(body.specVersionId(), body.agentId(), body.samples(), body.instructions(),
                                 body.selectionId(),
                                 body.referenceMode(),
-                                body.reopenAccepted()), key), req);
+                                body.reopenAccepted(),
+                                body.roundId()), key), req);
     }
 
     @PostMapping("/projects/{projectId}/prelabel-runs")
@@ -163,7 +164,8 @@ public class AiController {
     public record CreateRequest(@NotNull UUID specVersionId, @NotNull UUID agentId, @Size(max = 10000) List<AiService.SelectionSample> samples, @Size(max = 500) String instructions,
             UUID selectionId,
             String referenceMode,
-            Boolean reopenAccepted) {}
+            Boolean reopenAccepted,
+            UUID roundId) {}
 
     public record CancelRequest(@NotNull @Min(1) Long baseRevision, @Size(max = 1000) String reason) {}
 

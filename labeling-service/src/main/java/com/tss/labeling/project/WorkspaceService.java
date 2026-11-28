@@ -138,21 +138,24 @@ SELECT EXISTS(SELECT 1 FROM publication_round WHERE project_id=? AND status='OPE
                 sql =
                         "SELECT id AS \"roundId\",project_id AS \"projectId\",spec_version_id AS"
                             + " \"specVersionId\",package_id AS \"packageId\",mode,status,round_no"
-                            + " AS \"roundNo\",revision,instructions,created_at AS \"createdAt\""
+                            + " AS \"roundNo\",revision,instructions,created_at AS \"createdAt\","
+                            + "(SELECT count(*) FROM round_item ri WHERE ri.round_id=publication_round.id) AS \"sampleCount\""
                             + " FROM publication_round WHERE project_id=? AND id>? ORDER BY id"
                             + " LIMIT ?";
             }
             case "ai-executions" -> {
                 field = "executionId";
                 sql =
-                        "SELECT id AS \"executionId\",project_id AS \"projectId\",spec_version_id"
-                            + " AS \"specVersionId\",round_id AS"
-                            + " \"roundId\",status,revision,model_version AS"
-                            + " \"modelVersion\",retry_of_execution_id AS"
-                            + " \"retryOfExecutionId\",success_count AS"
-                            + " \"successCount\",failed_count AS \"failedCount\",pending_count AS"
-                            + " \"pendingCount\",created_at AS \"createdAt\" FROM ai_execution"
-                            + " WHERE project_id=? AND id>? ORDER BY id LIMIT ?";
+                        "SELECT e.id AS \"executionId\",e.project_id AS \"projectId\",e.spec_version_id"
+                            + " AS \"specVersionId\",e.round_id AS \"roundId\",e.agent_actor_id AS \"agentActorId\","
+                            + "a.id AS \"agentId\",a.display_name AS \"agentDisplayName\",e.status,e.revision,"
+                            + "e.model_version AS \"modelVersion\",e.annotator_provider_id AS \"annotatorProviderId\","
+                            + "e.annotator_provider_version AS \"annotatorProviderVersion\",e.annotator_type AS \"annotatorType\","
+                            + "e.retry_of_execution_id AS \"retryOfExecutionId\",e.success_count AS \"successCount\","
+                            + "e.failed_count AS \"failedCount\",e.pending_count AS \"pendingCount\","
+                            + "e.created_at AS \"createdAt\" FROM ai_execution e LEFT JOIN ai_agent_config a"
+                            + " ON a.actor_id=e.agent_actor_id AND a.model_version=e.model_version"
+                            + " WHERE e.project_id=? AND e.id>? ORDER BY e.id LIMIT ?";
             }
             case "package-plans" -> {
                 field = "planId";

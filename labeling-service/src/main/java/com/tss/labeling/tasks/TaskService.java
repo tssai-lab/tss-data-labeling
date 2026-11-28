@@ -33,6 +33,8 @@ public class TaskService {
     private final com.tss.labeling.review.ResultScopeService scopes;
     private final org.springframework.beans.factory.ObjectProvider<com.tss.labeling.imports.NativeTaskService> nativeInputs;
     private final com.tss.labeling.plugins.TaskPluginRegistry plugins;
+    private final com.tss.labeling.annotators.AnnotatorProviderRegistry annotators;
+    private final org.springframework.beans.factory.ObjectProvider<com.tss.labeling.ai.AiService> aiServices;
     private final int maxSamples;
     private final int maxPackageSize;
     private final int maxAnnotators;
@@ -42,6 +44,8 @@ public class TaskService {
             com.tss.labeling.review.ReferenceService references,
             org.springframework.beans.factory.ObjectProvider<com.tss.labeling.imports.NativeTaskService> nativeInputs,
             com.tss.labeling.plugins.TaskPluginRegistry plugins,
+            com.tss.labeling.annotators.AnnotatorProviderRegistry annotators,
+            org.springframework.beans.factory.ObjectProvider<com.tss.labeling.ai.AiService> aiServices,
             @Value("${labeling.tasks.max-samples:10000}") int maxSamples,
             @Value("${labeling.tasks.max-package-size:1000}") int maxPackageSize,
             @Value("${labeling.tasks.max-annotators:10}") int maxAnnotators) {
@@ -49,7 +53,8 @@ public class TaskService {
         this.outcomes = outcomes;
         this.scopes = scopes;
         this.references = references;
-        this.nativeInputs = nativeInputs; this.plugins = plugins;
+        this.nativeInputs = nativeInputs; this.plugins = plugins; this.annotators = annotators;
+        this.aiServices = aiServices;
         this.maxSamples = maxSamples; this.maxPackageSize = maxPackageSize; this.maxAnnotators = maxAnnotators;
     }
 
@@ -68,9 +73,12 @@ public class TaskService {
             throw error(422, "INVALID_REFERENCE_MODE", "referenceMode 仅支持 NONE 或 SELECTED");
         if ("SELECTED".equals(input.referenceMode()) && input.selectionId() == null)
             throw error(422, "INVALID_REFERENCE_MODE", "SELECTED 参考模式需要 selectionId");
+        ResolvedRoster roster = resolveRoster(input);
+        String executionMode = roster.executionMode();
+        List<UUID> aiAgentIds = roster.aiAgentIds();
         int size = input.packageSize() == null ? 10 : input.packageSize();
-        int people = input.annotatorsPerSample() == null ? 1 : input.annotatorsPerSample();
-        if (size < 1 || size > maxPackageSize || people < 1 || people > maxAnnotators)
+        int people = roster.humanCount();
+        if (size < 1 || size > maxPackageSize)
             throw error(400, "INVALID_REQUEST", "包大小或标注人数超出限制");
         String op = "POST:/projects/" + project + "/package-plans", hash = hash(write(input));
         JsonNode previous = replay(actor.actorId(), op, key, hash);
@@ -106,6 +114,18 @@ public class TaskService {
             rows = selectionSamples(project, input.specVersionId(), chosen);
             selectionJson = write(rows);
         }
+        for (UUID agentId : aiAgentIds) {
+            Map<String, Object> agent = one(
+                    "SELECT task_type,enabled,supports_reference FROM ai_agent_config WHERE id=?",
+                    agentId);
+            if (!Boolean.TRUE.equals(agent.get("enabled"))
+                    || !Objects.equals(agent.get("task_type"), p.get("task_type")))
+                throw error(422, "AGENT_INCOMPATIBLE", "所选 AI 标注员未启用或不支持当前任务类型");
+            if (!Boolean.TRUE.equals(agent.get("supports_reference"))
+                    && rows.stream().anyMatch(row -> row.get("referenceResultId") != null
+                            || row.get("referenceCandidateId") != null))
+                throw error(422, "REFERENCE_UNSUPPORTED", "所选 AI 标注员不支持本轮参考答案");
+        }
         scopes.checkReopen(
                 project,
                 input.specVersionId(),
@@ -115,10 +135,14 @@ public class TaskService {
         db.update(
                 """
 INSERT INTO package_plan(id, project_id, batch_id, spec_version_id, package_size,
-  annotators_per_sample, sample_count, selection_hash, selection_json, instructions)
-VALUES (?,?,?,?,?,?,?,?,?::jsonb,?)
+  annotators_per_sample, sample_count, selection_hash, selection_json, instructions, execution_mode, ai_agent_ids,
+  annotator_roster,assignment_policy,workflow_snapshot)
+VALUES (?,?,?,?,?,?,?,?,?::jsonb,?,?,?::jsonb,?::jsonb,?::jsonb,?::jsonb)
 """, plan, project, input.batchId(), input.specVersionId(), size, people, rows.size(),
-                selection(rows), selectionJson, input.instructions());
+                selection(rows), selectionJson, input.instructions(), executionMode, write(aiAgentIds),
+                write(roster.entries()),
+                write(Map.of("strategy", "OPEN_POOL", "packageSize", size, "humanSeatsPerSample", people)),
+                write(workflowSnapshot(executionMode)));
         db.update(
                 "UPDATE package_plan SET reopen_accepted=? WHERE id=?",
                 !Boolean.FALSE.equals(input.reopenAccepted()),
@@ -169,23 +193,31 @@ VALUES (?,?,?,?,?,?,?,?,?::jsonb,?)
                     (Boolean) plan.get("reopen_accepted"));
             checkClaimConflict(projectId, sampleIds, groupId);
             int size = ((Number)plan.get("package_size")).intValue(), people = ((Number)plan.get("annotators_per_sample")).intValue();
+            String executionMode = Objects.toString(plan.get("execution_mode"), "HUMAN_POOL");
+            JsonNode aiIdsJson = read(Objects.toString(plan.get("ai_agent_ids"), "[]"));
+            List<UUID> aiAgentIds = new ArrayList<>();
+            aiIdsJson.forEach(value -> aiAgentIds.add(UUID.fromString(value.asText())));
+            int nextAiRoundNo = db.queryForObject(
+                    "SELECT COALESCE(MAX(round_no),0)+1 FROM publication_round WHERE project_id=? AND package_id IS NULL",
+                    Integer.class, projectId);
             // ponytail: 有界同步发布，超过样本上限需拆分批次；大规模发布再引入后台任务。
             for (int start=0, sequence=1; start<samples.size(); start+=size, sequence++) {
-                UUID pkg = UUID.randomUUID(); int count = Math.min(size, samples.size()-start);
-                db.update(
-                        "INSERT INTO"
-                            + " task_package(id,plan_id,sequence_no,sample_count,required_count)"
-                            + " VALUES (?,?,?,?,?)",pkg,planId,sequence,count,people);
+                int count = Math.min(size, samples.size()-start);
+                UUID pkg = "AI_AGENT".equals(executionMode) ? null : UUID.randomUUID();
+                if (pkg != null)
+                    db.update(
+                            "INSERT INTO task_package(id,plan_id,sequence_no,sample_count,required_count)"
+                                    + " VALUES (?,?,?,?,?)",pkg,planId,sequence,count,people);
                 UUID roundId = UUID.randomUUID();
                 db.update(
                         """
-INSERT INTO publication_round(id,project_id,spec_version_id,package_id,round_no,mode,instructions,status)
-VALUES (?,?,?,?,1,'HUMAN_POOL',?,'OPEN')
-""", roundId, projectId, plan.get("spec_version_id"), pkg, plan.get("instructions"));
-                if (groupId != null) db.update("UPDATE publication_round SET publication_group_id=? WHERE id=?", groupId, roundId);
+INSERT INTO publication_round(id,project_id,spec_version_id,package_id,round_no,mode,instructions,status,package_plan_id,publication_group_id)
+VALUES (?,?,?,?,?,?,?,'OPEN',?,?)
+""", roundId, projectId, plan.get("spec_version_id"), pkg,
+                        pkg == null ? nextAiRoundNo++ : 1, executionMode, plan.get("instructions"), planId, groupId);
                 for (int i=0;i<count;i++) {
                     Map<String,Object> s = samples.get(start+i);
-                    db.update(
+                    if (pkg != null) db.update(
                             "INSERT INTO"
                                 + " package_item(package_id,plan_id,project_id,sample_id,ordinal)"
                                 + " VALUES (?,?,?,?,?)",pkg,planId,projectId,s.get("id"),i+1);
@@ -199,9 +231,23 @@ VALUES (?,?,?,?,1,'HUMAN_POOL',?,'OPEN')
                             "INSERT INTO sample_work_claim(project_id,sample_id,round_id) VALUES"
                                 + " (?,?,?)", projectId, s.get("id"), roundId);
                 }
-                for (int slot=1;slot<=people;slot++) db.update(
+                for (int slot=1;pkg != null && slot<=people;slot++) db.update(
                             "INSERT INTO package_slot(id,package_id,round_id,slot_no) VALUES"
                                 + " (?,?,?,?)",UUID.randomUUID(),pkg,roundId,slot);
+                for (UUID agentId : aiAgentIds)
+                    aiServices.getObject().createExecution(
+                            actor,
+                            projectId,
+                            new com.tss.labeling.ai.AiService.CreateInput(
+                                    (UUID) plan.get("spec_version_id"),
+                                    agentId,
+                                    null,
+                                    plan.get("instructions") == null ? null : plan.get("instructions").toString(),
+                                    null,
+                                    null,
+                                    (Boolean) plan.get("reopen_accepted"),
+                                    roundId),
+                            "publish:" + planId + ":" + roundId + ":" + agentId);
             }
             outcomes.resetAcceptedForRepublish(projectId, (UUID) plan.get("spec_version_id"), sampleIds, actor.actorId());
             db.update(
@@ -433,7 +479,8 @@ SELECT r.*, p.owner_actor_id FROM publication_round r JOIN project p ON p.id=r.p
     public JsonNode claimRound(ActorContext actor, UUID roundId, String key) {
         enabled(actor.actorId());
         Map<String,Object> r = one("SELECT * FROM publication_round WHERE id=? FOR UPDATE", roundId);
-        if (!"HUMAN_POOL".equals(r.get("mode"))) throw error(422,"INVALID_EXECUTION_MODE","仅人工轮次可领取");
+        if (!(annotators.executionMode("human-pool").equals(r.get("mode"))
+                || "MIXED".equals(r.get("mode")))) throw error(422,"INVALID_EXECUTION_MODE","仅含人工席位的轮次可领取");
         if (!"OPEN".equals(r.get("status"))) throw error(409,"ROUND_CLOSED","轮次不可领取");
         open(project((UUID) r.get("project_id"), false));
         String op="POST:/rounds/"+roundId+"/claims", hash=hash("{}");
@@ -469,9 +516,17 @@ ORDER BY s.slot_no LIMIT 1
         if(previous!=null)return previous;
         if (!"OPEN".equals(r.get("status"))) throw error(409,"ROUND_CLOSED","轮次已结束");
         if (((Number) r.get("revision")).longValue() != baseRevision) throw error(409,"REVISION_CONFLICT","轮次已变化，请重新读取");
+        if (Boolean.TRUE.equals(db.queryForObject(
+                "SELECT EXISTS(SELECT 1 FROM ai_execution WHERE round_id=? AND status NOT IN"
+                        + " ('SUCCEEDED','PARTIAL','FAILED','CANCELLED'))",
+                Boolean.class, roundId)))
+            throw error(409,"AI_EXECUTION_ACTIVE","请先取消或等待本轮 AI 执行结束，再取消轮次");
         boolean hasSubmitted = Boolean.TRUE.equals(db.queryForObject(
                                 "SELECT EXISTS(SELECT 1 FROM assignment WHERE round_id=? AND"
                                     + " status='SUBMITTED')",Boolean.class,roundId));
+        hasSubmitted = hasSubmitted || Boolean.TRUE.equals(db.queryForObject(
+                "SELECT EXISTS(SELECT 1 FROM ai_execution WHERE round_id=? AND status IN ('SUCCEEDED','PARTIAL','FAILED'))",
+                Boolean.class, roundId));
         db.update("UPDATE publication_round SET status=?, revision=revision+1 WHERE id=?", hasSubmitted ? "CLOSED" : "CANCELLED", roundId);
         db.update(
                 "UPDATE assignment SET status='REVOKED', ended_at=CURRENT_TIMESTAMP,"
@@ -511,11 +566,12 @@ ORDER BY s.slot_no LIMIT 1
                         "SELECT COALESCE(MAX(round_no),0)+1 FROM publication_round WHERE"
                             + " package_id=?", Integer.class, packageId);
         UUID roundId = UUID.randomUUID();
+        String humanMode = annotators.executionMode("human-pool");
         db.update(
                 """
 INSERT INTO publication_round(id,project_id,spec_version_id,package_id,round_no,mode,instructions,status)
 VALUES (?,?,?,?,?,?,?,'OPEN')
-""", roundId, pkg.get("project_id"), pkg.get("spec_version_id"), packageId, roundNo, "HUMAN_POOL", input.instructions());
+""", roundId, pkg.get("project_id"), pkg.get("spec_version_id"), packageId, roundNo, humanMode, input.instructions());
         int ordinal = 1;
         for (var item : items) {
             UUID sampleId = (UUID) item.get("sample_id");
@@ -585,7 +641,11 @@ VALUES (?,?,?,?,?,?,?,'OPEN')
                                 "SELECT EXISTS(SELECT 1 FROM package_slot s WHERE s.round_id=? AND"
                                     + " NOT EXISTS(SELECT 1 FROM assignment a WHERE a.slot_id=s.id"
                                     + " AND a.status='SUBMITTED'))", Boolean.class, roundId));
-        if (!active && !claimable) {
+        boolean aiActive = Boolean.TRUE.equals(db.queryForObject(
+                "SELECT EXISTS(SELECT 1 FROM ai_execution WHERE round_id=? AND status NOT IN"
+                        + " ('SUCCEEDED','PARTIAL','FAILED','CANCELLED'))",
+                Boolean.class, roundId));
+        if (!active && !claimable && !aiActive) {
             db.update(
                     "UPDATE publication_round SET status='CLOSED', revision=revision+1 WHERE id=?"
                         + " AND status='OPEN'", roundId);
@@ -608,23 +668,116 @@ WHERE a.id=? AND a.actor_id=?
         return a;
     }
 
+    private ResolvedRoster resolveRoster(PlanInput input) {
+        List<AnnotatorSelection> entries = input.annotatorRoster();
+        if (entries == null) {
+            String mode = input.executionMode() == null ? "HUMAN_POOL" : input.executionMode();
+            List<UUID> agents = input.aiAgentIds() == null ? List.of() : input.aiAgentIds();
+            int people = input.annotatorsPerSample() == null
+                    ? ("AI_AGENT".equals(mode) ? 0 : 1)
+                    : input.annotatorsPerSample();
+            boolean valid = switch (mode) {
+                case "HUMAN_POOL" -> people > 0 && agents.isEmpty();
+                case "AI_AGENT" -> people == 0 && !agents.isEmpty();
+                case "MIXED" -> people > 0 && !agents.isEmpty();
+                default -> false;
+            };
+            if (!valid) throw error(400, "INVALID_REQUEST", "标注员清单与执行模式不匹配");
+            entries = new ArrayList<>();
+            if (people > 0) entries.add(new AnnotatorSelection(
+                    "human-pool", "1.0.0", people, List.of()));
+            if (!agents.isEmpty()) entries.add(new AnnotatorSelection(
+                    "ai-agent-worker", "1.0.0", agents.size(), agents));
+        }
+        if (entries.isEmpty() || entries.size() > 10)
+            throw error(422, "INVALID_ANNOTATOR_ROSTER", "标注员清单不能为空且最多包含 10 项");
+        int humanCount = 0;
+        List<UUID> aiAgentIds = new ArrayList<>();
+        Set<String> modes = new HashSet<>();
+        Set<UUID> uniqueAgents = new HashSet<>();
+        List<AnnotatorSelection> frozen = new ArrayList<>();
+        for (AnnotatorSelection entry : entries) {
+            if (entry == null || entry.providerId() == null || entry.providerVersion() == null
+                    || entry.count() == null || entry.count() < 1)
+                throw error(422, "INVALID_ANNOTATOR_ROSTER", "标注员提供方、版本和数量均为必填");
+            com.tss.labeling.annotators.AnnotatorProvider.Descriptor provider;
+            try {
+                provider = annotators.require(entry.providerId(), entry.providerVersion()).descriptor();
+            } catch (IllegalArgumentException exception) {
+                throw error(422, "ANNOTATOR_PROVIDER_UNAVAILABLE", "标注员提供方版本未安装");
+            }
+            String mode = provider.executionMode();
+            if (!Set.of("HUMAN_POOL", "AI_AGENT").contains(mode) || !modes.add(mode))
+                throw error(422, "ANNOTATOR_PROVIDER_UNSUPPORTED", "本版本不支持重复或未知的标注员执行方式");
+            List<UUID> agentIds = entry.agentIds() == null ? List.of() : entry.agentIds();
+            if ("HUMAN_POOL".equals(mode)) {
+                if (!agentIds.isEmpty() || entry.count() > maxAnnotators)
+                    throw error(422, "INVALID_ANNOTATOR_ROSTER", "人工席位数量超出限制或包含 AI Agent");
+                humanCount = entry.count();
+            } else {
+                if (agentIds.isEmpty() || entry.count() != agentIds.size()
+                        || agentIds.size() > 10 || new HashSet<>(agentIds).size() != agentIds.size()
+                        || agentIds.stream().anyMatch(id -> !uniqueAgents.add(id)))
+                    throw error(422, "INVALID_ANNOTATOR_ROSTER", "AI 数量必须与不重复的 Agent 清单一致");
+                aiAgentIds.addAll(agentIds);
+            }
+            frozen.add(new AnnotatorSelection(provider.id(), provider.version(), entry.count(), agentIds));
+        }
+        String executionMode = humanCount > 0
+                ? (aiAgentIds.isEmpty() ? "HUMAN_POOL" : "MIXED")
+                : "AI_AGENT";
+        return new ResolvedRoster(List.copyOf(frozen), executionMode, humanCount, List.copyOf(aiAgentIds));
+    }
+
+    private Map<String, Object> workflowSnapshot(String executionMode) {
+        List<Map<String, String>> participants = new ArrayList<>();
+        if ("HUMAN_POOL".equals(executionMode) || "MIXED".equals(executionMode))
+            participants.add(Map.of("providerId", "human-pool", "providerVersion", "1.0.0"));
+        if ("AI_AGENT".equals(executionMode) || "MIXED".equals(executionMode))
+            participants.add(Map.of("providerId", "ai-agent-worker", "providerVersion", "1.0.0"));
+        return Map.of(
+                "templateId", "standard-annotation",
+                "version", "1.0.0",
+                "stages", List.of(
+                        Map.of("stageId", "ANNOTATION", "participants", participants, "execution", "PARALLEL"),
+                        Map.of("stageId", "OWNER_REVIEW", "participants", List.of("PROJECT_OWNER")),
+                        Map.of("stageId", "OUTCOME_DELIVERY", "participants", List.of("PROJECT_OWNER"))));
+    }
+
     private JsonNode planView(UUID id) {
         Map<String,Object> p=one("SELECT * FROM package_plan WHERE id=?",id);
         int count=((Number)p.get("sample_count")).intValue(),size=((Number)p.get("package_size")).intValue();
         List<Integer> counts=new ArrayList<>();for(int start=0;start<count;start+=size)counts.add(Math.min(size,count-start));
-        return json.valueToTree(Map.of(
-                        "projectId",
-                        p.get("project_id"),
-                        "specVersionId",
-                        p.get("spec_version_id"),"planId",id,"status",p.get("status"),"selectionHash",p.get("selection_hash"),
-                "sampleCount",count,"packageSampleCounts",counts,"totalWorkload",(long)count*((Number)p.get("annotators_per_sample")).intValue(),
-                "packages",db.queryForList(
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("projectId", p.get("project_id"));
+        out.put("specVersionId", p.get("spec_version_id"));
+        out.put("planId", id);
+        out.put("status", p.get("status"));
+        out.put("selectionHash", p.get("selection_hash"));
+        out.put("executionMode", p.get("execution_mode"));
+        out.put("annotatorsPerSample", p.get("annotators_per_sample"));
+        JsonNode planAgents = read(Objects.toString(p.get("ai_agent_ids"), "[]"));
+        out.put("aiAgentIds", planAgents);
+        out.put("annotatorRoster", read(Objects.toString(p.get("annotator_roster"), "[]")));
+        out.put("assignmentPolicy", read(Objects.toString(p.get("assignment_policy"), "{}")));
+        out.put("workflowSnapshot", read(Objects.toString(p.get("workflow_snapshot"), "{}")));
+        out.put("sampleCount", count);
+        out.put("packageSampleCounts", counts);
+        out.put("totalWorkload", (long) count * (((Number) p.get("annotators_per_sample")).intValue() + planAgents.size()));
+        out.put("packages", db.queryForList(
                                 """
-SELECT t.id AS "packageId", t.sequence_no AS "sequenceNo", t.sample_count AS "sampleCount",
-  t.required_count AS "requiredCount", r.id AS "roundId"
-FROM task_package t JOIN publication_round r ON r.package_id=t.id AND r.round_no=1
-WHERE t.plan_id=? ORDER BY t.sequence_no
-""",id)));
+SELECT r.package_id AS "packageId",COALESCE(t.sequence_no,r.round_no) AS "sequenceNo",
+  (SELECT count(*) FROM round_item ri WHERE ri.round_id=r.id) AS "sampleCount",
+  COALESCE(t.required_count,0) AS "requiredCount",r.id AS "roundId"
+FROM publication_round r LEFT JOIN task_package t ON t.id=r.package_id
+WHERE r.package_plan_id=? OR t.plan_id=? ORDER BY "sequenceNo"
+""",id,id));
+        out.put("aiExecutions", db.queryForList(
+                "SELECT e.id AS \"executionId\",e.round_id AS \"roundId\",e.agent_actor_id AS \"agentActorId\","
+                        + "e.model_version AS \"modelVersion\",e.status FROM ai_execution e"
+                        + " JOIN publication_round r ON r.id=e.round_id WHERE r.package_plan_id=?"
+                        + " ORDER BY e.created_at,e.id", id));
+        return json.valueToTree(out);
     }
     private List<Map<String,Object>> samples(UUID batch) {
         var rows=db.queryForList("SELECT id,content_sha256 FROM sample WHERE batch_id=? ORDER BY id LIMIT ?",batch,maxSamples+1);
@@ -790,7 +943,10 @@ WHERE r.status='OPEN' AND c.project_id=? AND (CAST(? AS uuid) IS NULL OR r.publi
     public record PlanInput(UUID batchId, UUID specVersionId, Integer packageSize, Integer annotatorsPerSample, List<SelectionSample> samples, String instructions,
             UUID selectionId,
             String referenceMode,
-            Boolean reopenAccepted) {
+            Boolean reopenAccepted,
+            String executionMode,
+            List<UUID> aiAgentIds,
+            List<AnnotatorSelection> annotatorRoster) {
         public PlanInput(
                 UUID batchId,
                 UUID specVersionId,
@@ -807,8 +963,27 @@ WHERE r.status='OPEN' AND c.project_id=? AND (CAST(? AS uuid) IS NULL OR r.publi
                     instructions,
                     null,
                     null,
+                    null,
+                    null,
+                    null,
                     null);
-        }}
+        }
+        public PlanInput(
+                UUID batchId,
+                UUID specVersionId,
+                Integer packageSize,
+                Integer annotatorsPerSample,
+                List<SelectionSample> samples,
+                String instructions,
+                UUID selectionId,
+                String referenceMode,
+                Boolean reopenAccepted) {
+            this(batchId, specVersionId, packageSize, annotatorsPerSample, samples, instructions,
+                    selectionId, referenceMode, reopenAccepted, null, null, null);
+        }
+    }
+    public record AnnotatorSelection(String providerId, String providerVersion, Integer count, List<UUID> agentIds) {}
+    private record ResolvedRoster(List<AnnotatorSelection> entries, String executionMode, int humanCount, List<UUID> aiAgentIds) {}
     public record SelectionSample(@NotNull UUID sampleId, UUID referenceResultId, UUID referenceCandidateId) {
         public SelectionSample(UUID sampleId, UUID referenceResultId) {
             this(sampleId, referenceResultId, null);
