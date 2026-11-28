@@ -534,10 +534,8 @@ JOIN round_item ri ON ri.sample_id=s.id WHERE ri.round_id=? AND s.id=?
         if ("application/json".equals(row.get("media_type")))
             throw error(422, "STRUCTURED_INPUT_REQUIRED", "请使用按样本授权的 data 接口");
         try {
-            var path = storage.sample((UUID) row.get("batch_id"), sampleId);
-            long size = Long.parseLong((String) row.get("size"));
-            if (Files.size(path) != size) throw new java.io.IOException("图片大小不一致");
-            return new SampleFile(new FileSystemResource(path), (String) row.get("media_type"), size);
+            return storage.display((UUID) row.get("batch_id"), sampleId, (String) row.get("media_type"),
+                    Long.parseLong((String) row.get("size")));
         } catch (java.io.IOException exception) {
             throw error(503, "STORAGE_UNAVAILABLE", "图片存储不可用");
         }

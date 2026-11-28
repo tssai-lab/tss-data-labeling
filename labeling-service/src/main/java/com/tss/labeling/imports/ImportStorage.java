@@ -59,6 +59,26 @@ public class ImportStorage {
         return result;
     }
 
+    /** Used only after the caller has authorized the corresponding sample/resource. */
+    public com.tss.labeling.imports.ImportService.SampleFile display(UUID batch, UUID sample, String mediaType, long originalSize) throws IOException {
+        var file = displayFile(batch, sample, mediaType, originalSize);
+        return new com.tss.labeling.imports.ImportService.SampleFile(
+                new org.springframework.core.io.FileSystemResource(file.path()), file.mediaType(), file.size());
+    }
+
+    public record DisplayFile(Path path, String mediaType, long size) { }
+
+    public DisplayFile displayFile(UUID batch, UUID sample, String mediaType, long originalSize) throws IOException {
+        Path original = sample(batch, sample);
+        if (Files.size(original) != originalSize) throw new IOException("原文件长度不一致");
+        ImageFormats format = ImageFormats.fromMediaType(mediaType);
+        if (format == null || !format.requiresPreview()) return new DisplayFile(original, mediaType, originalSize);
+        Path preview = sampleDirectory(batch).resolve(sample + ".preview.png");
+        if (!Files.isRegularFile(preview, NOFOLLOW_LINKS) || Files.size(preview) == 0)
+            throw new IOException("图片预览不存在");
+        return new DisplayFile(preview, "image/png", Files.size(preview));
+    }
+
     public static String sha256(Path file) throws IOException {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");

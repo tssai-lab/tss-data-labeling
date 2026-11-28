@@ -298,9 +298,7 @@ WHERE s.id = ? AND s.project_id = ? AND b.status = 'READY'
         if ("application/json".equals(row.mediaType()))
             throw failure(422, "STRUCTURED_INPUT_REQUIRED", "请使用按样本授权的 data 接口");
         try {
-            Path path = storage.sample(row.batch(), sample);
-            if (Files.size(path) != row.size()) throw new IOException("文件长度不一致");
-            return new SampleFile(new FileSystemResource(path), row.mediaType(), row.size());
+            return storage.display(row.batch(), sample, row.mediaType(), row.size());
         } catch (IOException exception) { throw failure(503, "STORAGE_UNAVAILABLE", "图片存储不可用"); }
     }
 

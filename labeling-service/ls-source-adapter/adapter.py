@@ -24,7 +24,7 @@ import platform_resources
 PROTOCOL_VERSION = 1
 # Other upstream formats remain in source and capability metadata. Enable each
 # platform format after its resources and output have been verified locally.
-ENABLED_FORMATS = {'JSON', 'JSON_MIN', 'CSV', 'TSV', 'COCO', 'YOLO'}
+ENABLED_FORMATS = {'JSON', 'JSON_MIN', 'CSV', 'TSV', 'COCO', 'YOLO', 'VOC', 'BRUSH_TO_PNG'}
 SAFE_ID = re.compile(r'[A-Za-z0-9_-]{1,128}\Z')
 EDITOR_TAGS = set(json.loads((Path(__file__).parent / 'editor-tags.json').read_text(encoding='utf-8'))['tags'])
 
@@ -139,7 +139,7 @@ def export(job_root, request):
                 not isinstance(annotation, dict) or not isinstance(annotation.get('result'), list)
                 for annotation in annotations):
             raise ValueError('INVALID_ANNOTATION_RESULT')
-        if fmt in {'COCO', 'YOLO'}:
+        if fmt in {'COCO', 'YOLO', 'VOC', 'BRUSH_TO_PNG'}:
             # Upstream accepts disk paths in task.data. Platform inputs are
             # resource references; never let them bypass the explicit resolver.
             for key in image_keys:
@@ -154,7 +154,7 @@ def export(job_root, request):
                     raise ValueError('IMAGE_RESOURCE_REFERENCE_REQUIRED')
                 if value not in resources and value.startswith(('/', '.')):
                     raise ValueError('IMAGE_RESOURCE_REFERENCE_REQUIRED')
-        if prepared and fmt in {'COCO', 'YOLO'}:
+        if prepared and fmt in {'COCO', 'YOLO', 'VOC', 'BRUSH_TO_PNG'}:
             prepared_paths[index].write_text(
                 json.dumps(task, ensure_ascii=False, allow_nan=False), encoding='utf-8')
         if not prepared:
@@ -166,7 +166,11 @@ def export(job_root, request):
     converter = Converter(metadata['parsedConfig'], project_dir=None, download_resources=False)
     # Native upstream directory iteration streams one task at a time, avoiding
     # an ijson dependency and preserving the original LS task/result structure.
-    converter.convert(str(task_dir), str(output), fmt, is_dir=True)
+    if fmt in {'VOC', 'BRUSH_TO_PNG'}:
+        from platform_image_exports import export as export_images
+        export_images(task_dir, output, metadata['parsedConfig'], fmt)
+    else:
+        converter.convert(str(task_dir), str(output), fmt, is_dir=True)
     if fmt == 'TSV' and (output / 'result.csv').exists():
         (output / 'result.csv').rename(output / 'result.tsv')
     files = []

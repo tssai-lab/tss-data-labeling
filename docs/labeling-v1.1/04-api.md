@@ -92,7 +92,7 @@ DELETE 仅 DRAFT，且不得有已发布计划或活动处理；非草稿409 DRA
 
 ## 3. 图片 ZIP 导入、样本列表与原图读取
 
-本节保留现有图片导入契约。首轮项目类型为 `IMAGE_CLASSIFICATION`，支持 ZIP/单卷 ZIP64 中的 JPG、JPEG、PNG。导入批次、样本及原图均归属项目 owner。以下路径均接在统一前缀 `/api/labeling/v1` 后。
+本节保留现有图片导入契约。首轮项目类型为 `IMAGE_CLASSIFICATION`，支持 ZIP/单卷 ZIP64 中的 JPG、JPEG、PNG、TIFF/TIF、WebP、BMP。导入批次、样本及原图均归属项目 owner。以下路径均接在统一前缀 `/api/labeling/v1` 后。
 
 | 方法与路径 | 输入与请求头 | 成功返回 |
 |---|---|---|
@@ -102,7 +102,7 @@ DELETE 仅 DRAFT，且不得有已发布计划或活动处理；非草稿409 DRA
 | POST /imports/{batchId}/complete | 空请求体，带 Idempotency-Key | 202，当前批次对象，首次受理进入 PROCESSING |
 | POST /imports/{batchId}/retry | 空请求体，带 Idempotency-Key | 202，当前批次对象 |
 | GET /imports/{batchId}/samples?limit=20&cursor={nextCursor} | 首次省略 cursor，后续使用上一页 nextCursor | 200，`data.items` 和 `data.nextCursor` |
-| GET /projects/{projectId}/samples/{sampleId}/file | 无请求体 | 200，JPEG/PNG 二进制原图 |
+| GET /projects/{projectId}/samples/{sampleId}/file | 无请求体 | 200，JPEG/PNG 原图或新增格式的同尺寸 PNG 预览 |
 
 ### 3.1 登录、权限与请求约定
 
@@ -210,7 +210,7 @@ retry 会再次校验完整原包，并复用稳定的批次路径和 sampleId�
 
 ### 3.6 原图读取与页面预览
 
-使用样本返回的 `fileUrl`，携带与 owner 相同的登录身份读取。成功响应体为原始图片字节，`Content-Type` 为 image/jpeg 或 image/png，带 Content-Length、`Cache-Control: private, no-store` 和 `X-Content-Type-Options: nosniff`。错误响应使用通用 JSON 错误结构。
+使用样本返回的 `fileUrl`，携带与 owner 相同的登录身份读取。JPG/PNG 成功响应体保持原始图片字节；TIFF/TIF、WebP、BMP 返回同尺寸 PNG 预览。`Content-Type` 为 image/jpeg 或 image/png，带 Content-Length、`Cache-Control: private, no-store` 和 `X-Content-Type-Options: nosniff`。错误响应使用通用 JSON 错误结构。
 
 前端通过携带 Authorization 的 fetch 取得 Blob，再创建 Blob URL 供图片元素展示，切换或关闭时释放 Blob URL。项目ID和样本ID须对应，图片内容可按 `contentSha256` 校验。调用示例见 [image-preview.js](../../labeling-service/examples/image-preview.js)。
 
@@ -264,7 +264,13 @@ node examples/image-import.mjs $projectId $imageZip $downloadDir
 | LABELING_IMPORT_WORKER_ENABLED | true | 是否在本实例处理持久化导入队列 |
 | LABELING_IMPORT_POLL_DELAY_MS | 1000 | 两次队列扫描间隔 |
 
-支持单卷 ZIP/ZIP64；不支持加密、分卷、RAR、7z、SVG、TIFF 等格式。JPEG 扩展名允许 jpg/jpeg，PNG 为 png；扩展名须与真实解码格式一致。其他扩展名、损坏图片与超像素图片返回文件级错误。
+支持单卷 ZIP/ZIP64；不支持加密、分卷、RAR、7z、SVG 等格式。图片扩展名支持 jpg/jpeg/png/tif/tiff/webp/bmp，大小写不敏感，且须与真实解码格式一致。其他扩展名、损坏图片与超像素图片返回文件级错误。WebP 当前接受静态图片，动画返回 `ANIMATED_IMAGE_NOT_SUPPORTED`。
+
+TIFF/TIF、WebP、BMP 的 `mediaType`、`contentSha256` 和 `metadata.sizeBytes` 描述原始文件；授权 file/native-resource 接口返回的 Content-Type 和 Content-Length 描述实际预览响应，前端以响应头为准。PNG 预览保持当前页原始宽高，不自动缩放或旋转，标注坐标与当前页像素对应。
+
+多页 TIFF 为每页创建独立样本（图片分类）或资源（COMPUTER_VISION）。第一页 `sourcePath` 保持原文件路径，其余页为 `原文件路径#page-2`、`#page-3` 等；原生任务 JSON 可用同样的本地引用选择页面。`metadata` 包含 `originalSourcePath`、`originalMediaType`、`pageIndex`（从 0 开始）、`pageNumber`（从 1 开始）、`pageCount`、`width`、`height`、`previewMediaType`、`previewSizeBytes`、`previewSha256`。任一页损坏时整份图片按文件级错误处理；单页像素、展开页数以及原图副本和预览的累计大小均受导入限制约束。
+
+通用成果导出继续保留原始文件。LS 源码导出使用所标注页面的 PNG，并附带 `originals/` 原文件；JSON 任务 `meta.platformImageSources` 记录预览与原文件路径、源路径、页码和 SHA-256。COCO/YOLO 的坐标对应 PNG 页面的宽高。部署前需按发布流程执行追加迁移 `V36__support_tiff_webp_bmp_samples.sql`；现有数据不重写。
 
 这些是可调的部署初始值，并非已验证的容量或性能承诺。大数据量应根据真实样本、内存和磁盘重新配置和测试。本轮 worker 有界串行处理；长批次解析会保持数据库事务和项目共享锁，应测量实际耗时后再安排生产部署。
 
@@ -716,3 +722,12 @@ GET `/task-templates`：启用身份，data 为内置模板数组；字段 templ
 ## 结构化与半结构化数据插件
 
 新增 `STRUCTURED`、`SEMI_STRUCTURED` 两类可信插件，沿用样本 `/data`、规范、草稿、提交、审核、成果和导出接口。新增记录校验只读接口及完整结果结构见 [记录插件接口与操作](10-record-data-plugins.md)。
+
+
+## VOC XML 与掩码 PNG 导出补充
+
+原生成果仍通过 `GET /final-snapshots/{id}/export-formats` 获取能力，通过 `POST /final-snapshots/{id}/exports` 创建作业。矩形框规范可选择 `VOC`，画笔规范可选择 `BRUSH_TO_PNG`；其他数据控件不启用对应能力。既有规范的 `exportFormats` 继续按冻结版本读取；新增能力需保存新规范后用于新任务，不改写历史规范与快照。
+
+- VOC：ZIP 含 `Annotations/*.xml`、`images/*.png` 与 `annotation-index.json`。图片保持原页宽高，标签采用规范中的 alias（没有 alias 时采用 value）。坐标沿用平台转换约定：从 0 开始的像素边界；最小边取 floor，最大边取 ceil，并裁剪至图像范围。旋转矩形导出包围它的轴对齐框，旋转信息通过成果原始结果保留，不能把 VOC 当作旋转框格式。
+- 掩码：每个画笔区域输出一张 8-bit 灰度 PNG，背景 0、前景 255，宽高与对应图片页面一致。`annotation-index.json` 中的 `labels` 给出类别映射，`images` 关联样本与图片，`items` 关联区域、标签和 mask 文件，保留来源及 TIFF 页码元数据。多类/多实例以独立掩码表示，不把类别编号混写成二值像素值。
+- 两种格式只读取固定成果中的已审核结果，继续执行成果所有者授权；原图及其摘要随 ZIP 一起保留。RLE 解码前验证头部、像素数量和游程边界，拒绝异常分配；显示图片和原始结果尺寸须一致。当前单幅掩码上限为 40,000,000 像素。

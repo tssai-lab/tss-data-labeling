@@ -77,6 +77,14 @@ public class ArchiveParser {
                     }
                     if (length != entry.getSize() || crc.getValue() != entry.getCrc()) throw rejected("INVALID_ARCHIVE", "压缩包条目长度或 CRC 校验失败");
                     String lower = path.toLowerCase(Locale.ROOT);
+                    ImageFormats imageFormat = ImageFormats.fromPath(path);
+                    if (imageFormat != null && imageFormat.requiresPreview()) {
+                        var result = ImageArchiveReader.read(temp, path, batch, imageFormat, settings, storage,
+                                settings.maxEntries() - samples.size() - resources.size(), settings.maxExpandedBytes() - expanded);
+                        expanded += result.extraBytes();
+                        (!"IMAGE_CLASSIFICATION".equals(taskType) ? resources : samples).addAll(result.samples());
+                        continue;
+                    }
                     boolean png = lower.endsWith(".png");
                     boolean jpeg = lower.endsWith(".jpg") || lower.endsWith(".jpeg");
                     boolean nativeTask = !"IMAGE_CLASSIFICATION".equals(taskType);
@@ -87,7 +95,7 @@ public class ArchiveParser {
                             jsonResource=tasks.isEmpty();
                             int index=0;
                             for(var task:tasks) {
-                                if(samples.size()>=settings.maxEntries())throw rejected("EXPANSION_LIMIT","展开任务数量超过导入配置上限");
+                                if(samples.size()+resources.size()>=settings.maxEntries())throw rejected("EXPANSION_LIMIT","展开任务数量超过导入配置上限");
                                 String source=path+"#task-"+index++;
                                 UUID id=UUID.nameUUIDFromBytes((batch+"\n"+source).getBytes(StandardCharsets.UTF_8));
                                 Path target=storage.sampleDirectory(batch).resolve(id+".bin");
@@ -101,10 +109,11 @@ public class ArchiveParser {
                     }
                     boolean csv=nativeTask && lower.endsWith(".csv");
                     boolean text=nativeTask && (lower.endsWith(".txt") || lower.endsWith(".md"));
-                    if (!png && !jpeg && !csv && !jsonResource && !text) throw new InvalidImage("UNSUPPORTED_FORMAT", "当前任务支持的输入为 PNG/JPEG、CSV 或 LS 任务 JSON");
+                    if (!png && !jpeg && !csv && !jsonResource && !text) throw new InvalidImage("UNSUPPORTED_FORMAT", "当前任务支持的输入为 PNG/JPEG/TIFF/WebP/BMP、CSV 或 LS 任务 JSON");
                     Map<String, Object> metadata;
                     try { metadata=csv ? nativeInputs.csvMetadata(temp,length) : (jsonResource || text) ? Map.of("inputFormat","resource-file-v1","sizeBytes",length) : imageMetadata(temp, png ? "png" : "JPEG", length); }
                     catch(IOException exception) { throw new InvalidImage(csv?"INVALID_CSV":"INVALID_IMAGE",exception.getMessage()); }
+                    if (samples.size()+resources.size() >= settings.maxEntries()) throw rejected("EXPANSION_LIMIT", "展开样本和资源数量超过导入配置上限");
                     UUID sample = UUID.nameUUIDFromBytes((batch + "\n" + path).getBytes(StandardCharsets.UTF_8));
                     String checksum = ImportStorage.sha256(temp);
                     try (FileChannel channel = FileChannel.open(temp, StandardOpenOption.WRITE)) { channel.force(true); }
@@ -113,6 +122,9 @@ public class ArchiveParser {
                     catch (AtomicMoveNotSupportedException exception) { Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING); }
                     (nativeTask ? resources : samples).add(new ParsedSample(sample, path, batch + "/samples/" + sample + ".bin", checksum,
                             csv ? "text/csv" : jsonResource ? "application/json" : text ? "text/plain" : png ? "image/png" : "image/jpeg", metadata));
+                } catch (ImageArchiveReader.InvalidImage exception) {
+                    errorCount++;
+                    if (errors.size() < settings.maxErrors()) errors.add(new FileError(path, exception.code, exception.getMessage()));
                 } catch (InvalidImage exception) {
                     errorCount++;
                     if (errors.size() < settings.maxErrors()) errors.add(new FileError(path, exception.code, exception.getMessage()));
